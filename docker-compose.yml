@@ -1,5 +1,8 @@
 version: '3.8'
 
+# 注意：engine.py 已废弃，情报采集由 OpenClaw Agent 定时任务自动执行
+# 定时任务: intelligence-scout-hourly (每小时整点)
+
 services:
   api:
     build:

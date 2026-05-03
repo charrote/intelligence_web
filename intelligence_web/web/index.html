@@ -7,13 +7,14 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 16px; }
         
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .header h1 { font-size: 24px; color: #333; }
-        .header .btn-command { padding: 8px 20px; background: #722ed1; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+        .header h1 { font-size: 20px; color: #333; }
+        .header .btn-command { padding: 8px 16px; background: #722ed1; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; min-height: 44px; }
         .header .btn-command:hover { background: #531dab; }
+        .header span.api-info { display: none; }
 
         .command-list { list-style: none; }
         .command-list li { padding: 12px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px; cursor: grab; }
@@ -26,17 +27,22 @@
         .add-command textarea { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; resize: vertical; min-height: 60px; }
         .add-command button { margin-top: 10px; padding: 8px 16px; background: #722ed1; color: white; border: none; border-radius: 4px; cursor: pointer; }
         
-        .filters { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center; }
-        .filters input, .filters select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
-        .filters input[type="text"] { width: 200px; }
-        .filters button { padding: 8px 16px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .filters { background: white; padding: 16px; border-radius: 8px; margin-bottom: 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .filters input, .filters select { padding: 10px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; min-height: 44px; }
+        .filters input[type="text"] { width: 180px; flex: 1; min-width: 140px; }
+        .filters button { padding: 10px 20px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; min-height: 44px; }
         .filters button:hover { background: #40a9ff; }
         
         .list { background: white; border-radius: 8px; overflow: hidden; }
-        .list-header { display: grid; grid-template-columns: 60px 1fr 120px 120px 180px 150px; gap: 15px; padding: 15px 20px; background: #fafafa; font-weight: 600; border-bottom: 1px solid #eee; }
-        .list-item { display: grid; grid-template-columns: 60px 1fr 120px 120px 180px 150px; gap: 15px; padding: 15px 20px; border-bottom: 1px solid #eee; align-items: center; cursor: pointer; transition: background 0.2s; }
+        .list-header { display: grid; grid-template-columns: 50px 1fr auto auto auto; gap: 10px; padding: 12px 16px; background: #fafafa; font-weight: 600; border-bottom: 1px solid #eee; font-size: 13px; }
+        .list-item { display: grid; grid-template-columns: 50px 1fr auto auto auto; gap: 10px; padding: 14px 16px; border-bottom: 1px solid #eee; align-items: center; cursor: pointer; transition: background 0.2s; }
         .list-item:hover { background: #f9f9f9; }
         .list-item:last-child { border-bottom: none; }
+        .list-item .item-title { word-break: break-word; line-height: 1.4; font-size: 14px; }
+        .list-item .item-status { white-space: nowrap; }
+        .list-item .item-category { white-space: nowrap; font-size: 12px; }
+        .list-item .item-date { white-space: nowrap; font-size: 12px; }
+        .list-item .item-action { white-space: nowrap; }
         
         .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-align: center; }
         .status.pending { background: #fff7e6; color: #fa8c16; }
@@ -44,19 +50,20 @@
         .status.rejected { background: #fff1f0; color: #f5222d; }
         .status.active { background: #e6f7ff; color: #1890ff; }
         .status.completed { background: #f9f0ff; color: #722ed1; }
+        .status.discarded { background: #f5f5f5; color: #999; text-decoration: line-through; }
         
         .category { color: #666; font-size: 13px; }
         .date { color: #999; font-size: 13px; }
         
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; }
-        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 90%; max-width: 900px; max-height: 90vh; overflow: hidden; z-index: 1001; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid #eee; }
-        .modal-header h2 { font-size: 18px; }
-        .modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: #999; }
-        .modal-body { padding: 20px; max-height: calc(90vh - 140px); overflow-y: auto; }
-        .modal-footer { padding: 15px 20px; border-top: 1px solid #eee; display: flex; gap: 10px; justify-content: flex-end; }
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: white; width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0; z-index: 1001; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid #eee; position: sticky; top: 0; background: white; z-index: 1; }
+        .modal-header h2 { font-size: 17px; }
+        .modal-close { background: none; border: none; font-size: 28px; cursor: pointer; color: #999; padding: 0 8px; min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+        .modal-body { padding: 16px; }
+        .modal-footer { padding: 12px 16px; border-top: 1px solid #eee; display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; position: sticky; bottom: 0; background: white; z-index: 1; }
         
-        .modal-footer button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
+        .modal-footer button { padding: 10px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; min-height: 44px; }
         .modal-footer .btn-approve { background: #52c41a; color: white; }
         .modal-footer .btn-reject { background: #f5222d; color: white; }
         .modal-footer .btn-active { background: #1890ff; color: white; }
@@ -83,10 +90,37 @@
         .opinion-input input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
         
         @media (max-width: 768px) {
+            .container { padding: 12px; }
+            .header h1 { font-size: 18px; }
+            .filters { gap: 8px; padding: 12px; }
+            .filters input[type="text"] { width: 100%; min-width: unset; }
             .list-header { display: none; }
-            .list-item { grid-template-columns: 1fr; gap: 5px; }
-            .filters { flex-direction: column; align-items: stretch; }
-            .filters input[type="text"] { width: 100%; }
+            .list-item {
+                grid-template-columns: 1fr;
+                gap: 6px;
+                padding: 14px 12px;
+            }
+            .list-item > span:first-child {
+                display: none;
+            }
+            .list-item .item-title {
+                font-size: 15px;
+                font-weight: 500;
+            }
+            .list-item > span:nth-child(3),
+            .list-item > span:nth-child(4),
+            .list-item > span:nth-child(5) {
+                font-size: 12px;
+            }
+            .list-item .item-action {
+                font-size: 14px;
+                padding: 8px 0;
+            }
+            .modal { width: 100%; height: 100%; }
+            .modal-header h2 { font-size: 16px; }
+            .modal-body { padding: 12px; }
+            .modal-footer { padding: 10px 12px; }
+            .modal-footer button { flex: 1; min-width: 0; text-align: center; }
         }
     </style>
 </head>
@@ -109,6 +143,7 @@
                 <option value="rejected">不可行</option>
                 <option value="active">激活</option>
                 <option value="completed">已完结</option>
+                <option value="discarded">已废弃</option>
             </select>
             <select id="categoryFilter">
                 <option value="">全部分类</option>
@@ -152,7 +187,15 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8766';
+        // 自动检测 API 地址：如果当前页面通过 IP 访问，API 也用同一 IP
+        (function() {
+            const host = window.location.hostname;
+            if (host === 'localhost' || host === '127.0.0.1') {
+                window.API_BASE = 'http://localhost:8766';
+            } else {
+                window.API_BASE = `http://${host}:8766`;
+            }
+        })();
         let currentIntel = null;
         let commands = [];
         
@@ -161,7 +204,8 @@
             approved: '可行',
             rejected: '不可行',
             active: '激活',
-            completed: '已完结'
+            completed: '已完结',
+            discarded: '已废弃'
         };
         
         async function loadData() {
@@ -195,6 +239,14 @@
             });
         }
         
+        function formatDateTime(isoStr) {
+            if (!isoStr) return '-';
+            const d = new Date(isoStr);
+            if (isNaN(d)) return isoStr;
+            const pad = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+        
         function renderList(items) {
             const body = document.getElementById('listBody');
             if (items.length === 0) {
@@ -204,11 +256,11 @@
             body.innerHTML = items.map(item => `
                 <div class="list-item" onclick="openDetail(${item.id})">
                     <span>${item.id}</span>
-                    <span style="font-weight: 500;">${item.title}</span>
-                    <span class="status ${item.status}">${statusMap[item.status] || item.status}</span>
-                    <span class="category">${item.category || '-'}</span>
-                    <span class="date">${item.created_at.slice(0, 10)}</span>
-                    <span onclick="event.stopPropagation(); openDetail(${item.id})" style="color: #1890ff; cursor: pointer;">查看详情</span>
+                    <span class="item-title" style="font-weight: 500; ${item.status === 'discarded' ? 'text-decoration: line-through; color: #999;' : ''}">${item.title}</span>
+                    <span class="item-status status ${item.status}">${statusMap[item.status] || item.status}</span>
+                    <span class="item-category">${item.category || '-'}</span>
+                    <span class="item-date">${formatDateTime(item.created_at)}</span>
+                    <span class="item-action" onclick="event.stopPropagation(); openDetail(${item.id})" style="color: #1890ff; cursor: pointer;">查看详情</span>
                 </div>
             `).join('');
         }
@@ -294,10 +346,16 @@
                 buttons = `<button class="btn-complete" onclick="updateStatus('completed')">标记完结</button>`;
             }
             
+            // 任何状态都可以废止
+            buttons += `<button style="background: #d9d9d9; color: #666; margin-left: 10px;" onclick="updateStatus('discarded')">废止</button>`;
+            
             footer.innerHTML = buttons;
         }
         
         async function updateStatus(status) {
+            if (status === 'discarded') {
+                if (!confirm('确定要废止这条情报吗？')) return;
+            }
             let opinion = '';
             if (status === 'approved') {
                 opinion = prompt('请输入意见:');
@@ -407,21 +465,27 @@
             const list = document.getElementById('commandList');
             let draggedItem = null;
 
+            // 使用事件委托，确保动态生成的 li 也能触发
             list.addEventListener('dragstart', (e) => {
-                if (e.target.tagName === 'LI') {
-                    draggedItem = e.target;
-                    e.target.classList.add('dragging');
+                const li = e.target.closest('li[data-id]');
+                if (li) {
+                    draggedItem = li;
+                    li.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', li.dataset.id);
                 }
             });
 
             list.addEventListener('dragend', (e) => {
-                if (e.target.tagName === 'LI') {
-                    e.target.classList.remove('dragging');
+                if (draggedItem) {
+                    draggedItem.classList.remove('dragging');
+                    draggedItem = null;
                 }
             });
 
             list.addEventListener('dragover', (e) => {
                 e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
                 const afterElement = getDragAfterElement(list, e.clientY);
                 if (draggedItem) {
                     if (afterElement == null) {
@@ -435,22 +499,21 @@
             list.addEventListener('drop', async (e) => {
                 e.preventDefault();
                 const newOrder = Array.from(list.querySelectorAll('li[data-id]')).map(li => parseInt(li.dataset.id));
-                const ids = newOrder.reverse();
-                for (let i = 0; i < ids.length; i++) {
-                    await fetch(`${API_BASE}/api/commands/reorder`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ id: ids[i], position: i })
-                    });
-                }
+                console.log('Dropped, new order:', newOrder);
+                await fetch(`${API_BASE}/api/commands/reorder`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ids: newOrder })
+                });
                 const res = await fetch(`${API_BASE}/api/commands`);
                 commands = await res.json();
+                console.log('Reloaded commands:', commands);
                 renderCommands();
             });
         }
 
         function getDragAfterElement(container, y) {
-            const draggableElements = [...container.querySelectorAll('li:not(.dragging)')];
+            const draggableElements = [...container.querySelectorAll('li[data-id]:not(.dragging)')];
             return draggableElements.reduce((closest, child) => {
                 const box = child.getBoundingClientRect();
                 const offset = y - box.top - box.height / 2;
@@ -459,7 +522,7 @@
                 } else {
                     return closest;
                 }
-            }, { offset: Number.NEGATIVE_INFINITY }).element;
+            }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
         }
 
         async function addCommand() {

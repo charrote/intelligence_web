@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from models import init_db, create_intelligence, get_intelligences, get_intelligence_by_id, update_intelligence_status, add_history, get_history, get_categories, get_commands, add_command, delete_command, generate_command_file, reorder_command
+from models import init_db, create_intelligence, get_intelligences, get_intelligence_by_id, update_intelligence_status, add_history, get_history, get_categories, get_commands, add_command, delete_command, generate_command_file, reorder_command, reorder_commands_batch
 import os
 
 app = Flask(__name__)
@@ -51,7 +51,7 @@ def get_intel(id):
 def update_status(id):
     data = request.json
     status = data.get('status')
-    if status not in ['approved', 'rejected', 'active', 'completed']:
+    if status not in ['approved', 'rejected', 'active', 'completed', 'discarded']:
         return jsonify({'error': 'invalid status'}), 400
     
     opinion = data.get('opinion', '')
@@ -105,11 +105,20 @@ def remove_command(id):
 @app.route('/api/commands/reorder', methods=['POST'])
 def reorder_commands():
     data = request.json
-    id = data.get('id')
-    position = data.get('position')
-    if reorder_command(id, position):
-        return jsonify({'success': True})
-    return jsonify({'error': 'not found'}), 404
+    # 支持两种格式：
+    # 1. 批量: {"ids": [id1, id2, id3]} - 按新顺序重排所有
+    # 2. 单个: {"id": x, "position": y} - 移动单个到指定位置
+    if 'ids' in data:
+        ids = data['ids']
+        if reorder_commands_batch(ids):
+            return jsonify({'success': True})
+        return jsonify({'error': 'not found'}), 404
+    else:
+        id = data.get('id')
+        position = data.get('position')
+        if reorder_command(id, position):
+            return jsonify({'success': True})
+        return jsonify({'error': 'not found'}), 404
 
 @app.route('/api/commands/generate', methods=['POST'])
 def make_command_file():

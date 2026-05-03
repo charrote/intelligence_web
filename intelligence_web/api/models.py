@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'intelligence.db')
@@ -172,11 +172,42 @@ def generate_command_file():
     return content
 
 def reorder_command(id, position):
+    """将单个命令移动到指定位置（通过修改 created_at 实现排序）"""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT created_at FROM commands ORDER BY created_at DESC')
+        # 获取所有命令按当前顺序
+        cursor.execute('SELECT id, created_at FROM commands ORDER BY created_at DESC')
         rows = cursor.fetchall()
-        if position < len(rows):
-            cursor.execute('UPDATE commands SET created_at = ? WHERE id = ?', (rows[position][0], id))
+        if position >= len(rows):
+            return False
+        # 找到目标项在旧列表中的位置
+        old_pos = None
+        for i, row in enumerate(rows):
+            if row[0] == id:
+                old_pos = i
+                break
+        if old_pos is None:
+            return False
+        # 交换 created_at：把目标项的 created_at 和新位置的 created_at 互换
+        target_created_at = rows[position][1]
+        old_created_at = rows[old_pos][1]
+        cursor.execute('UPDATE commands SET created_at = ? WHERE id = ?', (target_created_at, id))
+        if old_pos != position:
+            cursor.execute('UPDATE commands SET created_at = ? WHERE id = ?', (old_created_at, rows[position][0]))
         conn.commit()
-        return cursor.rowcount > 0
+        return True
+
+
+def reorder_commands_batch(ids):
+    """批量重新排序：按 ids 列表的顺序更新所有命令的 created_at
+    get_commands 用 ORDER BY created_at DESC，所以第一个元素需要最大的时间戳（最新）
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        now_base = datetime.now()
+        # ids[0] 排最前 → 给它最大的时间戳（offset=0, 最新）；ids[-1] 排最后 → 给它最小的时间戳（offset=len-1, 最旧）
+        for i, cmd_id in enumerate(ids):
+            new_created_at = (now_base - timedelta(seconds=i)).isoformat()
+            cursor.execute('UPDATE commands SET created_at = ? WHERE id = ?', (new_created_at, cmd_id))
+        conn.commit()
+        return True
