@@ -39,6 +39,7 @@
         .list-item:hover { background: #f9f9f9; }
         .list-item:last-child { border-bottom: none; }
         .list-item .item-title { word-break: break-word; line-height: 1.4; font-size: 14px; }
+        .list-item .item-title.read { color: #999; font-size: 13px; }
         .list-item .item-status { white-space: nowrap; }
         .list-item .item-category { white-space: nowrap; font-size: 12px; }
         .list-item .item-date { white-space: nowrap; font-size: 12px; }
@@ -246,6 +247,22 @@
             const pad = n => String(n).padStart(2, '0');
             return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         }
+
+        // ========== 已读状态管理 (localStorage) ==========
+        const READ_STORAGE_KEY = 'intel_read_ids';
+        function getReadIds() {
+            try {
+                return new Set(JSON.parse(localStorage.getItem(READ_STORAGE_KEY) || '[]'));
+            } catch { return new Set(); }
+        }
+        function markAsRead(id) {
+            const ids = getReadIds();
+            ids.add(id);
+            localStorage.setItem(READ_STORAGE_KEY, JSON.stringify([...ids]));
+        }
+        function isRead(id) {
+            return getReadIds().has(id);
+        }
         
         function renderList(items) {
             const body = document.getElementById('listBody');
@@ -253,19 +270,27 @@
                 body.innerHTML = '<div style="padding: 40px; text-align: center; color: #999;">暂无数据</div>';
                 return;
             }
-            body.innerHTML = items.map(item => `
+            body.innerHTML = items.map(item => {
+                const read = isRead(item.id);
+                const titleStyle = item.status === 'discarded'
+                    ? 'text-decoration: line-through; color: #999;'
+                    : read ? 'color: #999;' : '';
+                return `
                 <div class="list-item" onclick="openDetail(${item.id})">
                     <span>${item.id}</span>
-                    <span class="item-title" style="font-weight: 500; ${item.status === 'discarded' ? 'text-decoration: line-through; color: #999;' : ''}">${item.title}</span>
+                    <span class="item-title ${read ? 'read' : ''}" style="font-weight: 500; ${titleStyle}">${read ? '<span style="color:#999;font-size:13px">●</span> ' : '<span style="color:#52c41a;font-size:13px">●</span> '}${item.title}</span>
                     <span class="item-status status ${item.status}">${statusMap[item.status] || item.status}</span>
                     <span class="item-category">${item.category || '-'}</span>
                     <span class="item-date">${formatDateTime(item.created_at)}</span>
                     <span class="item-action" onclick="event.stopPropagation(); openDetail(${item.id})" style="color: #1890ff; cursor: pointer;">查看详情</span>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         }
         
         async function openDetail(id) {
+            // 标记为已读
+            markAsRead(id);
+            
             const res = await fetch(`${API_BASE}/api/intelligence/${id}`);
             currentIntel = await res.json();
             
@@ -274,6 +299,12 @@
             document.getElementById('detailModal').style.display = 'block';
             
             renderDetail();
+            // 关闭弹窗后刷新列表，更新已读样式
+            const origClose = closeModal;
+            closeModal = function() {
+                origClose();
+                loadData();
+            };
         }
         
         async function renderDetail() {
