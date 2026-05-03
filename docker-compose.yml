@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: ./intelligence_web
+      dockerfile: Dockerfile.api
+    container_name: intelligence_web_api
+    ports:
+      - "8766:8766"
+    volumes:
+      - ./intelligence_web/data:/app/data
+    restart: always
+
+  web:
+    image: nginx:alpine
+    container_name: intelligence_web_web
+    ports:
+      - "8765:80"
+    volumes:
+      - ./intelligence_web/web:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+
+networks:
+  default:
+    name: intelligence_network

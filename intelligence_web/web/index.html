@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>情报管理系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .header h1 { font-size: 24px; color: #333; }
+        .header .btn-command { padding: 8px 20px; background: #722ed1; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .header .btn-command:hover { background: #531dab; }
+
+        .command-list { list-style: none; }
+        .command-list li { padding: 12px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px; cursor: grab; }
+        .command-list li:last-child { border-bottom: none; }
+        .command-list li.dragging { opacity: 0.5; background: #f0f0f0; }
+        .command-list .cmd-index { width: 24px; height: 24px; background: #722ed1; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; cursor: grab; }
+        .command-list .cmd-text { flex: 1; }
+        .command-list .cmd-delete { background: none; border: none; color: #f5222d; cursor: pointer; font-size: 18px; }
+        .add-command { margin-top: 15px; }
+        .add-command textarea { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; resize: vertical; min-height: 60px; }
+        .add-command button { margin-top: 10px; padding: 8px 16px; background: #722ed1; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        
+        .filters { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center; }
+        .filters input, .filters select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .filters input[type="text"] { width: 200px; }
+        .filters button { padding: 8px 16px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .filters button:hover { background: #40a9ff; }
+        
+        .list { background: white; border-radius: 8px; overflow: hidden; }
+        .list-header { display: grid; grid-template-columns: 60px 1fr 120px 120px 180px 150px; gap: 15px; padding: 15px 20px; background: #fafafa; font-weight: 600; border-bottom: 1px solid #eee; }
+        .list-item { display: grid; grid-template-columns: 60px 1fr 120px 120px 180px 150px; gap: 15px; padding: 15px 20px; border-bottom: 1px solid #eee; align-items: center; cursor: pointer; transition: background 0.2s; }
+        .list-item:hover { background: #f9f9f9; }
+        .list-item:last-child { border-bottom: none; }
+        
+        .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; text-align: center; }
+        .status.pending { background: #fff7e6; color: #fa8c16; }
+        .status.approved { background: #f6ffed; color: #52c41a; }
+        .status.rejected { background: #fff1f0; color: #f5222d; }
+        .status.active { background: #e6f7ff; color: #1890ff; }
+        .status.completed { background: #f9f0ff; color: #722ed1; }
+        
+        .category { color: #666; font-size: 13px; }
+        .date { color: #999; font-size: 13px; }
+        
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; }
+        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 90%; max-width: 900px; max-height: 90vh; overflow: hidden; z-index: 1001; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid #eee; }
+        .modal-header h2 { font-size: 18px; }
+        .modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: #999; }
+        .modal-body { padding: 20px; max-height: calc(90vh - 140px); overflow-y: auto; }
+        .modal-footer { padding: 15px 20px; border-top: 1px solid #eee; display: flex; gap: 10px; justify-content: flex-end; }
+        
+        .modal-footer button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
+        .modal-footer .btn-approve { background: #52c41a; color: white; }
+        .modal-footer .btn-reject { background: #f5222d; color: white; }
+        .modal-footer .btn-active { background: #1890ff; color: white; }
+        .modal-footer .btn-complete { background: #722ed1; color: white; }
+        
+        .content-preview { white-space: pre-wrap; word-break: break-word; max-height: 100px; overflow: hidden; position: relative; }
+        
+        .detail-section { margin-bottom: 20px; }
+        .detail-section h3 { font-size: 14px; color: #666; margin-bottom: 8px; }
+        .detail-content { background: #fafafa; padding: 15px; border-radius: 4px; }
+        
+        .history-item { padding: 12px; border: 1px solid #eee; border-radius: 4px; margin-bottom: 10px; }
+        .history-action { font-weight: 600; color: #1890ff; }
+        .history-time { font-size: 12px; color: #999; margin-left: 10px; }
+        .history-detail { margin-top: 5px; color: #333; }
+        .history-file { margin-top: 5px; font-size: 12px; color: #666; font-family: monospace; background: #f5f5f5; padding: 5px; border-radius: 3px; }
+        
+        .add-history { background: #f9f9f9; padding: 15px; border-radius: 4px; margin-top: 15px; }
+        .add-history input, .add-history textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px; }
+        .add-history textarea { height: 80px; resize: vertical; }
+        .add-history button { padding: 8px 16px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        
+        .opinion-input { margin-top: 10px; }
+        .opinion-input input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        
+        @media (max-width: 768px) {
+            .list-header { display: none; }
+            .list-item { grid-template-columns: 1fr; gap: 5px; }
+            .filters { flex-direction: column; align-items: stretch; }
+            .filters input[type="text"] { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>情报管理系统</h1>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <button class="btn-command" onclick="openCommand()">情报指挥</button>
+                <span style="color: #999;">Agent API: POST /api/intelligence</span>
+            </div>
+        </div>
+        
+        <div class="filters">
+            <input type="text" id="searchInput" placeholder="搜索标题或内容...">
+            <select id="statusFilter">
+                <option value="">全部状态</option>
+                <option value="pending">待审阅</option>
+                <option value="approved">可行</option>
+                <option value="rejected">不可行</option>
+                <option value="active">激活</option>
+                <option value="completed">已完结</option>
+            </select>
+            <select id="categoryFilter">
+                <option value="">全部分类</option>
+            </select>
+            <input type="date" id="dateFrom" placeholder="开始日期">
+            <input type="date" id="dateTo" placeholder="结束日期">
+            <button onclick="loadData()">筛选</button>
+        </div>
+        
+        <div class="list">
+            <div class="list-header">
+                <span>ID</span>
+                <span>标题</span>
+                <span>状态</span>
+                <span>类别</span>
+                <span>时间</span>
+                <span>操作</span>
+            </div>
+            <div id="listBody"></div>
+        </div>
+    </div>
+    
+    <div class="modal-overlay" id="modalOverlay"></div>
+    <div class="modal" id="commandModal">
+        <div class="modal-header">
+            <h2>情报指挥板</h2>
+            <button class="modal-close" onclick="closeCommand()">&times;</button>
+        </div>
+        <div class="modal-body" id="commandBody"></div>
+        <div class="modal-footer">
+            <button onclick="saveCommand()" style="padding: 8px 16px; background: #722ed1; color: white; border: none; border-radius: 4px; cursor: pointer;">保存并生成指令文件</button>
+        </div>
+    </div>
+    <div class="modal" id="detailModal">
+        <div class="modal-header">
+            <h2 id="modalTitle">情报详情</h2>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+        <div class="modal-footer" id="modalFooter"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8766';
+        let currentIntel = null;
+        let commands = [];
+        
+        const statusMap = {
+            pending: '待审阅',
+            approved: '可行',
+            rejected: '不可行',
+            active: '激活',
+            completed: '已完结'
+        };
+        
+        async function loadData() {
+            const params = new URLSearchParams();
+            const search = document.getElementById('searchInput').value;
+            const status = document.getElementById('statusFilter').value;
+            const category = document.getElementById('categoryFilter').value;
+            const dateFrom = document.getElementById('dateFrom').value;
+            const dateTo = document.getElementById('dateTo').value;
+            
+            if (search) params.append('search', search);
+            if (status) params.append('status', status);
+            if (category) params.append('category', category);
+            if (dateFrom) params.append('date_from', dateFrom);
+            if (dateTo) params.append('date_to', dateTo);
+            
+            const res = await fetch(`${API_BASE}/api/intelligence?${params}`);
+            const data = await res.json();
+            renderList(data);
+        }
+        
+        async function loadCategories() {
+            const res = await fetch(`${API_BASE}/api/categories`);
+            const cats = await res.json();
+            const select = document.getElementById('categoryFilter');
+            cats.forEach(cat => {
+                const opt = document.createElement('option');
+                opt.value = cat;
+                opt.textContent = cat;
+                select.appendChild(opt);
+            });
+        }
+        
+        function renderList(items) {
+            const body = document.getElementById('listBody');
+            if (items.length === 0) {
+                body.innerHTML = '<div style="padding: 40px; text-align: center; color: #999;">暂无数据</div>';
+                return;
+            }
+            body.innerHTML = items.map(item => `
+                <div class="list-item" onclick="openDetail(${item.id})">
+                    <span>${item.id}</span>
+                    <span style="font-weight: 500;">${item.title}</span>
+                    <span class="status ${item.status}">${statusMap[item.status] || item.status}</span>
+                    <span class="category">${item.category || '-'}</span>
+                    <span class="date">${item.created_at.slice(0, 10)}</span>
+                    <span onclick="event.stopPropagation(); openDetail(${item.id})" style="color: #1890ff; cursor: pointer;">查看详情</span>
+                </div>
+            `).join('');
+        }
+        
+        async function openDetail(id) {
+            const res = await fetch(`${API_BASE}/api/intelligence/${id}`);
+            currentIntel = await res.json();
+            
+            document.getElementById('modalTitle').textContent = currentIntel.title;
+            document.getElementById('modalOverlay').style.display = 'block';
+            document.getElementById('detailModal').style.display = 'block';
+            
+            renderDetail();
+        }
+        
+        async function renderDetail() {
+            const intel = currentIntel;
+            const historyRes = await fetch(`${API_BASE}/api/intelligence/${intel.id}/history`);
+            const history = await historyRes.json();
+            
+            const html = `
+                <div class="detail-section">
+                    <h3>状态</h3>
+                    <div class="detail-content">
+                        <span class="status ${intel.status}">${statusMap[intel.status] || intel.status}</span>
+                        ${intel.opinion ? `<div style="margin-top: 10px;"><strong>意见:</strong> ${intel.opinion}</div>` : ''}
+                    </div>
+                </div>
+                <div class="detail-section">
+                    <h3>类别</h3>
+                    <div class="detail-content">${intel.category || '-'}</div>
+                </div>
+                <div class="detail-section">
+                    <h3>内容</h3>
+                    <div class="detail-content markdown-body">${marked.parse(intel.content)}</div>
+                </div>
+                <div class="detail-section">
+                    <h3>创建时间</h3>
+                    <div class="detail-content">${intel.created_at}</div>
+                </div>
+                <div class="detail-section">
+                    <h3>更新时间</h3>
+                    <div class="detail-content">${intel.updated_at}</div>
+                </div>
+                <div class="detail-section">
+                    <h3>履历</h3>
+                    ${history.length === 0 ? '<div style="color: #999;">暂无履历</div>' : history.map(h => `
+                        <div class="history-item">
+                            <span class="history-action">${h.action}</span>
+                            <span class="history-time">${h.created_at.slice(0, 19)}</span>
+                            ${h.detail ? `<div class="history-detail">${h.detail}</div>` : ''}
+                            ${h.file_location ? `<div class="history-file">${h.file_location}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+                ${intel.status === 'active' || intel.status === 'approved' ? `
+                <div class="add-history">
+                    <h3>添加履历</h3>
+                    <input type="text" id="historyAction" placeholder="操作名称 (如: 代码编写, 环境配置)">
+                    <textarea id="historyDetail" placeholder="详细说明"></textarea>
+                    <input type="text" id="historyFile" placeholder="文件位置 (可选)">
+                    <button onclick="addHistory()">添加履历</button>
+                </div>
+                ` : ''}
+            `;
+            
+            document.getElementById('modalBody').innerHTML = html;
+            renderFooter(intel);
+        }
+        
+        function renderFooter(intel) {
+            const footer = document.getElementById('modalFooter');
+            let buttons = '';
+            
+            if (intel.status === 'pending') {
+                buttons = `
+                    <button class="btn-approve" onclick="updateStatus('approved')">标记可行</button>
+                    <button class="btn-reject" onclick="updateStatus('rejected')">标记不可行</button>
+                `;
+            } else if (intel.status === 'approved') {
+                buttons = `<button class="btn-active" onclick="updateStatus('active')">激活项目</button>`;
+            } else if (intel.status === 'active') {
+                buttons = `<button class="btn-complete" onclick="updateStatus('completed')">标记完结</button>`;
+            }
+            
+            footer.innerHTML = buttons;
+        }
+        
+        async function updateStatus(status) {
+            let opinion = '';
+            if (status === 'approved') {
+                opinion = prompt('请输入意见:');
+                if (opinion === null) return;
+            }
+            
+            const res = await fetch(`${API_BASE}/api/intelligence/${currentIntel.id}/status`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ status, opinion })
+            });
+            
+            if (res.ok) {
+                if (status === 'approved' || status === 'active') {
+                    await fetch(`${API_BASE}/api/intelligence/${currentIntel.id}/history`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            action: status === 'approved' ? '审核通过' : '项目激活',
+                            detail: opinion || ''
+                        })
+                    });
+                }
+                currentIntel.status = status;
+                if (opinion) currentIntel.opinion = opinion;
+                await renderDetail();
+                await loadData();
+            }
+        }
+        
+        async function addHistory() {
+            const action = document.getElementById('historyAction').value;
+            const detail = document.getElementById('historyDetail').value;
+            const file_location = document.getElementById('historyFile').value;
+            
+            if (!action) {
+                alert('请输入操作名称');
+                return;
+            }
+            
+            await fetch(`${API_BASE}/api/intelligence/${currentIntel.id}/history`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action, detail, file_location })
+            });
+            
+            document.getElementById('historyAction').value = '';
+            document.getElementById('historyDetail').value = '';
+            document.getElementById('historyFile').value = '';
+            
+            await renderDetail();
+        }
+        
+        function closeModal() {
+            document.getElementById('modalOverlay').style.display = 'none';
+            document.getElementById('detailModal').style.display = 'none';
+            currentIntel = null;
+        }
+        
+        document.getElementById('modalOverlay').addEventListener('click', closeModal);
+        
+        loadData();
+        loadCategories();
+
+        async function openCommand() {
+            console.log('openCommand clicked');
+            try {
+                const res = await fetch(`${API_BASE}/api/commands`);
+                console.log('response:', res);
+                commands = await res.json();
+                console.log('commands:', commands);
+                renderCommands();
+                document.getElementById('modalOverlay').style.display = 'block';
+                document.getElementById('commandModal').style.display = 'block';
+            } catch(e) {
+                console.error(e);
+                alert('Error: ' + e.message);
+            }
+        }
+
+        function closeCommand() {
+            document.getElementById('modalOverlay').style.display = 'none';
+            document.getElementById('commandModal').style.display = 'none';
+        }
+
+        function renderCommands() {
+            const body = document.getElementById('commandBody');
+            body.innerHTML = `
+                <ul class="command-list" id="commandList">
+                    ${commands.length === 0 ? '<li style="color: #999;">暂无指挥指令</li>' : commands.map((cmd, i) => `
+                        <li draggable="true" data-index="${i}" data-id="${cmd.id}">
+                            <span class="cmd-index">${i + 1}</span>
+                            <span class="cmd-text">${cmd.content}</span>
+                            <button class="cmd-delete" onclick="deleteCommand(${cmd.id})">&times;</button>
+                        </li>
+                    `).join('')}
+                </ul>
+                <div class="add-command">
+                    <textarea id="newCommand" placeholder="输入新的情报搜集方向..."></textarea>
+                    <button onclick="addCommand()">+ 添加</button>
+                </div>
+            `;
+            initDragSort();
+        }
+
+        function initDragSort() {
+            const list = document.getElementById('commandList');
+            let draggedItem = null;
+
+            list.addEventListener('dragstart', (e) => {
+                if (e.target.tagName === 'LI') {
+                    draggedItem = e.target;
+                    e.target.classList.add('dragging');
+                }
+            });
+
+            list.addEventListener('dragend', (e) => {
+                if (e.target.tagName === 'LI') {
+                    e.target.classList.remove('dragging');
+                }
+            });
+
+            list.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                const afterElement = getDragAfterElement(list, e.clientY);
+                if (draggedItem) {
+                    if (afterElement == null) {
+                        list.appendChild(draggedItem);
+                    } else {
+                        list.insertBefore(draggedItem, afterElement);
+                    }
+                }
+            });
+
+            list.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                const newOrder = Array.from(list.querySelectorAll('li[data-id]')).map(li => parseInt(li.dataset.id));
+                const ids = newOrder.reverse();
+                for (let i = 0; i < ids.length; i++) {
+                    await fetch(`${API_BASE}/api/commands/reorder`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ id: ids[i], position: i })
+                    });
+                }
+                const res = await fetch(`${API_BASE}/api/commands`);
+                commands = await res.json();
+                renderCommands();
+            });
+        }
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('li:not(.dragging)')];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        async function addCommand() {
+            const input = document.getElementById('newCommand');
+            const content = input.value.trim();
+            if (!content) return;
+
+            await fetch(`${API_BASE}/api/commands`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ content })
+            });
+
+            input.value = '';
+            const res = await fetch(`${API_BASE}/api/commands`);
+            commands = await res.json();
+            renderCommands();
+        }
+
+        async function deleteCommand(id) {
+            await fetch(`${API_BASE}/api/commands/${id}`, { method: 'DELETE' });
+            const res = await fetch(`${API_BASE}/api/commands`);
+            commands = await res.json();
+            renderCommands();
+        }
+
+        async function saveCommand() {
+            const res = await fetch(`${API_BASE}/api/commands/generate`, { method: 'POST' });
+            const data = await res.json();
+            alert('已生成指令文件: ' + data.file);
+            closeCommand();
+        }
+    </script>
+</body>
+</html>
