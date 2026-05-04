@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from models import init_db, create_intelligence, get_intelligences, get_intelligence_by_id, update_intelligence_status, add_history, get_history, get_categories, get_commands, add_command, delete_command, generate_command_file, reorder_command, reorder_commands_batch
+from models import init_db, create_intelligence, get_intelligences, get_intelligence_by_id, update_intelligence_status, add_history, get_history, get_categories, get_commands, add_command, delete_command, generate_command_file, reorder_command, reorder_commands_batch, add_comment, get_comments, add_summary, get_summary, get_approved_intelligences, get_agent_names, get_db
 import os
 
 app = Flask(__name__)
@@ -38,6 +38,9 @@ def list_intel():
         filters['date_to'] = request.args.get('date_to')
     
     intelligences = get_intelligences(filters)
+    # 为每条情报添加评论数
+    for intel in intelligences:
+        intel['comment_count'] = len(get_comments(intel['id'], limit=999))
     return jsonify(intelligences)
 
 @app.route('/api/intelligence/<int:id>', methods=['GET'])
@@ -129,6 +132,110 @@ def make_command_file():
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(content)
     return jsonify({'file': 'data/scout_directives.md'})
+
+# ========== 评论 API（仅 Agent） ==========
+AGENT_API_KEY = os.environ.get('INTELLIGENCE_AGENT_KEY', 'agent-secret-key')
+
+def require_agent():
+    """验证 Agent API Key，无 key 或 key 错误则拒绝"""
+    key = request.headers.get('X-Agent-Key', '')
+    if key != AGENT_API_KEY:
+        return jsonify({'error': 'Unauthorized: valid agent key required'}), 401
+    return None
+
+@app.route('/api/intelligence/<int:id>/comments', methods=['GET'])
+def list_comments(id):
+    limit = request.args.get('limit', 20, type=int)
+    comments = get_comments(id, limit)
+    # 按时间正序返回（旧的在前，新的在后，方便滚动）
+    return jsonify(list(reversed(comments)))
+
+@app.route('/api/intelligence/<int:id>/comments', methods=['POST'])
+def add_comment_api(id):
+    unauthorized = require_agent()
+    if unauthorized:
+        return unauthorized
+    
+    data = request.json
+    if not data.get('agent_name') or not data.get('content'):
+        return jsonify({'error': 'agent_name and content are required'}), 400
+    
+    comment_id = add_comment(
+        id,
+        data['agent_name'],
+        data['content'],
+        data.get('agent_id', '')
+    )
+    return jsonify({'id': comment_id, 'success': True}), 201
+
+# ========== 总结 API（仅 Agent） ==========
+@app.route('/api/intelligence/<int:id>/summary', methods=['GET'])
+def get_summary_api(id):
+    summary = get_summary(id)
+    if not summary:
+        return jsonify({'error': 'no summary yet'}), 404
+    return jsonify(summary)
+
+@app.route('/api/intelligence/<int:id>/summary', methods=['POST'])
+def add_summary_api(id):
+    unauthorized = require_agent()
+    if unauthorized:
+        return unauthorized
+    
+    data = request.json
+    if not data.get('content'):
+        return jsonify({'error': 'content is required'}), 400
+    
+    summary_id = add_summary(id, data['content'])
+    return jsonify({'id': summary_id, 'success': True}), 201
+
+@app.route('/api/summaries', methods=['GET'])
+def list_all_summaries():
+    """获取所有有总结的情报的总结列表，用于全局总结栏"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # 获取所有 approved/active 情报
+        cursor.execute("SELECT id, title, status FROM intelligence WHERE status IN ('approved', 'active') ORDER BY updated_at DESC")
+        items = [dict(row) for row in cursor.fetchall()]
+    
+    result = []
+    for item in items:
+        summary = get_summary(item['id'])
+        if summary:
+            result.append({
+                'intelligence_id': item['id'],
+                'title': item['title'],
+                'status': item['status'],
+                'summary': summary['content'],
+                'updated_at': summary['updated_at']
+            })
+    return jsonify(result)
+
+# ========== 分发评论任务 API（仅 Agent） ==========
+@app.route('/api/review/dispatch', methods=['POST'])
+def dispatch_review():
+    """触发对 approved/active 项目的评论分发。由定时任务调用。"""
+    unauthorized = require_agent()
+    if unauthorized:
+        return unauthorized
+    
+    items = get_approved_intelligences()
+    agent_names = get_agent_names()
+    dispatched = []
+    for item in items:
+        dispatched.append({
+            'id': item['id'],
+            'title': item['title'],
+            'status': item['status'],
+            'content': item['content'],
+            'opinion': item.get('opinion', ''),
+            'category': item.get('category', '')
+        })
+    return jsonify({
+        'dispatched': dispatched,
+        'count': len(dispatched),
+        'agents': agent_names
+    })
 
 if __name__ == '__main__':
     init_db()

@@ -1,9 +1,26 @@
 import sqlite3
 import os
+import json
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'intelligence.db')
+OPENCLAW_CONFIG_PATH = '/home/uantek/.openclaw/openclaw.json'
+
+def get_agent_names():
+    """从 openclaw.json 读取所有 Agent 的 id:name 映射"""
+    try:
+        with open(OPENCLAW_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        agents = {}
+        for agent in config.get('agents', {}).get('list', []):
+            aid = agent.get('id', '')
+            name = agent.get('name', aid)
+            if aid and name:
+                agents[aid] = name
+        return agents
+    except Exception:
+        return {'main': '贾维斯'}
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -40,6 +57,28 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             content TEXT NOT NULL,
             created_at TEXT NOT NULL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            intelligence_id INTEGER NOT NULL,
+            agent_name TEXT NOT NULL,
+            agent_id TEXT DEFAULT '',
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            intelligence_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
         )
     ''')
     
@@ -197,6 +236,58 @@ def reorder_command(id, position):
         conn.commit()
         return True
 
+
+def add_comment(intelligence_id, agent_name, content, agent_id='',):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        cursor.execute(
+            'INSERT INTO comments (intelligence_id, agent_name, agent_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
+            (intelligence_id, agent_name, agent_id, content, now)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+def get_comments(intelligence_id, limit=20):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT * FROM comments WHERE intelligence_id = ? ORDER BY created_at DESC LIMIT ?',
+            (intelligence_id, limit)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+def add_summary(intelligence_id, content):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        # 删除旧总结，插入新总结
+        cursor.execute('DELETE FROM summaries WHERE intelligence_id = ?', (intelligence_id,))
+        cursor.execute(
+            'INSERT INTO summaries (intelligence_id, content, updated_at) VALUES (?, ?, ?)',
+            (intelligence_id, content, now)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+def get_summary(intelligence_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT * FROM summaries WHERE intelligence_id = ? ORDER BY updated_at DESC LIMIT 1',
+            (intelligence_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+def get_approved_intelligences():
+    """获取所有标记为 approved 的情报，用于分发给子 Agent 评论（active 状态不评论）"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT * FROM intelligence WHERE status = \'approved\' ORDER BY updated_at DESC'
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
 def reorder_commands_batch(ids):
     """批量重新排序：按 ids 列表的顺序更新所有命令的 created_at
