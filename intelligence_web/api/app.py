@@ -21,6 +21,8 @@ def create_intel():
         data['content'],
         data.get('category', '')
     )
+    if intel_id is None:
+        return jsonify({'error': 'duplicate title, skipping'}), 409
     return jsonify({'id': intel_id, 'status': 'pending'}), 201
 
 @app.route('/api/intelligence', methods=['GET'])

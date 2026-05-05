@@ -235,8 +235,8 @@
             <select id="statusFilter">
                 <option value="">全部状态</option>
                 <option value="pending">待审阅</option>
-                <option value="approved">可行</option>
-                <option value="rejected">不可行</option>
+                <option value="approved">建议跟进</option>
+                <option value="rejected">不建议</option>
                 <option value="active">激活</option>
                 <option value="completed">已完结</option>
                 <option value="discarded">已废弃</option>
@@ -299,8 +299,8 @@
         
         const statusMap = {
             pending: '待审阅',
-            approved: '可行',
-            rejected: '不可行',
+            approved: '建议跟进',
+            rejected: '不建议',
             active: '激活',
             completed: '已完结',
             discarded: '已废弃'
@@ -524,8 +524,8 @@
             
             if (intel.status === 'pending') {
                 buttons = `
-                    <button class="btn-approve" onclick="updateStatus('approved')">标记可行</button>
-                    <button class="btn-reject" onclick="updateStatus('rejected')">标记不可行</button>
+                    <button class="btn-approve" onclick="updateStatus('approved')">建议跟进</button>
+                    <button class="btn-reject" onclick="updateStatus('rejected')">不建议</button>
                 `;
             } else if (intel.status === 'approved') {
                 buttons = `<button class="btn-active" onclick="updateStatus('active')">激活项目</button>`;
