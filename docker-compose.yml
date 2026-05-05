@@ -24,6 +24,7 @@ services:
       - ./intelligence_web/web:/usr/share/nginx/html:ro
     depends_on:
       - api
+    restart: always
 
 networks:
   default:

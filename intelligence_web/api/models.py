@@ -30,7 +30,7 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS intelligence (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
+            title TEXT UNIQUE NOT NULL,
             content TEXT NOT NULL,
             category TEXT DEFAULT '',
             status TEXT DEFAULT 'pending',
@@ -96,14 +96,27 @@ def get_db():
 
 def create_intelligence(title, content, category=''):
     with get_db() as conn:
-        cursor = conn.cursor()
-        now = datetime.now().isoformat()
-        cursor.execute(
-            'INSERT INTO intelligence (title, content, category, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-            (title, content, category, 'pending', now, now)
-        )
-        conn.commit()
-        return cursor.lastrowid
+        # 去重：检查是否已有相同标题（不区分大小写）的情报
+        title_norm = title.strip().lower()
+        existing_row = conn.execute(
+            "SELECT id FROM intelligence WHERE LOWER(TRIM(title)) = ?",
+            (title_norm,)
+        ).fetchone()
+        if existing_row:
+            return None  # 重复情报，返回None
+    
+        with get_db() as conn2:
+            cursor = conn2.cursor()
+            now = datetime.now().isoformat()
+            try:
+                cursor.execute(
+                    'INSERT INTO intelligence (title, content, category, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+                    (title.strip(), content, category or '', 'pending', now, now)
+                )
+                conn2.commit()
+            except Exception:
+                return None  # UNIQUE约束冲突兜底
+            return cursor.lastrowid
 
 def get_intelligences(filters=None):
     with get_db() as conn:
