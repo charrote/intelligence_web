@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>通知中心</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.bell-wrap{position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.bell-wrap svg{width:18px;height:18px;color:var(--gray-600)}
+.bell-badge{position:absolute;top:2px;right:2px;min-width:16px;height:16px;background:var(--red);color:#fff;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0 4px;display:none}
+.bell-badge.show{display:flex}
+
+.page-title{font-size:18px;font-weight:600;color:var(--gray-800);margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+.toolbar{display:flex;gap:8px}
+.toolbar .btn{padding:6px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer;transition:all 0.12s}
+.toolbar .btn:hover{border-color:var(--accent);color:var(--accent)}
+.toolbar .btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+.notif-list{display:flex;flex-direction:column;gap:6px}
+.notif{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;transition:all 0.15s;cursor:pointer}
+.notif:hover{border-color:var(--accent);background:var(--gray-50)}
+.notif.unread{border-left:3px solid var(--accent);background:#fff}
+.notif-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px}
+.notif-title{font-size:14px;font-weight:500;color:var(--gray-800);line-height:1.4;flex:1}
+.notif-title.unread-title{font-weight:600}
+.notif-time{font-size:11px;color:var(--gray-400);white-space:nowrap;margin-left:12px;flex-shrink:0}
+.notif-content{font-size:13px;color:var(--gray-600);line-height:1.5;padding-left:21px}
+.notif-source{display:inline-flex;padding:2px 6px;border-radius:2px;font-size:10px;font-weight:500;color:var(--gray-600);background:var(--gray-100);margin-top:4px}
+.empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+.loading{text-align:center;padding:30px;color:var(--gray-400);font-size:13px}
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="page-title">
+    <span>通知列表</span>
+    <div class="toolbar">
+      <button class="btn active" id="btnAll" onclick="setFilter('all')">全部</button>
+      <button class="btn" id="btnUnread" onclick="setFilter('unread')">未读</button>
+      <button class="btn" id="btnAllRead" onclick="markAllRead()">全部已读</button>
+    </div>
+  </div>
+  <div class="notif-list" id="notifList">
+    <div class="loading">加载中...</div>
+  </div>
+</main>
+
+<script>
+const token = localStorage.getItem('token');
+if (!token) { window.location.href = '/portal/login.html'; }
+
+let currentFilter = 'all';
+let allNotifs = [];
+let unreadCount = 0;
+
+async function init() {
+  const u = getUser();
+  const a = document.getElementById('userAvatar');
+  if (a) a.textContent = u ? (u.display_name || u.username.charAt(0).toUpperCase()) : '管';
+  await loadNotifs();
+}
+
+async function loadNotifs(unreadOnly) {
+  try {
+    let url = apiBase() + '/api/notifications?limit=100';
+    if (unreadOnly !== undefined && unreadOnly) url += '&unread_only=true';
+    const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+    const d = await r.json();
+    allNotifs = d.items || [];
+    unreadCount = d.unread || 0;
+    updateBadge();
+    render();
+  } catch(e) {
+    document.getElementById('notifList').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+async function loadUnreadCount() {
+  try {
+    const r = await fetch(apiBase() + '/api/notifications/unread-count', { headers: { 'Authorization': 'Bearer ' + token } });
+    const d = await r.json();
+    unreadCount = d.unread || 0;
+    updateBadge();
+  } catch(e) {}
+}
+
+function updateBadge() {
+  const badge = document.getElementById('bellBadge');
+  if (unreadCount > 0) {
+    badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+    badge.classList.add('show');
+  } else {
+    badge.classList.remove('show');
+  }
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.getElementById('btnAll').classList.toggle('active', f === 'all');
+  document.getElementById('btnUnread').classList.toggle('active', f === 'unread');
+  render();
+}
+
+async function markAllRead() {
+  try {
+    await apiFetch(apiBase() + '/api/notifications/read-all', { method: 'POST' });
+    allNotifs = allNotifs.map(n => ({ ...n, read_at: new Date().toISOString() }));
+    unreadCount = 0;
+    updateBadge();
+    currentFilter = 'all';
+    document.getElementById('btnAll').classList.add('active');
+    document.getElementById('btnUnread').classList.remove('active');
+    render();
+  } catch(e) {}
+}
+
+async function markRead(notifId) {
+  try {
+    await apiFetch(apiBase() + '/api/notifications/' + notifId + '/read', { method: 'POST' });
+    const idx = allNotifs.findIndex(n => n.id === notifId);
+    if (idx >= 0) {
+      allNotifs[idx] = { ...allNotifs[idx], read_at: new Date().toISOString() };
+      unreadCount = Math.max(0, unreadCount - 1);
+      updateBadge();
+      render();
+    }
+  } catch(e) {}
+}
+
+function getSourceLabel(source) {
+  const map = { new_intel: '新情报', status_change: '状态变更', system: '系统通知' };
+  return map[source] || source;
+}
+
+function render() {
+  const list = document.getElementById('notifList');
+  let items = currentFilter === 'unread' ? allNotifs.filter(n => !n.read_at) : allNotifs;
+
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">' + (currentFilter === 'unread' ? '暂无未读通知' : '暂无通知') + '</div>';
+    return;
+  }
+
+  list.innerHTML = items.map(n => {
+    const isUnread = !n.read_at;
+    const titleClass = isUnread ? 'notif-title unread-title' : 'notif-title';
+    return '<div class="notif' + (isUnread ? ' unread' : '') + '" onclick="markRead(' + n.id + ')">'
+      + '<div class="notif-header">'
+      + '<div class="' + titleClass + '">' + escapeHtml(n.title) + '</div>'
+      + '<div class="notif-time">' + formatDate(n.created_at) + '</div>'
+      + '</div>'
+      + (n.content ? '<div class="notif-content">' + escapeHtml(n.content.substring(0, 150)) + (n.content.length > 150 ? '...' : '') + '</div>' : '')
+      + '<div class="notif-source">' + getSourceLabel(n.source) + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+init();
+</script>
+</body>
+</html>
