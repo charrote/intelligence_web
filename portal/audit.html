@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>操作日志</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.toolbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.toolbar input,.toolbar select{padding:5px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px}
+.toolbar label{font-size:12px;color:var(--gray-600)}
+.toolbar .spacer{flex:1}
+.count-bar{font-size:12px;color:var(--gray-400);margin-bottom:12px}
+.method{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;min-width:42px;text-align:center}
+.method-POST{background:#eaf5ef;color:var(--green)}
+.method-PUT{background:var(--accent-light);color:var(--accent)}
+.method-DELETE{background:#fde8e8;color:var(--red)}
+.path-cell{font-family:monospace;font-size:11px;color:var(--gray-600);max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.detail-btn{color:var(--accent);cursor:pointer;border:none;background:none;font-size:12px;text-decoration:underline}
+.pagination{display:flex;align-items:center;gap:8px;margin-top:12px;justify-content:center}
+.pagination button{padding:5px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;background:#fff;cursor:pointer}
+.pagination button:disabled{opacity:0.4;cursor:default}
+.pagination button:not(:disabled):hover{background:var(--gray-50)}
+.pagination span{font-size:12px;color:var(--gray-600)}
+.empty-state{text-align:center;padding:40px;color:var(--gray-400)}
+.modal .field{margin-bottom:10px}
+.modal .field-label{font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;margin-bottom:2px}
+.modal .field-value{font-size:13px;color:var(--gray-700);word-break:break-all}
+.modal .actions{display:flex;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--gray-200)}
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>操作日志</h1>
+  <div class="sub">查看系统用户操作记录</div>
+
+  <div class="toolbar">
+    <label>用户
+      <select id="filterUser"><option value="">全部</option></select>
+    </label>
+    <label>操作
+      <select id="filterAction">
+        <option value="">全部</option>
+        <option value="POST">POST</option>
+        <option value="PUT">PUT</option>
+        <option value="DELETE">DELETE</option>
+      </select>
+    </label>
+    <label>资源
+      <input type="text" id="filterResource" placeholder="资源类型">
+    </label>
+    <label>开始
+      <input type="date" id="filterStart">
+    </label>
+    <label>结束
+      <input type="date" id="filterEnd">
+    </label>
+    <button class="btn btn-primary" onclick="loadLogs()">查询</button>
+    <button class="btn btn-ghost" onclick="resetFilters()">重置</button>
+    <span class="spacer"></span>
+    <button class="btn btn-ghost" onclick="loadLogs()">刷新</button>
+  </div>
+
+  <div class="count-bar" id="countBar">共 0 条记录</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:50px">ID</th>
+        <th style="width:60px">方法</th>
+        <th>操作路径</th>
+        <th style="width:80px">用户</th>
+        <th style="width:80px">状态</th>
+        <th style="width:140px">时间</th>
+        <th style="width:80px">详情</th>
+      </tr>
+    </thead>
+    <tbody id="logList"></tbody>
+  </table>
+
+  <div class="pagination" id="pagination"></div>
+</main>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal">
+    <h2 style="font-size:16px;font-weight:600;color:var(--gray-800);margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--gray-200)">操作详情</h2>
+    <div id="detailContent"></div>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="closeDetail()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var token = getToken();
+if (!token) { window.location.href = '/portal/login.html'; }
+
+var currentPage = 1;
+var totalPages = 1;
+var totalItems = 0;
+
+function resetFilters() {
+  document.getElementById('filterUser').value = '';
+  document.getElementById('filterAction').value = '';
+  document.getElementById('filterResource').value = '';
+  document.getElementById('filterStart').value = '';
+  document.getElementById('filterEnd').value = '';
+  currentPage = 1;
+  loadLogs();
+}
+
+function loadLogs() {
+  var params = new URLSearchParams({
+    limit: 50,
+    offset: (currentPage - 1) * 50,
+  });
+
+  var actionVal = document.getElementById('filterAction').value;
+  if (actionVal) params.set('action', actionVal);
+
+  var resourceVal = document.getElementById('filterResource').value;
+  if (resourceVal) params.set('resource', resourceVal);
+
+  var startVal = document.getElementById('filterStart').value;
+  if (startVal) params.set('start_date', startVal);
+
+  var endVal = document.getElementById('filterEnd').value;
+  if (endVal) params.set('end_date', endVal + 'T23:59:59');
+
+  apiFetch(apiBase()+'/api/audit/logs?'+params).then(function(r){return r.json()}).then(function(data){
+    var tbody = document.getElementById('logList');
+    totalItems = data.total;
+    totalPages = Math.ceil(totalItems / 50) || 1;
+
+    document.getElementById('countBar').textContent = '共 '+totalItems+' 条记录';
+
+    if (!data.items.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无操作记录</td></tr>';
+    } else {
+      tbody.innerHTML = data.items.map(function(log){
+        var methodClass = 'method-'+log.method;
+        var time = log.created_at ? new Date(log.created_at).toLocaleString('zh-CN') : '-';
+        var statusCodeColor = log.status_code >= 400 ? 'var(--red)' : (log.status_code >= 300 ? 'var(--amber)' : 'var(--green)');
+        return '<tr>'
+          +'<td>'+log.id+'</td>'
+          +'<td><span class="method '+methodClass+'">'+log.method+'</span></td>'
+          +'<td class="path-cell" title="'+escapeHtml(log.path)+'">'+escapeHtml(log.path)+'</td>'
+          +'<td>'+escapeHtml(log.username || '-')+'</td>'
+          +'<td style="color:'+statusCodeColor+'">'+(log.status_code || '-')+'</td>'
+          +'<td>'+time+'</td>'
+          +'<td><button class="detail-btn" onclick="showDetail('+log.id+')">查看</button></td>'
+          +'</tr>';
+      }).join('');
+    }
+
+    renderPagination();
+  }).catch(function(){
+    document.getElementById('logList').innerHTML = '<tr><td colspan="7" class="empty-state">加载失败</td></tr>';
+  });
+}
+
+function renderPagination() {
+  var pag = document.getElementById('pagination');
+  if (totalPages <= 1) { pag.innerHTML = ''; return; }
+  var html = '';
+  html += '<button '+(currentPage === 1 ? 'disabled' : '')+' onclick="goPage('+(currentPage-1)+')">上一页</button>';
+  html += '<span>第 '+currentPage+' / '+totalPages+' 页</span>';
+  html += '<button '+(currentPage === totalPages ? 'disabled' : '')+' onclick="goPage('+(currentPage+1)+')">下一页</button>';
+  pag.innerHTML = html;
+}
+
+function goPage(page) {
+  currentPage = page;
+  loadLogs();
+}
+
+function showDetail(logId) {
+  apiFetch(apiBase()+'/api/audit/logs?limit=1&offset=0').then(function(r){return r.json()}).then(function(data){
+    var log = data.items.find(function(l){return l.id === logId});
+    if (!log) { alert('未找到记录'); return; }
+
+    var time = log.created_at ? new Date(log.created_at).toLocaleString('zh-CN') : '-';
+    document.getElementById('detailContent').innerHTML =
+      '<div class="field"><div class="field-label">操作 ID</div><div class="field-value">'+log.id+'</div></div>'
+      +'<div class="field"><div class="field-label">方法</div><div class="field-value"><span class="method method-'+log.method+'">'+log.method+'</span></div></div>'
+      +'<div class="field"><div class="field-label">路径</div><div class="field-value" style="font-family:monospace">'+escapeHtml(log.path)+'</div></div>'
+      +'<div class="field"><div class="field-label">资源</div><div class="field-value">'+escapeHtml(log.resource || '-')+'</div></div>'
+      +'<div class="field"><div class="field-label">资源 ID</div><div class="field-value">'+escapeHtml(log.resource_id || '-')+'</div></div>'
+      +'<div class="field"><div class="field-label">用户</div><div class="field-value">'+escapeHtml(log.username || '匿名用户')+' (ID: '+log.user_id+'-)</div></div>'
+      +'<div class="field"><div class="field-label">状态码</div><div class="field-value">'+log.status_code+'</div></div>'
+      +'<div class="field"><div class="field-label">IP 地址</div><div class="field-value">'+escapeHtml(log.ip_address || '-')+'</div></div>'
+      +'<div class="field"><div class="field-label">User-Agent</div><div class="field-value" style="max-height:60px;overflow:auto">'+escapeHtml(log.user_agent || '-')+'</div></div>'
+      +'<div class="field"><div class="field-label">请求体</div><div class="field-value" style="max-height:120px;overflow:auto;background:var(--gray-50);padding:8px;border-radius:var(--radius);font-family:monospace;font-size:11px">'+escapeHtml(log.detail || '(无)')+'</div></div>'
+      +'<div class="field"><div class="field-label">时间</div><div class="field-value">'+time+'</div></div>';
+    document.getElementById('detailModal').classList.add('open');
+  }).catch(function(){
+    alert('加载详情失败');
+  });
+}
+
+function closeDetail() {
+  document.getElementById('detailModal').classList.remove('open');
+}
+
+document.getElementById('detailModal').addEventListener('click', function(e) {
+  if (e.target === this) closeDetail();
+});
+
+loadLogs();
+</script>
+</body>
+</html>
