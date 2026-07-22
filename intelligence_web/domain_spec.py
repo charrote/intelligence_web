@@ -30,6 +30,16 @@ SPEC = build_spec(
         "standard",
     ],
 
+    statuses=[
+        ("pending", "待处理"),
+        ("active", "处理中"),
+        ("done", "已完成"),
+    ],
+
+    intelligence_ttl_days={
+        "default": 90,
+    },
+
     target_type_initial_data=[
         {"slug": "product", "label": "产品", "description": "制造产品、设备、零部件等", "color": "#3b4f8c", "sort_order": 1},
         {"slug": "technology", "label": "技术", "description": "制造工艺、技术趋势、研发动态", "color": "#2a7d4f", "sort_order": 2},

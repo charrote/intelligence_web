@@ -14,7 +14,7 @@
 <link rel="stylesheet" href="css/responsive.css">
 <script src="js/dom.js"></script>
 <script src="js/auth.js"></script>
-<script src="js/init.js"></script>
+<!-- <script src="js/init.js"></script> -->
 <script src="js/tabs.js"></script>
 <style>
 .feed{display:flex;flex-direction:column;gap:6px}
@@ -34,17 +34,20 @@
 <main class="main">
   <div class="stats" id="statsRow">
     <div class="stat"><div class="stat-num accent" id="statTotal">-</div><div class="stat-label">全部情报</div></div>
-    <div class="stat"><div class="stat-num gold" id="statPending">-</div><div class="stat-label">待审阅</div></div>
-    <div class="stat"><div class="stat-num green" id="statApproved">-</div><div class="stat-label">已跟进</div></div>
-    <div class="stat"><div class="stat-num" id="statCompleted">-</div><div class="stat-label">已完结</div></div>
+    <div class="stat"><div class="stat-num gold" id="statPending">-</div><div class="stat-label">待处理</div></div>
+    <div class="stat"><div class="stat-num accent" id="statActive">-</div><div class="stat-label">处理中</div></div>
+    <div class="stat"><div class="stat-num green" id="statDone">-</div><div class="stat-label">已完成</div></div>
   </div>
-  <div class="section-header">
-    <h2>最新情报 <span class="count" id="feedCount"></span></h2>
-    <div class="filter-group">
-      <select id="statusFilter" onchange="filterCards()"><option value="">全部状态</option></select>
-      <select id="catFilter" onchange="filterCards()"><option value="">全部分类</option></select>
-      <button class="btn-reset" onclick="resetFilter()">重置</button>
-    </div>
+  <div class="toolbar">
+    <input type="text" id="searchInput" placeholder="搜索情报..." oninput="filterCards()">
+    <select id="statusFilter" onchange="filterCards()">
+      <option value="">全部状态</option>
+    </select>
+    <select id="catFilter" onchange="filterCards()">
+      <option value="">全部分类</option>
+    </select>
+    <span class="spacer"></span>
+    <span style="font-size:12px;color:var(--gray-400)">共 <strong id="feedCount" style="color:var(--gray-700)">0</strong> 条</span>
   </div>
   <div class="feed" id="feed"></div>
 </main>
@@ -55,6 +58,7 @@
 </div>
 <div class="panel-overlay" onclick="closePanel()"></div>
 <script>
+console.log("[TEST] Script loaded");
 var currentIntel = null;
 var allItems = [];
 var domainConfig = null, statusMap = {};
@@ -65,6 +69,18 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c) {
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c];
   });
+}
+
+function statusColor(s) {
+  if (!s) return 'var(--gray-100)';
+  var colors = {'pending':'var(--amber-light)','active':'var(--blue-light)','done':'var(--green-light)'};
+  return colors[s] || 'var(--gray-100)';
+}
+
+function statusTextColor(s) {
+  if (!s) return 'var(--gray-600)';
+  var colors = {'pending':'var(--amber)','active':'var(--blue)','done':'var(--green)'};
+  return colors[s] || 'var(--gray-600)';
 }
 
 function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;filterCards()}
@@ -79,13 +95,16 @@ async function init() {
 async function loadDomainConfig() {
   try {
     var res = await apiFetch(APP_API_BASE + '/api/domain_config');
-    domainConfig = await res.json();
-    domainConfig.statuses.forEach(function(s) { statusMap[s[0]] = s[1]; });
-  } catch(e) { statusMap = {pending:'待审阅',approved:'可行',rejected:'不可行',active:'激活',completed:'已完结',discarded:'已废弃'}; }
+    var data = await res.json();
+    domainConfig = data;
+    if (data.statuses) {
+      data.statuses.forEach(function(s) { statusMap[s.key || s[0]] = s.label || s[1]; });
+    }
+  } catch(e) { statusMap = {pending:'待处理',active:'处理中',done:'已完成'}; }
 }
 
 async function loadData() {
-  try { var r = await apiFetch(APP_API_BASE + '/api/intelligence?limit=100'); var d = await r.json(); allItems = d.items || []; } catch(e) { allItems = []; }
+  try { var r = await apiFetch(APP_API_BASE + '/api/intelligence?limit=100'); var d = await r.json(); allItems = Array.isArray(d) ? d : (d.items || []); console.log('[DATA] loaded', allItems.length, 'items'); } catch(e) { console.log('[DATA] error:', e); allItems = []; }
 }
 
 function buildSidebarCats() {
@@ -101,8 +120,8 @@ function buildSidebarCats() {
 }
 
 function render() {
-  var t=allItems.length, p=allItems.filter(function(i){return i.status==='pending'}).length, a=allItems.filter(function(i){return i.status==='approved'}).length, c=allItems.filter(function(i){return i.status==='completed'}).length;
-  document.getElementById('statTotal').textContent=t; document.getElementById('statPending').textContent=p; document.getElementById('statApproved').textContent=a; document.getElementById('statCompleted').textContent=c;
+  var t=allItems.length, p=allItems.filter(function(i){return i.status==='pending'}).length, a=allItems.filter(function(i){return i.status==='active'}).length, c=allItems.filter(function(i){return i.status==='done'}).length;
+  document.getElementById('statTotal').textContent=t; document.getElementById('statPending').textContent=p; document.getElementById('statActive').textContent=a; document.getElementById('statDone').textContent=c;
   var sel=document.getElementById('statusFilter'); sel.innerHTML='<option value="">全部状态</option>';
   Object.entries(statusMap).forEach(function(e){var o=document.createElement('option');o.value=e[0];o.textContent=e[1];sel.appendChild(o)});
   var cs=document.getElementById('catFilter'); var cats=[]; for(var i=0;i<allItems.length;i++){if(allItems[i].category&&cats.indexOf(allItems[i].category)===-1)cats.push(allItems[i].category)}
@@ -129,6 +148,7 @@ function renderFeed(items) {
     +'<div class="row-index">'+(i+1).toString().padStart(2,'0')+'</div>'
     +'<div class="row-body"><div class="row-title">'+escapeHtml(item.title||'')+'</div>'
     +'<div class="row-meta">'+(item.category?'<span class="tag">'+escapeHtml(item.category)+'</span>':'')
+    +(statusMap[item.status]?'<span class="tag" style="background:'+statusColor(item.status)+';color:'+statusTextColor(item.status)+'">'+escapeHtml(statusMap[item.status])+'</span>':'')
     +(co?'<span class="tag tag-company">'+co+'</span>':'')+(de?'<span class="deal">'+de+'</span>':'')
     +ents
     +'<span>'+formatDate(item.created_at)+'</span>'
@@ -145,15 +165,17 @@ async function openDetail(id) {
     var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+id);currentIntel=await r.json();
     document.getElementById('panelTitle').textContent=currentIntel.title;
     renderDetail();loadComments(id);
-    document.getElementById('detailPanel').classList.add('open');
-  }catch(e){}
+    var panel = document.getElementById('detailPanel');
+    panel.classList.add('open');
+    console.log('[OPEN] panel class:', panel.className);
+  }catch(e){ console.log('[OPEN] error:', e); }
 }
 
 function renderDetail() {
   var d=currentIntel; var body=document.getElementById('panelBody'); var foot=document.getElementById('panelFoot');
   var ents=(d.entities||[]).map(function(e){return '<span class="tag" style="background:#f0e6ff;color:#722ed1">'+escapeHtml(e)+'</span>'}).join('');
   body.innerHTML='<div class="detail-meta">'
-    +'<span class="tag tag-status '+d.status+'">'+(statusMap[d.status]||d.status)+'</span>'
+    +'<span class="tag tag-status '+d.status+'" style="background:'+statusColor(d.status)+';color:'+statusTextColor(d.status)+'">'+(statusMap[d.status]||d.status)+'</span>'
     +(d.category?'<span class="tag tag-cat">'+escapeHtml(d.category)+'</span>':'')
     +(d.company?'<span class="tag tag-company">'+escapeHtml(d.company)+'</span>':'')
     +'</div>'
@@ -167,7 +189,7 @@ function renderDetail() {
     +'<h3 style="font-size:13px;font-weight:600;color:var(--gray-700)">附件</h3>'
     +'<label style="font-size:12px;color:var(--accent);cursor:pointer">'
     +'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:3px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传</label>'
-    +'<input type="file" id="attachFile" style="display:none" onchange="uploadAttachment('+id+')" multiple>'
+    +'<input type="file" id="attachFile" style="display:none" onchange="uploadAttachment('+currentIntel.id+')" multiple>'
     +'</div>'
     +'<div id="attachmentsList" style="font-size:13px">加载中...</div>'
     +'</div>'
