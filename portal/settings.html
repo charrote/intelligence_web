@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个人设置</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.main{padding:24px 28px;max-width:640px;margin:0 auto}
+h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
+.sub{font-size:13px;color:var(--gray-400);margin-bottom:24px}
+.settings-section{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:16px;overflow:hidden}
+.settings-section h2{font-size:14px;font-weight:600;color:var(--gray-800);padding:14px 18px 10px;border-bottom:1px solid var(--gray-200)}
+.settings-section .section-body{padding:16px 18px}
+.form-group{margin-bottom:14px}
+.form-group:last-child{margin-bottom:0}
+.form-group label{font-size:12px;color:var(--gray-600);display:block;margin-bottom:4px;font-weight:500}
+.form-group input,.form-group select{width:100%;padding:7px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:var(--accent)}
+.form-group .hint{font-size:11px;color:var(--gray-400);margin-top:3px}
+.user-info{display:flex;align-items:center;gap:14px;padding:16px 18px;border-bottom:1px solid var(--gray-200)}
+.user-avatar-lg{width:48px;height:48px;border-radius:50%;background:var(--accent-light);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;flex-shrink:0}
+.user-details{flex:1}
+.user-name{font-size:15px;font-weight:600;color:var(--gray-800)}
+.user-role{font-size:12px;color:var(--gray-400);margin-top:2px}
+.toast{position:fixed;top:70px;right:24px;padding:10px 18px;border-radius:var(--radius);font-size:13px;z-index:999;animation:slideIn 0.2s ease}
+.toast.success{background:var(--green);color:#fff}
+.toast.error{background:var(--red);color:#fff}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0}
+.toggle-row .label{font-size:13px;color:var(--gray-700)}
+.toggle-row .desc{font-size:11px;color:var(--gray-400);margin-top:1px}
+.toggle{position:relative;width:40px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;cursor:pointer;inset:0;background:var(--gray-200);border-radius:22px;transition:0.2s}
+.toggle .slider:before{content:"";position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:0.2s}
+.toggle input:checked+.slider{background:var(--accent)}
+.toggle input:checked+.slider:before{transform:translateX(18px)}
+.notification-item{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--gray-100)}
+.notification-item:last-child{border-bottom:none}
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>个人设置</h1>
+  <div class="sub">管理您的账户信息和偏好设置</div>
+
+  <!-- User Profile -->
+  <div class="settings-section">
+    <h2>账户信息</h2>
+    <div class="user-info">
+      <div class="user-avatar-lg" id="avatarDisplay">管</div>
+      <div class="user-details">
+        <div class="user-name" id="displayName">管理员</div>
+        <div class="user-role" id="userRole">admin</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change Password -->
+  <div class="settings-section">
+    <h2>修改密码</h2>
+    <div class="section-body">
+      <div class="form-group">
+        <label>当前密码</label>
+        <input type="password" id="oldPassword" placeholder="输入当前密码">
+      </div>
+      <div class="form-group">
+        <label>新密码</label>
+        <input type="password" id="newPassword" placeholder="至少6位">
+        <div class="hint">至少6位字符，建议包含字母和数字</div>
+      </div>
+      <div class="form-group">
+        <label>确认新密码</label>
+        <input type="password" id="confirmPassword" placeholder="再次输入新密码">
+      </div>
+      <button class="btn btn-primary" onclick="changePassword()">保存密码</button>
+    </div>
+  </div>
+
+  <!-- Notification Preferences -->
+  <div class="settings-section">
+    <h2>通知偏好</h2>
+    <div class="section-body" id="notifPrefs">
+      <div class="notification-item">
+        <div>
+          <div class="label">情报更新通知</div>
+          <div class="desc">当有新的情报发布时接收通知</div>
+        </div>
+        <label class="toggle"><input type="checkbox" checked onchange="updateSub('keyword', 'new_intel')"><span class="slider"></span></label>
+      </div>
+      <div class="notification-item">
+        <div>
+          <div class="label">状态变更通知</div>
+          <div class="desc">当情报状态变更时接收通知</div>
+        </div>
+        <label class="toggle"><input type="checkbox" checked onchange="updateSub('keyword', 'status_change')"><span class="slider"></span></label>
+      </div>
+      <div class="notification-item">
+        <div>
+          <div class="label">采集项目更新</div>
+          <div class="desc">当采集项目有新情报时接收通知</div>
+        </div>
+        <label class="toggle"><input type="checkbox" onchange="updateSub('keyword', 'project_update')"><span class="slider"></span></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Danger Zone -->
+  <div class="settings-section">
+    <h2>退出登录</h2>
+    <div class="section-body">
+      <button class="btn btn-danger" onclick="doLogout()">退出登录</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const token = localStorage.getItem('token');
+if (!token) { window.location.href = '/portal/login.html'; }
+
+let currentUser = null;
+
+function loadUser() {
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  currentUser = user;
+  const avatarDisplay = document.getElementById('avatarDisplay');
+  if (user.display_name) {
+    const initial = user.display_name.charAt(0).toUpperCase();
+    if (avatarDisplay) avatarDisplay.textContent = initial;
+    document.getElementById('displayName').textContent = user.display_name;
+  }
+  if (user.role) {
+    document.getElementById('userRole').textContent = user.role;
+  }
+}
+
+function showToast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+async function changePassword() {
+  const oldPw = document.getElementById('oldPassword').value;
+  const newPw = document.getElementById('newPassword').value;
+  const confirmPw = document.getElementById('confirmPassword').value;
+
+  if (!oldPw) { alert('请输入当前密码'); return; }
+  if (!newPw || newPw.length < 6) { alert('新密码至少6位'); return; }
+  if (newPw !== confirmPw) { alert('两次输入的新密码不一致'); return; }
+
+  try {
+    const r = await fetch(apiBase() + '/api/users/me/password', {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldPw, new_password: newPw }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      showToast('密码修改成功');
+      document.getElementById('oldPassword').value = '';
+      document.getElementById('newPassword').value = '';
+      document.getElementById('confirmPassword').value = '';
+    } else {
+      showToast(data.error || '修改失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+  }
+}
+
+async function updateSub(type, value) {
+  if (!currentUser) return;
+  try {
+    await fetch(apiBase() + '/api/subscriptions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, value, channel: 'in_app' }),
+    });
+  } catch(e) {
+    // Best effort
+  }
+}
+
+loadUser();
+</script>
+</body>
+</html>
