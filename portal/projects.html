@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>采集项目</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;box-shadow:var(--shadow-sm)}
+.stat-num{font-size:22px;font-weight:600;color:var(--gray-800);letter-spacing:-0.3px;line-height:1.2}
+.stat-label{font-size:12px;color:var(--gray-400);margin-top:2px}
+.stat-num.green{color:var(--green)}.stat-num.amber{color:var(--amber)}.stat-num.accent{color:var(--accent)}
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-header h2{font-size:15px;font-weight:600;color:var(--gray-800)}
+.section-header .count{font-size:12px;color:var(--gray-400);font-weight:400;margin-left:6px}
+.section-header .filter-group{display:flex;gap:6px;align-items:center}
+.section-header .filter-group select{padding:4px 20px 4px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer}
+.section-header .btn-reset{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer}
+.btn-sm{padding:4px 10px;font-size:12px}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
+th{text-align:left;padding:10px 14px;font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--gray-200);background:var(--gray-50)}
+td{padding:10px 14px;font-size:13px;color:var(--gray-600);border-bottom:1px solid var(--gray-100)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--gray-50)}
+tr.cursor-pointer{cursor:pointer}
+tr.cursor-pointer:hover td{background:var(--accent-light)}
+.tag{display:inline-flex;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:500}
+.tag.competitor{background:var(--accent-light);color:var(--accent)}
+.tag.market{background:#fef7e6;color:#b8862d}
+.tag.supplier{background:var(--green-light);color:var(--green)}
+.tag.customer{background:#f5eef8;color:#7b2d8e}
+.tag.technology{background:#eef1f7;color:var(--accent)}
+.tag.trend{background:#f5f6f8;color:var(--gray-600)}
+.tag.active{background:var(--green-light);color:var(--green)}
+.tag.paused{background:var(--gray-100);color:var(--gray-600)}
+.tag.completed{background:#f5eef8;color:#7b2d8e}
+.tag.error{background:#fceef0;color:var(--red)}
+.tag.daily{background:var(--gray-100);color:var(--gray-600)}
+.tag.weekly{background:var(--accent-light);color:var(--accent)}
+.tag.monthly{background:#eaf5ef;color:var(--green)}
+.tag.oneshot{background:var(--gray-100);color:var(--gray-600)}
+.tag-0{background:var(--gray-100);color:var(--gray-600)}
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:640px;max-width:92vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}.panel.open+.panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-close:hover{background:var(--gray-200);color:var(--gray-700)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-primary{background:var(--accent);color:#fff}
+.panel-foot .btn-primary:hover{background:#2f3f70}
+.panel-foot .btn-success{background:var(--green);color:#fff}
+.panel-foot .btn-success:hover{background:#1f613b}
+.panel-foot .btn-danger{background:var(--red);color:#fff}
+.panel-foot .btn-danger:hover{background:#8f2e2e}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.panel-foot .spacer{flex:1}
+.detail-section{margin-bottom:20px}
+.detail-section h3{font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--gray-200)}
+.detail-section:last-child{margin-bottom:0}
+.detail-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.detail-meta .tag{font-size:12px;padding:2px 8px}
+.detail-info{font-size:12px;color:var(--gray-400);margin-bottom:6px}
+.detail-info strong{color:var(--gray-600)}
+.detail-instruction{background:var(--accent-light);padding:10px 14px;border-radius:var(--radius);font-size:13px;line-height:1.6;color:var(--gray-700);white-space:pre-wrap;max-height:200px;overflow-y:auto}
+.intel-list{display:flex;flex-direction:column;gap:6px}
+.intel-item{display:flex;align-items:center;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);cursor:pointer;transition:all 0.12s}
+.intel-item:hover{border-color:var(--accent);background:var(--gray-50)}
+.intel-item-index{font-size:11px;color:var(--gray-400);width:24px;text-align:center;flex-shrink:0}
+.intel-item-title{flex:1;font-size:13px;color:var(--gray-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.intel-item-meta{font-size:11px;color:var(--gray-400);margin-left:8px}
+.entity-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.entity-tag{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600)}
+.entity-tag .type{color:var(--gray-400);font-size:11px;margin-left:4px}
+.ds-list{display:flex;flex-direction:column;gap:4px}
+.ds-item{display:flex;align-items:center;padding:6px 12px;background:var(--gray-50);border-radius:4px;font-size:12px;color:var(--gray-600)}
+.ds-item-name{flex:1;font-weight:500}
+.ds-item-type{margin-left:8px;padding:1px 6px;border-radius:2px;font-size:10px;background:var(--accent-light);color:var(--accent)}
+.ds-item-schedule{margin-left:8px;padding:1px 6px;border-radius:2px;font-size:10px;background:var(--gray-100);color:var(--gray-500)}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff}
+.form-group textarea{resize:vertical;min-height:60px}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent);outline:none}
+.form-row{display:flex;gap:12px}
+.form-row .form-group{flex:1}
+.empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+@media(max-width:768px){.main{padding:16px}.stats{grid-template-columns:repeat(2,1fr)}.panel{width:100vw;max-width:100vw}.form-row{flex-direction:column}}
+</style>
+</head>
+<body>
+<main class="main" id="mainContent">
+  <div class="stats" id="statsRow">
+    <div class="stat"><div class="stat-num accent" id="statTotal">-</div><div class="stat-label">全部项目</div></div>
+    <div class="stat"><div class="stat-num green" id="statActive">-</div><div class="stat-label">激活中</div></div>
+    <div class="stat"><div class="stat-num" id="statIntels">-</div><div class="stat-label">情报总数</div></div>
+    <div class="stat"><div class="stat-num amber" id="statDs">-</div><div class="stat-label">数据源总数</div></div>
+  </div>
+  <div class="section-header">
+    <h2>采集项目 <span class="count" id="countLabel"></span></h2>
+    <div class="filter-group">
+      <select id="domainFilter" onchange="loadProjects()"><option value="">全部域</option><option value="intelligence_web">制造情报</option><option value="intelligence_sales">销售情报</option></select>
+      <select id="statusFilter" onchange="loadProjects()"><option value="">全部状态</option><option value="active">激活</option><option value="paused">暂停</option></select>
+      <button class="btn-reset" onclick="resetFilters()">重置</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary" onclick="openCreate()">+ 新建项目</button>
+    </div>
+  </div>
+  <table id="projectTable">
+    <thead>
+      <tr>
+        <th style="width:40px">#</th>
+        <th>项目名称</th>
+        <th>目标类型</th>
+        <th>目标名称</th>
+        <th>采集频率</th>
+        <th>情报数</th>
+        <th>状态</th>
+        <th>创建时间</th>
+      </tr>
+    </thead>
+    <tbody id="projectList"></tbody>
+  </table>
+</main>
+
+<!-- Create Panel -->
+<div class="panel" id="createPanel">
+  <div class="panel-head"><h2>新建采集项目</h2><button class="panel-close" onclick="closeCreate()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body">
+    <div class="form-group">
+      <label>项目名称 *</label>
+      <input type="text" id="fName" placeholder="例：Danisco竞品情报" maxlength="80">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>目标类型 *</label>
+        <select id="fType">
+          <option value="competitor">竞争对手</option>
+          <option value="market">市场/区域</option>
+          <option value="supplier">供应商</option>
+          <option value="customer">客户</option>
+          <option value="technology">技术</option>
+          <option value="trend">行业趋势</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>采集频率 *</label>
+        <select id="fFrequency">
+          <option value="daily">每日</option>
+          <option value="weekly">每周</option>
+          <option value="monthly">每月</option>
+          <option value="oneshot">一次性</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>目标名称 *</label>
+      <input type="text" id="fTarget" placeholder="例：Danisco / 越南市场 / 凯瑞集团">
+    </div>
+    <div class="form-group">
+      <label>范围/描述</label>
+      <textarea id="fScope" placeholder="例：越南冰淇淋稳定剂市场，关注东南亚区域"></textarea>
+    </div>
+    <div id="createFormFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
+  </div>
+  <div class="panel-foot">
+    <button class="btn btn-primary" onclick="createProject()">创建项目</button>
+    <button class="btn btn-ghost" onclick="closeCreate()">取消</button>
+  </div>
+</div>
+
+<!-- Detail Panel -->
+<div class="panel" id="detailPanel">
+  <div class="panel-head"><h2 id="detailTitle">项目详情</h2><button class="panel-close" onclick="closeDetail()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body" id="detailBody"></div>
+  <div class="panel-foot" id="detailFoot"></div>
+</div>
+<div class="panel-overlay" id="overlay" onclick="closeCreate();closeDetail()"></div>
+
+<script>
+async function init(){
+  const u=getUser();const a=document.getElementById('userAvatar');if(a)a.textContent=u?u.display_name||u.username.charAt(0).toUpperCase():'管';
+  await loadProjects();
+}
+
+async function loadProjects(){
+  const df=document.getElementById('domainFilter')?.value||'';
+  const sf=document.getElementById('statusFilter')?.value||'';
+  const tbody=document.getElementById('projectList');
+  let url=APP_API_BASE+'/api/projects?';
+  if(df)url+='domain='+encodeURIComponent(df)+'&';
+  if(sf)url+='status='+encodeURIComponent(sf)+'&';
+  try{
+    const r=await apiFetch(url);
+    const d=await r.json();
+    const items=d.items||[];
+    document.getElementById('statTotal').textContent=d.total;
+    document.getElementById('statActive').textContent=items.filter(i=>i.status==='active').length;
+    document.getElementById('countLabel').textContent=d.total+' 个项目';
+    let totalIntels=0,totalDs=0;
+    const tableRows=items.map((p,i)=>{
+      totalIntels+=p.total_intel||0;
+      totalDs+=(p.entities_created||[]).length+(p.datasources_created||[]).length;
+      return '<tr class="cursor-pointer" onclick="openDetail('+p.id+')">'
+        +'<td style="color:var(--gray-400)">'+(i+1).toString().padStart(2,'0')+'</td>'
+        +'<td><strong>'+escapeHtml(p.name)+'</strong><div style="font-size:11px;color:var(--gray-400);margin-top:2px">'+escapeHtml(p.scope||'')+'</div></td>'
+        +'<td><span class="tag '+p.target_type+'">'+p.target_type+'</span></td>'
+        +'<td>'+escapeHtml(p.target_name)+'</td>'
+        +'<td><span class="tag '+p.frequency+'">'+p.frequency+'</span></td>'
+        +'<td>'+p.total_intel+'</td>'
+        +'<td><span class="tag '+p.status+'">'+p.status+'</span></td>'
+        +'<td>'+formatDate(p.created_at)+'</td></tr>';
+    }).join('');
+    tbody.innerHTML=tableRows||'<tr><td colspan="8" class="empty">暂无采集项目</td></tr>';
+    document.getElementById('statIntels').textContent=totalIntels;
+    document.getElementById('statDs').textContent=totalDs;
+  }catch(e){
+    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
+  }
+}
+
+function setStatusFilter(s){document.getElementById('statusFilter').value=s;loadProjects()}
+function resetFilters(){document.getElementById('domainFilter').value='';document.getElementById('statusFilter').value='';loadProjects()}
+
+function openCreate(){document.getElementById('createPanel').classList.add('open');document.getElementById('fName').focus()}
+function closeCreate(){document.getElementById('createPanel').classList.remove('open');document.getElementById('createFormFeedback').style.display='none'}
+
+async function createProject(){
+  const name=document.getElementById('fName').value.trim();
+  const type_=document.getElementById('fType').value;
+  const target=document.getElementById('fTarget').value.trim();
+  const scope=document.getElementById('fScope').value.trim();
+  const freq=document.getElementById('fFrequency').value;
+  const fb=document.getElementById('createFormFeedback');
+  if(!name){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入项目名称';return}
+  if(!target){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入目标名称';return}
+  try{
+    const r=await apiFetch(APP_API_BASE+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq})});
+    if(r.status===201){
+      const d=await r.json();
+      fb.style.background='var(--green-light)';fb.style.color='var(--green)';
+      fb.innerHTML='<strong>创建成功！</strong><br>项目 ID: '+d.id
+        +(d.auto_setup?'<br>自动创建: '+d.auto_setup.entities_created.length+' 个实体, '+d.auto_setup.datasources_created.length+' 个数据源':'');
+      document.getElementById('fName').value='';
+      document.getElementById('fTarget').value='';
+      document.getElementById('fScope').value='';
+      await new Promise(r=>setTimeout(r,1500));
+      closeCreate();
+      await loadProjects();
+    }else{
+      const e=await r.json();
+      fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent=e.error||'创建失败';
+    }
+  }catch(e){
+    fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='网络错误: '+e.message;
+  }
+}
+
+async function openDetail(pid){
+  document.getElementById('detailTitle').textContent='项目详情';
+  document.getElementById('detailBody').innerHTML='<div class="empty">加载中...</div>';
+  try{
+    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid);
+    const d=await r.json();
+    const p=d.project;
+    const body=document.getElementById('detailBody');
+    const foot=document.getElementById('detailFoot');
+    let html='<div class="detail-section"><h3>项目信息</h3><div class="detail-meta">'
+      +'<span class="tag '+p.target_type+'">'+p.target_type+'</span>'
+      +'<span class="tag '+p.status+'">'+p.status+'</span>'
+      +'<span class="tag '+p.frequency+'">'+p.frequency+'</span></div>'
+      +'<div class="detail-info"><strong>名称：</strong>'+escapeHtml(p.name)+'</div>'
+      +'<div class="detail-info"><strong>目标：</strong>'+escapeHtml(p.target_name)+'</div>'
+      +'<div class="detail-info"><strong>范围：</strong>'+(p.scope?escapeHtml(p.scope):'<span style="color:var(--gray-400)">未指定</span>')+'</div>'
+      +'<div class="detail-info"><strong>创建时间：</strong>'+formatDate(p.created_at)+'</div>'
+      +'<div class="detail-info"><strong>更新时间：</strong>'+formatDate(p.updated_at)+'</div></div>';
+    html+='<div class="detail-section"><h3>情报统计</h3>'
+      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">'
+      +'<div style="background:var(--accent-light);padding:10px;border-radius:var(--radius);text-align:center"><div style="font-size:20px;font-weight:600;color:var(--accent)">'+d.total_intel+'</div><div style="font-size:11px;color:var(--gray-400)">情报总数</div></div>'
+      +'<div style="background:var(--gray-100);padding:10px;border-radius:var(--radius);text-align:center"><div style="font-size:20px;font-weight:600;color:var(--gray-600)">'+d.intel_by_domain.length+'</div><div style="font-size:11px;color:var(--gray-400)">涉及域数</div></div>'
+      +'<div style="background:var(--gray-100);padding:10px;border-radius:var(--radius);text-align:center"><div style="font-size:20px;font-weight:600;color:var(--gray-600)">'+(p.instruction?'✓':'✗')+'</div><div style="font-size:11px;color:var(--gray-400)">采集指令</div></div>'
+      +'</div>';
+    if(d.intel_by_domain.length){
+      html+='<div style="margin-top:8px">';
+      d.intel_by_domain.forEach(dom=>{
+        html+='<div style="display:flex;align-items:center;padding:4px 0;font-size:12px">'
+          +'<span style="width:100px;color:var(--gray-600)">'+dom.domain+'</span>'
+          +'<span style="font-weight:600;color:var(--accent)">'+dom.intel_count+' 条</span></div>';
+      });
+      html+='</div>';
+    }
+    html+='</div>';
+    html+='<div class="detail-section"><h3>最近情报 <span style="font-weight:400;color:var(--gray-400)">('+d.latest_intels.length+' 条)</span></h3>';
+    if(d.latest_intels.length){
+      html+='<div class="intel-list">';
+      d.latest_intels.forEach((intel,i)=>{
+        html+='<div class="intel-item" onclick="openIntelDetail('+pid+','+intel.id+')">'
+          +'<div class="intel-item-index">'+(i+1)+'</div>'
+          +'<div class="intel-item-title">'+escapeHtml(intel.title)+'</div>'
+          +'<div class="intel-item-meta">'+formatDate(intel.created_at)+'</div></div>';
+      });
+      html+='</div>';
+    }else{
+      html+='<div class="empty" style="padding:20px">暂无关联情报</div>';
+    }
+    html+='</div>';
+    if(p.instruction){
+      html+='<div class="detail-section"><h3>采集指令</h3><div class="detail-instruction">'+escapeHtml(p.instruction)+'</div></div>';
+    }
+    body.innerHTML=html;
+    const isActive=p.status==='active';
+    foot.innerHTML='<button class="btn '+((isActive)?'btn-danger':'btn-success')+'" onclick="toggleStatus('+pid+',!'+isActive+')">'
+      +((isActive)?'暂停':'激活')+'</button>'
+      +'<span class="spacer"></span>'
+      +'<button class="btn btn-ghost" onclick="closeDetail()">关闭</button>';
+    document.getElementById('detailPanel').classList.add('open');
+  }catch(e){
+    document.getElementById('detailBody').innerHTML='<div class="empty">加载失败</div>';
+  }
+}
+
+function closeDetail(){document.getElementById('detailPanel').classList.remove('open')}
+
+async function openIntelDetail(pid, intelId){
+  try{
+    document.getElementById('detailTitle').textContent='情报详情';
+    document.getElementById('detailBody').innerHTML='<div class="empty">加载中...</div>';
+    const r=await apiFetch(APP_API_BASE+'/api/intelligence/'+intelId);
+    const intel=await r.json();
+    const body=document.getElementById('detailBody');
+    let html='<div class="detail-meta">';
+    if(intel.category)html+='<span class="tag">'+escapeHtml(intel.category)+'</span>';
+    if(intel.status)html+='<span class="tag '+intel.status+'">'+intel.status+'</span>';
+    if(intel.company)html+='<span class="tag tag-company">'+escapeHtml(intel.company)+'</span>';
+    html+='</div>';
+    if(intel.opinion)html+='<div class="detail-opinion">意见：'+escapeHtml(intel.opinion)+'</div>';
+    html+='<div class="detail-source">'+formatDate(intel.created_at)+'</div>';
+    html+='<div class="detail-content">'+(intel.content||'')+'</div>';
+    if(intel.source_url)html+='<div style="margin-top:12px"><a href="'+escapeHtml(intel.source_url)+'" target="_blank" style="font-size:13px;color:var(--accent);">原文链接</a></div>';
+    body.innerHTML=html;
+    const foot=document.getElementById('detailFoot');
+    foot.innerHTML='<span class="spacer"></span><button class="btn btn-ghost" onclick="closeDetail()">关闭</button>';
+    document.getElementById('detailPanel').classList.add('open');
+  }catch(e){
+    document.getElementById('detailBody').innerHTML='<div class="empty">加载失败</div>';
+  }
+}
+
+async function toggleStatus(pid,enabled){
+  try{
+    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+    if(r.ok){closeDetail();await loadProjects();}
+  }catch(e){}
+}
+
+function switchDomain(port){loadProjects()}
+function setView(v){}
+
+init();
+</script>
+</body>
+</html>
