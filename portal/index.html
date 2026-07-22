@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>情报列表</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.feed{display:flex;flex-direction:column;gap:6px}
+.row{display:flex;align-items:stretch;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);cursor:pointer;transition:all 0.15s}
+.row:hover{border-color:var(--accent);background:var(--gray-50)}
+.row-index{width:36px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--gray-400);flex-shrink:0}
+.row-body{flex:1;padding:12px 16px 12px 0;overflow:hidden;display:flex;flex-direction:column;gap:6px}
+.row-title{font-size:14px;font-weight:500;color:var(--gray-800);line-height:1.5}
+.row-meta{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--gray-400);flex-wrap:wrap}
+.row-meta .tag{display:inline-flex;padding:1px 6px;border-radius:2px;font-size:11px;font-weight:500;color:var(--gray-600);background:var(--gray-100)}
+.row-meta .tag-company{color:var(--accent);background:var(--accent-light)}
+.row-meta .deal{color:var(--green);font-weight:500}
+.stat-num.gold{color:var(--amber)}.stat-num.green{color:var(--green)}.stat-num.accent{color:var(--accent)}
+#sidebarCats{}</style>
+</head>
+<body>
+<main class="main">
+  <div class="stats" id="statsRow">
+    <div class="stat"><div class="stat-num accent" id="statTotal">-</div><div class="stat-label">全部情报</div></div>
+    <div class="stat"><div class="stat-num gold" id="statPending">-</div><div class="stat-label">待审阅</div></div>
+    <div class="stat"><div class="stat-num green" id="statApproved">-</div><div class="stat-label">已跟进</div></div>
+    <div class="stat"><div class="stat-num" id="statCompleted">-</div><div class="stat-label">已完结</div></div>
+  </div>
+  <div class="section-header">
+    <h2>最新情报 <span class="count" id="feedCount"></span></h2>
+    <div class="filter-group">
+      <select id="statusFilter" onchange="filterCards()"><option value="">全部状态</option></select>
+      <select id="catFilter" onchange="filterCards()"><option value="">全部分类</option></select>
+      <button class="btn-reset" onclick="resetFilter()">重置</button>
+    </div>
+  </div>
+  <div class="feed" id="feed"></div>
+</main>
+<div class="panel" id="detailPanel">
+  <div class="panel-head"><h2 id="panelTitle">详情</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body" id="panelBody"></div>
+  <div class="panel-foot" id="panelFoot"></div>
+</div>
+<div class="panel-overlay" onclick="closePanel()"></div>
+<script>
+var currentIntel = null;
+var allItems = [];
+var domainConfig = null, statusMap = {};
+var domainPort = parseInt(window.location.port) || (location.protocol === 'https:' ? 443 : 80);
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c];
+  });
+}
+
+function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;filterCards()}
+
+async function init() {
+  await loadDomainConfig();
+  await loadData();
+  render();
+  buildSidebarCats();
+}
+
+async function loadDomainConfig() {
+  try {
+    var res = await apiFetch(APP_API_BASE + '/api/domain_config');
+    domainConfig = await res.json();
+    domainConfig.statuses.forEach(function(s) { statusMap[s[0]] = s[1]; });
+  } catch(e) { statusMap = {pending:'待审阅',approved:'可行',rejected:'不可行',active:'激活',completed:'已完结',discarded:'已废弃'}; }
+}
+
+async function loadData() {
+  try { var r = await apiFetch(APP_API_BASE + '/api/intelligence?limit=100'); var d = await r.json(); allItems = d.items || []; } catch(e) { allItems = []; }
+}
+
+function buildSidebarCats() {
+  var list = document.getElementById('sidebarCats'); if (!list) return;
+  list.innerHTML = '';
+  var cats = [];
+  for (var i = 0; i < allItems.length; i++) { if (allItems[i].category && cats.indexOf(allItems[i].category) === -1) cats.push(allItems[i].category); }
+  cats.slice(0,12).forEach(function(c) {
+    var d=document.createElement('div'); d.className='sidebar-item'; d.innerHTML='<span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>'+escapeHtml(c);
+    d.onclick=function(){document.getElementById('catFilter').value=c;filterCards()};
+    list.appendChild(d);
+  });
+}
+
+function render() {
+  var t=allItems.length, p=allItems.filter(function(i){return i.status==='pending'}).length, a=allItems.filter(function(i){return i.status==='approved'}).length, c=allItems.filter(function(i){return i.status==='completed'}).length;
+  document.getElementById('statTotal').textContent=t; document.getElementById('statPending').textContent=p; document.getElementById('statApproved').textContent=a; document.getElementById('statCompleted').textContent=c;
+  var sel=document.getElementById('statusFilter'); sel.innerHTML='<option value="">全部状态</option>';
+  Object.entries(statusMap).forEach(function(e){var o=document.createElement('option');o.value=e[0];o.textContent=e[1];sel.appendChild(o)});
+  var cs=document.getElementById('catFilter'); var cats=[]; for(var i=0;i<allItems.length;i++){if(allItems[i].category&&cats.indexOf(allItems[i].category)===-1)cats.push(allItems[i].category)}
+  cs.innerHTML='<option value="">全部分类</option>'; cats.forEach(function(c){var o=document.createElement('option');o.value=c;o.textContent=c;cs.appendChild(o)});
+  filterCards();
+}
+
+function filterCards() {
+  var s=document.getElementById('searchInput').value.toLowerCase();
+  var st=document.getElementById('statusFilter').value, cat=document.getElementById('catFilter').value;
+  var items=allItems;
+  if(s)items=items.filter(function(i){return (i.title||'').toLowerCase().includes(s)||(i.content||'').toLowerCase().includes(s)});
+  if(st)items=items.filter(function(i){return i.status===st}); if(cat)items=items.filter(function(i){return i.category===cat});
+  renderFeed(items); document.getElementById('feedCount').textContent=items.length+'条';
+}
+
+function renderFeed(items) {
+  var feed=document.getElementById('feed');
+  if(!items.length){feed.innerHTML='<div style="padding:40px;text-align:center;color:var(--gray-400);font-size:13px;">暂无匹配的情报</div>';return}
+  feed.innerHTML=items.map(function(item,i){
+    var co=escapeHtml(item.company||''), de=item.deal_value?(item.deal_value>10000?'¥'+(item.deal_value/10000).toFixed(0)+'万':'¥'+item.deal_value):'';
+    var ents=(item.entities||[]).map(function(e){return '<span class="tag" style="background:#f0e6ff;color:#722ed1">'+escapeHtml(e)+'</span>'}).join('');
+    return '<div class="row" onclick="openDetail('+item.id+')">'
+    +'<div class="row-index">'+(i+1).toString().padStart(2,'0')+'</div>'
+    +'<div class="row-body"><div class="row-title">'+escapeHtml(item.title||'')+'</div>'
+    +'<div class="row-meta">'+(item.category?'<span class="tag">'+escapeHtml(item.category)+'</span>':'')
+    +(co?'<span class="tag tag-company">'+co+'</span>':'')+(de?'<span class="deal">'+de+'</span>':'')
+    +ents
+    +'<span>'+formatDate(item.created_at)+'</span>'
+    +(item.comment_count>0?'<span style="display:flex;align-items:center;gap:3px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'+item.comment_count+'</span>':'')
+    +'</div></div></div>'
+  }).join('');
+}
+
+function setFilter(s){document.getElementById('statusFilter').value=s;filterCards()}
+function resetFilter(){document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='';document.getElementById('catFilter').value='';filterCards()}
+
+async function openDetail(id) {
+  try {
+    var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+id);currentIntel=await r.json();
+    document.getElementById('panelTitle').textContent=currentIntel.title;
+    renderDetail();loadComments(id);
+    document.getElementById('detailPanel').classList.add('open');
+  }catch(e){}
+}
+
+function renderDetail() {
+  var d=currentIntel; var body=document.getElementById('panelBody'); var foot=document.getElementById('panelFoot');
+  var ents=(d.entities||[]).map(function(e){return '<span class="tag" style="background:#f0e6ff;color:#722ed1">'+escapeHtml(e)+'</span>'}).join('');
+  body.innerHTML='<div class="detail-meta">'
+    +'<span class="tag tag-status '+d.status+'">'+(statusMap[d.status]||d.status)+'</span>'
+    +(d.category?'<span class="tag tag-cat">'+escapeHtml(d.category)+'</span>':'')
+    +(d.company?'<span class="tag tag-company">'+escapeHtml(d.company)+'</span>':'')
+    +'</div>'
+    +(ents?'<div style="margin-bottom:12px;font-size:12px;color:var(--gray-600)"><span style="color:var(--gray-400);margin-right:4px;">关联实体：</span>'+ents+'</div>':'')
+    +(d.opinion?'<div class="detail-opinion">意见：'+escapeHtml(d.opinion)+'</div>':'')
+    +(d.source_url?'<div style="margin-bottom:12px;"><a href="'+escapeHtml(d.source_url)+'" target="_blank" style="font-size:13px;color:var(--accent);">原文链接</a></div>':'')
+    +('<div class="detail-source">'+formatDate(d.created_at)+'</div>'
+    +'<div class="detail-content">'+(d.content||'')+'</div>')
+    +'<div id="attachmentsSection" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--gray-200)">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+    +'<h3 style="font-size:13px;font-weight:600;color:var(--gray-700)">附件</h3>'
+    +'<label style="font-size:12px;color:var(--accent);cursor:pointer">'
+    +'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:3px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传</label>'
+    +'<input type="file" id="attachFile" style="display:none" onchange="uploadAttachment('+id+')" multiple>'
+    +'</div>'
+    +'<div id="attachmentsList" style="font-size:13px">加载中...</div>'
+    +'</div>'
+    +'<div class="comment-section"><h3>Agent 评论</h3><div id="commentsContainer">加载中...</div></div>';
+  var btns='';
+  if(d.status==='pending')btns+='<button class="btn btn-success" onclick="updateStatus(\'approved\')">建议跟进</button><button class="btn btn-danger" onclick="updateStatus(\'rejected\')">不建议</button>';
+  else if(d.status==='approved')btns+='<button class="btn btn-primary" onclick="updateStatus(\'active\')">激活项目</button>';
+  else if(d.status==='active')btns+='<button class="btn btn-primary" onclick="updateStatus(\'completed\')">标记完结</button>';
+  btns+='<span class="spacer"></span><button class="btn btn-ghost" onclick="updateStatus(\'discarded\')">废止</button>';
+  foot.innerHTML=btns;
+}
+
+async function updateStatus(status) {
+  if(!currentIntel)return;
+  var opinion='';
+  if(status==='approved'){opinion=prompt('请输入跟进意见：');if(opinion===null)return;}
+  if(status==='discarded'){if(!confirm('确定废止？'))return;}
+  try {
+    var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+currentIntel.id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status,opinion:opinion})});
+    if(r.ok){currentIntel.status=status;if(opinion)currentIntel.opinion=opinion;renderDetail();await loadData();render();}
+  }catch(e){}
+}
+
+async function loadComments(id) {
+  try {
+    var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+id+'/comments?limit=20');var comments=await r.json();
+    var c=document.getElementById('commentsContainer');if(!c)return;
+    if(!comments.length){c.innerHTML='<div style="color:var(--gray-400);font-size:13px;">暂无评论</div>';return;}
+    c.innerHTML=comments.map(function(co){return '<div class="comment"><div class="comment-head"><span class="comment-name">'+escapeHtml(co.agent_name)+'</span><span class="comment-time">'+formatDate(co.created_at)+'</span></div><div class="comment-text">'+escapeHtml(co.content||'')+'</div></div>'}).join('');
+  }catch(e){}
+}
+
+async function uploadAttachment(intelId) {
+  var input = document.getElementById('attachFile');
+  var files = input.files;
+  if (!files.length) return;
+  var fd = new FormData();
+  for (var i = 0; i < files.length; i++) {
+    fd.append('file', files[i]);
+    var desc = prompt('请输入文件描述（可选，可留空）', '');
+    fd.append('description', desc !== null ? desc : '');
+  }
+  try {
+    var r = await apiFetch(APP_API_BASE+'/api/intelligence/'+intelId+'/attachments', {
+      method: 'POST',
+      body: fd,
+    });
+    if (r.ok) {
+      input.value = '';
+      await loadAttachments(intelId);
+    } else {
+      var data = await r.json();
+      alert(data.error || '上传失败');
+    }
+  } catch(e) { alert('上传失败'); }
+}
+
+async function loadAttachments(intelId) {
+  try {
+    var r = await apiFetch(APP_API_BASE+'/api/intelligence/'+intelId+'/attachments', {});
+    var data = await r.json();
+    var container = document.getElementById('attachmentsList');
+    if (!data.items.length) {
+      container.innerHTML = '<div style="color:var(--gray-400);font-size:12px">暂无附件</div>';
+      return;
+    }
+    container.innerHTML = data.items.map(function(att) {
+      var isImage = att.content_type && att.content_type.startsWith('image/');
+      var size = att.file_size ? (att.file_size < 1024 ? att.file_size+'B' : (att.file_size < 1048576 ? (att.file_size/1024).toFixed(1)+'KB' : (att.file_size/1048576).toFixed(1)+'MB')) : '';
+      var icon = isImage ? '🖼️' : '📎';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--gray-100)">'
+        +'<span>'+icon+'</span>'
+        +'<a href="'+APP_API_BASE+'/api/attachments/'+att.id+'" target="_blank" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent);text-decoration:none;font-size:12px" title="'+escapeHtml(att.filename)+'">'+escapeHtml(att.filename)+'</a>'
+        +'<span style="font-size:11px;color:var(--gray-400)">'+size+'</span>'
+        +'</div>';
+    }).join('');
+  } catch(e) {
+    var container = document.getElementById('attachmentsList');
+    if (container) container.innerHTML = '<div style="color:var(--gray-400);font-size:12px">加载失败</div>';
+  }
+}
+
+document.addEventListener('click', function(e) {
+  if (e.target.closest('#attachmentsSection label') && currentIntel) {
+    document.getElementById('attachFile').click();
+  }
+});
+
+init();
+</script>
+</body>
+</html>
