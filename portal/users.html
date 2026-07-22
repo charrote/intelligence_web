@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>用户管理</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.tag.admin{background:var(--red);color:#fff}
+.tag.power_user{background:var(--accent);color:#fff}
+.tag.viewer{background:var(--gray-400);color:#fff}
+.tag.agent{background:var(--green);color:#fff}
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>用户管理</h1>
+  <div class="sub">管理系统用户及角色分配</div>
+  <div class="toolbar" style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+    <input type="text" id="searchInput" placeholder="搜索用户名..." oninput="loadUsers()">
+    <span class="spacer" style="flex:1"></span>
+    <button class="btn btn-primary" onclick="openCreateModal()">+ 新建用户</button>
+  </div>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>用户名</th><th>显示名称</th><th>角色</th><th>所属域</th><th>创建时间</th><th>操作</th></tr>
+    </thead>
+    <tbody id="userList"></tbody>
+  </table>
+</main>
+
+<!-- Create/Edit Modal -->
+<div class="modal-overlay" id="userModal">
+  <div class="modal">
+    <h2 id="modalTitle">新建用户</h2>
+    <label>用户名 *</label>
+    <input type="text" id="mu_username" placeholder="username">
+    <label>显示名称 *</label>
+    <input type="text" id="mu_display" placeholder="张三">
+    <label>密码 *</label>
+    <input type="password" id="mu_password" placeholder="至少6位">
+    <label>角色</label>
+    <select id="mu_role">
+      <option value="3">viewer</option>
+      <option value="2">power_user</option>
+      <option value="1">admin</option>
+      <option value="4">agent</option>
+    </select>
+    <label>所属域 (逗号分隔)</label>
+    <input type="text" id="mu_domains" placeholder="intelligence_web, intelligence_sales">
+    <input type="hidden" id="mu_user_id">
+    <div class="actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+      <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveUser()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var token = getToken();
+if (!token) { window.location.href = '/portal/login.html'; }
+
+function loadUsers() {
+  var search = document.getElementById('searchInput').value;
+  apiFetch(apiBase()+'/api/users?search='+encodeURIComponent(search)+'&limit=100').then(function(r){return r.json()}).then(function(data){
+    var tbody = document.getElementById('userList');
+    tbody.innerHTML = data.items.map(function(u){
+      var roleClass = u.role_name || '';
+      var domains = Array.isArray(u.domains) ? u.domains.join(', ') : '-';
+      return '<tr>'
+        +'<td>'+u.id+'</td>'
+        +'<td>'+u.username+'</td>'
+        +'<td>'+(u.display_name || '-')+'</td>'
+        +'<td><span class="tag '+roleClass+'">'+(u.role_name || 'viewer')+'</span></td>'
+        +'<td>'+domains+'</td>'
+        +'<td>'+(u.created_at ? new Date(u.created_at).toLocaleDateString() : '-')+'</td>'
+        +'<td>'
+          +'<button class="btn btn-ghost" onclick="openEditModal('+u.id+')">编辑</button>'
+          +(u.id !== 1 ? '<button class="btn btn-danger" style="margin-left:4px" onclick="deleteUser('+u.id+')">删除</button>' : '')
+        +'</td>'
+        +'</tr>';
+    }).join('');
+    if (!data.items.length) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">暂无用户</td></tr>';
+  }).catch(function(){
+    document.getElementById('userList').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
+  });
+}
+
+function openCreateModal() {
+  document.getElementById('modalTitle').textContent = '新建用户';
+  document.getElementById('mu_user_id').value = '';
+  document.getElementById('mu_username').value = '';
+  document.getElementById('mu_display').value = '';
+  document.getElementById('mu_password').value = '';
+  document.getElementById('mu_role').value = '3';
+  document.getElementById('mu_domains').value = '';
+  document.getElementById('userModal').classList.add('open');
+}
+
+function openEditModal(id) {
+  document.getElementById('modalTitle').textContent = '编辑用户';
+  document.getElementById('mu_user_id').value = id;
+  apiFetch(apiBase()+'/api/users/'+id).then(function(r){return r.json()}).then(function(u){
+    document.getElementById('mu_username').value = u.username;
+    document.getElementById('mu_username').disabled = true;
+    document.getElementById('mu_display').value = u.display_name || '';
+    document.getElementById('mu_password').value = '';
+    document.getElementById('mu_password').placeholder = '留空不修改';
+    document.getElementById('mu_role').value = u.role_id || '3';
+    document.getElementById('mu_domains').value = Array.isArray(u.domains) ? u.domains.join(', ') : '';
+    document.getElementById('userModal').classList.add('open');
+  });
+}
+
+function closeModal() {
+  document.getElementById('userModal').classList.remove('open');
+  document.getElementById('mu_username').disabled = false;
+}
+
+function saveUser() {
+  var id = document.getElementById('mu_user_id').value;
+  var username = document.getElementById('mu_username').value.trim();
+  var display = document.getElementById('mu_display').value.trim();
+  var password = document.getElementById('mu_password').value;
+  var role_id = parseInt(document.getElementById('mu_role').value);
+  var domains_raw = document.getElementById('mu_domains').value.trim();
+  var domains = domains_raw ? domains_raw.split(',').map(function(d){return d.trim()}).filter(Boolean) : [];
+
+  if (!username || !display) { alert('用户名和显示名称不能为空'); return; }
+
+  var body = { username: username, display_name: display, role_id: role_id, domains: domains };
+  if (id) {
+    if (password) body.password = password;
+    apiFetch(apiBase()+'/api/users/'+id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(){
+      closeModal();
+      loadUsers();
+    });
+  } else {
+    if (!password || password.length < 6) { alert('密码至少6位'); return; }
+    body.password = password;
+    apiFetch(apiBase()+'/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(){
+      closeModal();
+      loadUsers();
+    });
+  }
+}
+
+function deleteUser(id) {
+  if (!confirm('确认删除此用户？')) return;
+  apiFetch(apiBase()+'/api/users/'+id, { method: 'DELETE' }).then(function(){
+    loadUsers();
+  });
+}
+
+loadUsers();
+</script>
+</body>
+</html>
