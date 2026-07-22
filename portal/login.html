@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 - 情报平台</title>
+<!-- Google Fonts 已移除（国内网络不可达），改用系统字体栈 -->
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-font-smoothing:antialiased}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e1e1e;min-height:100vh;display:flex;align-items:center;justify-content:center}
+:root{--accent:#3b4f8c;--accent-light:#eef1f7;--gray-200:#e0e1e3;--gray-400:#9a9b9d;--gray-600:#545557;--gray-800:#262728;--radius:6px;--shadow-md:0 4px 12px rgba(0,0,0,0.05)}
+.login-wrap{width:400px;max-width:90vw;padding:40px}
+.login-logo{font-weight:600;font-size:20px;color:var(--gray-800);display:flex;align-items:center;gap:10px;margin-bottom:8px;letter-spacing:-0.3px}
+.login-logo .mark{width:8px;height:8px;border-radius:2px;background:var(--accent);display:inline-block}
+.login-sub{font-size:14px;color:var(--gray-400);margin-bottom:32px}
+.form-group{margin-bottom:20px}
+.form-group label{display:block;font-size:13px;font-weight:500;color:var(--gray-600);margin-bottom:6px}
+.form-group input{width:100%;padding:10px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;color:var(--gray-800);outline:none;transition:border-color 0.2s;background:#fff}
+.form-group input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+.form-group input::placeholder{color:var(--gray-400)}
+.btn-login{width:100%;padding:10px;border:none;border-radius:var(--radius);background:var(--accent);color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background 0.15s}
+.btn-login:hover{background:#2f3f70}
+.btn-login:disabled{opacity:0.6;cursor:not-allowed}
+.error-msg{color:#b33a3a;font-size:13px;margin-top:12px;display:none}
+.error-msg.show{display:block}
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-logo"><span class="mark"></span>情报平台</div>
+  <div class="login-sub">请输入您的账号信息登录</div>
+  <div class="form-group">
+    <label for="username">用户名</label>
+    <input type="text" id="username" placeholder="请输入用户名" autocomplete="username">
+  </div>
+  <div class="form-group">
+    <label for="password">密码</label>
+    <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+  </div>
+  <button class="btn-login" id="loginBtn" onclick="doLogin()">登 录</button>
+  <div class="error-msg" id="errorMsg"></div>
+</div>
+<script>
+const API = '';
+
+async function doLogin() {
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('errorMsg');
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  if (!username || !password) { err.textContent = '请输入用户名和密码'; err.classList.add('show'); return; }
+  err.classList.remove('show');
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  try {
+    const res = await fetch(API + '/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      window.location.href = '/portal/';
+    } else {
+      err.textContent = data.error || '登录失败';
+      err.classList.add('show');
+    }
+  } catch(e) {
+    err.textContent = '网络连接失败，请检查网络';
+    err.classList.add('show');
+  }
+  btn.disabled = false;
+  btn.textContent = '登 录';
+}
+</script>
+</body>
+</html>
