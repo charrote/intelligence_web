@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>情报平台 Demo</title>
+<!-- Google Fonts 已移除（国内网络不可达），改用系统字体栈 -->
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-font-smoothing:antialiased}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f8f9fa;color:#1e1e1e;min-height:100vh}
+input,select,button{font-family:inherit;font-size:inherit}
+
+:root{
+  --accent:#3b4f8c;
+  --accent-light:#eef1f7;
+  --accent-mid:#d0d7e6;
+  --green:#2a7d4f;
+  --green-light:#eaf5ef;
+  --amber:#b8862d;
+  --amber-light:#faf3e5;
+  --red:#b33a3a;
+  --red-light:#f7eaea;
+  --blue:#3b6ea5;
+  --blue-light:#eaf0f7;
+  --gray-50:#f8f9fa;
+  --gray-100:#f0f1f2;
+  --gray-200:#e0e1e3;
+  --gray-300:#c4c5c7;
+  --gray-400:#9a9b9d;
+  --gray-500:#707173;
+  --gray-600:#545557;
+  --gray-700:#3b3c3d;
+  --gray-800:#262728;
+  --gray-900:#1e1e1e;
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:0 4px 12px rgba(0,0,0,0.05),0 1px 3px rgba(0,0,0,0.03);
+  --radius-sm:4px;
+  --radius-md:6px;
+  --radius-lg:8px;
+}
+
+.icon{width:16px;height:16px;display:inline-block;vertical-align:middle;flex-shrink:0}
+.icon-sm{width:14px;height:14px}
+
+/* ========== Header ========== */
+.header{height:56px;display:flex;align-items:center;padding:0 24px;background:#fff;border-bottom:1px solid var(--gray-200);position:sticky;top:0;z-index:100;gap:8px}
+.header-logo{font-weight:600;font-size:16px;color:var(--gray-800);display:flex;align-items:center;gap:8px;letter-spacing:-0.2px}
+.header-logo .mark{width:6px;height:6px;border-radius:2px;display:inline-block;transition:background 0.3s}
+.header-grow{flex:1}
+.header select{padding:5px 24px 5px 10px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);background:#fff;font-size:13px;color:var(--gray-700);cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23545557' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 6px center}
+.header-search{display:flex;align-items:center;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:0 10px;flex:1;max-width:280px;transition:border-color 0.2s}
+.header-search:focus-within{border-color:var(--accent)}
+.header-search input{border:none;background:transparent;padding:7px 0;font-size:13px;color:var(--gray-800);outline:none;width:100%}
+.header-search input::placeholder{color:var(--gray-400)}
+.header-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-light);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.5px}
+
+/* ========== Layout ========== */
+.layout{display:flex;min-height:calc(100vh - 56px)}
+.sidebar{width:200px;background:#fff;border-right:1px solid var(--gray-200);padding:16px 0;flex-shrink:0}
+.sidebar-label{padding:6px 16px 5px;font-size:10px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.8px}
+.sidebar-item{display:flex;align-items:center;gap:8px;padding:7px 16px;font-size:13px;color:var(--gray-600);cursor:pointer;position:relative;transition:all 0.12s}
+.sidebar-item:hover{color:var(--gray-900);background:var(--gray-50)}
+.sidebar-item.active{color:var(--accent);font-weight:500;background:var(--accent-light)}
+.sidebar-item .ico{width:16px;display:flex;align-items:center;justify-content:center}
+.sidebar-divider{height:1px;background:var(--gray-200);margin:10px 16px}
+
+/* ========== Main ========== */
+.main{flex:1;padding:24px 28px;overflow-y:auto}
+
+/* ========== Stats ========== */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.stat{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);padding:14px 18px}
+.stat-num{font-size:22px;font-weight:600;color:var(--gray-900);letter-spacing:-0.3px;line-height:1.2}
+.stat-label{font-size:12px;color:var(--gray-400);margin-top:3px}
+.stat-num.gold{color:var(--amber)}
+.stat-num.green{color:var(--green)}
+
+/* ========== Section Header ========== */
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-header h2{font-size:15px;font-weight:600;color:var(--gray-800);letter-spacing:-0.1px}
+.section-header .count{font-size:12px;color:var(--gray-400);font-weight:400;margin-left:6px}
+.section-header .filter-group{display:flex;gap:6px;align-items:center}
+.section-header .filter-group select{padding:4px 20px 4px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 24 24' fill='none' stroke='%23545557' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 5px center}
+.section-header .filter-group .btn-reset{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer;transition:all 0.12s}
+.section-header .filter-group .btn-reset:hover{background:var(--gray-50);color:var(--gray-700)}
+
+/* ========== Feed ========== */
+.feed{display:flex;flex-direction:column;gap:6px}
+
+/* ========== Row ========== */
+.row{display:flex;align-items:stretch;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);cursor:pointer;transition:all 0.15s;min-height:0}
+.row:hover{border-color:var(--accent-mid);background:var(--gray-50)}
+.row-index{width:36px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--gray-400);flex-shrink:0;font-weight:400;letter-spacing:0.5px}
+.row-body{flex:1;padding:12px 16px 12px 0;overflow:hidden;display:flex;flex-direction:column;gap:6px}
+.row-title{font-size:14px;font-weight:500;color:var(--gray-800);line-height:1.5;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.row-meta{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--gray-400)}
+.row-meta .tag{display:inline-flex;align-items:center;padding:1px 6px;border-radius:2px;font-size:11px;font-weight:500;line-height:1.5;color:var(--gray-600);background:var(--gray-100)}
+.row-meta .tag-company{color:var(--accent);background:var(--accent-light)}
+.row-meta .source{display:flex;align-items:center;gap:3px;color:var(--gray-400)}
+.row-meta .deal{color:var(--green);font-weight:500}
+.row-meta .comment-count{display:flex;align-items:center;gap:3px}
+
+/* ========== Panel ========== */
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:560px;max-width:92vw;height:100vh;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,0.08);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}
+.panel.open + .panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-900);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius-sm);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.12s;flex-shrink:0}
+.panel-close:hover{background:var(--gray-200);color:var(--gray-700)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-body .detail-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.panel-body .detail-meta .tag{display:inline-flex;padding:2px 8px;border-radius:2px;font-size:12px;font-weight:500;line-height:1.5}
+.panel-body .detail-meta .tag-status{color:#fff}
+.panel-body .detail-meta .tag-status.pending{background:var(--amber)}
+.panel-body .detail-meta .tag-status.qualified{background:var(--green)}
+.panel-body .detail-meta .tag-status.proposal{background:var(--blue)}
+.panel-body .detail-meta .tag-status.negotiation{background:var(--accent)}
+.panel-body .detail-meta .tag-status.won{background:var(--green)}
+.panel-body .detail-meta .tag-status.lost{background:var(--gray-400)}
+.panel-body .detail-meta .tag-status.approved{background:var(--green)}
+.panel-body .detail-meta .tag-status.active{background:var(--blue)}
+.panel-body .detail-meta .tag-status.completed{background:var(--accent)}
+.panel-body .detail-meta .tag-status.rejected{background:var(--red)}
+.panel-body .detail-meta .tag-status.discarded{background:var(--gray-400)}
+.panel-body .detail-meta .tag-cat{background:var(--gray-100);color:var(--gray-600)}
+.panel-body .detail-meta .tag-company{background:var(--accent-light);color:var(--accent)}
+.panel-body .detail-deal{background:var(--green-light);padding:10px 14px;border-radius:var(--radius-sm);margin-bottom:14px;font-size:13px;color:var(--green);font-weight:500}
+.panel-body .detail-source{font-size:12px;color:var(--gray-400);margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--gray-200)}
+.panel-body .detail-content{font-size:14px;line-height:1.7;color:var(--gray-700)}
+.panel-body .detail-content p{margin-bottom:10px}
+.panel-body .detail-content ul{padding-left:18px;margin-bottom:10px}
+.panel-body .detail-content li{margin-bottom:4px}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius-sm);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-primary{background:var(--accent);color:#fff}
+.panel-foot .btn-primary:hover{background:#2f3f70}
+.panel-foot .btn-success{background:var(--green);color:#fff}
+.panel-foot .btn-success:hover{background:#1f613b}
+.panel-foot .btn-danger{background:var(--red);color:#fff}
+.panel-foot .btn-danger:hover{background:#8f2e2e}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.panel-foot .spacer{flex:1}
+
+/* ========== Comment ========== */
+.comment-section{margin-top:20px;padding-top:16px;border-top:1px solid var(--gray-200)}
+.comment-section h3{font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:10px}
+.comment{padding:10px 14px;background:var(--gray-50);border-radius:var(--radius-sm);margin-bottom:6px}
+.comment-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
+.comment-name{font-weight:500;font-size:12px;color:var(--accent)}
+.comment-time{font-size:11px;color:var(--gray-400)}
+.comment-text{font-size:12px;color:var(--gray-600);line-height:1.5}
+
+@media(max-width:768px){
+  .sidebar{display:none}
+  .main{padding:16px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .panel{width:100vw;max-width:100vw}
+  .header-search{max-width:unset}
+}
+@media(max-width:480px){.stats{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="ico-all" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></symbol>
+  <symbol id="ico-pending" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+  <symbol id="ico-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></symbol>
+  <symbol id="ico-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
+  <symbol id="ico-done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></symbol>
+  <symbol id="ico-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="ico-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+  <symbol id="ico-comment" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="ico-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+  <symbol id="ico-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+</svg>
+
+<!-- ========== Header ========== -->
+<header class="header">
+  <div class="header-logo"><span class="mark" id="themeMark" style="background:#3b4f8c"></span><span id="appTitle">情报平台</span></div>
+  <div class="header-grow"></div>
+  <select id="domainSwitcher" onchange="switchDomain(this.value)">
+    <option value="research">制造情报</option>
+    <option value="sales">销售情报</option>
+  </select>
+  <div class="header-search">
+    <svg class="icon icon-sm" style="color:var(--gray-400);margin-right:5px"><use href="#ico-search"/></svg>
+    <input type="text" id="searchInput" placeholder="搜索情报..." oninput="filterCards()">
+  </div>
+  <div class="header-avatar">管</div>
+</header>
+
+<!-- ========== Layout ========== -->
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-label">导航</div>
+    <div class="sidebar-item active" onclick="setFilter('')"><span class="ico"><svg class="icon"><use href="#ico-all"/></svg></span>全部情报</div>
+    <div class="sidebar-item" onclick="setFilter('pending')"><span class="ico"><svg class="icon"><use href="#ico-pending"/></svg></span>待审阅</div>
+    <div class="sidebar-item" onclick="setFilter('approved')"><span class="ico"><svg class="icon"><use href="#ico-check"/></svg></span>已跟进</div>
+    <div class="sidebar-item" onclick="setFilter('active')"><span class="ico"><svg class="icon"><use href="#ico-play"/></svg></span>执行中</div>
+    <div class="sidebar-item" onclick="setFilter('completed')"><span class="ico"><svg class="icon"><use href="#ico-done"/></svg></span>已完结</div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-label">分类</div>
+    <div id="sidebarCats"></div>
+  </aside>
+
+  <main class="main">
+    <div class="stats" id="statsRow">
+      <div class="stat"><div class="stat-num" id="statTotal">-</div><div class="stat-label">全部情报</div></div>
+      <div class="stat"><div class="stat-num gold" id="statPending">-</div><div class="stat-label">待审阅</div></div>
+      <div class="stat"><div class="stat-num green" id="statApproved">-</div><div class="stat-label">已跟进</div></div>
+      <div class="stat"><div class="stat-num" id="statCompleted">-</div><div class="stat-label">已完结</div></div>
+    </div>
+
+    <div class="section-header">
+      <h2>最新情报 <span class="count" id="feedCount"></span></h2>
+      <div class="filter-group">
+        <select id="catFilter" onchange="filterCards()"><option value="">全部分类</option></select>
+        <select id="statusFilter" onchange="filterCards()"><option value="">全部状态</option></select>
+        <button class="btn-reset" onclick="resetFilters()">重置</button>
+      </div>
+    </div>
+
+    <div class="feed" id="feed"></div>
+  </main>
+</div>
+
+<!-- ========== Panel ========== -->
+<div class="panel" id="detailPanel">
+  <div class="panel-head">
+    <h2 id="panelTitle">详情</h2>
+    <button class="panel-close" onclick="closePanel()"><svg class="icon"><use href="#ico-close"/></svg></button>
+  </div>
+  <div class="panel-body" id="panelBody"></div>
+  <div class="panel-foot" id="panelFoot"></div>
+</div>
+<div class="panel-overlay" onclick="closePanel()"></div>
+
+<script>
+const DATA = {
+  research:{
+    title:'制造情报',color:'#3b4f8c',
+    statusMap:{pending:'待审阅',approved:'可行',rejected:'不可行',active:'激活',completed:'已完结',discarded:'已废弃'},
+    items:[
+      {id:1,title:'Gartner 预测2027年60%制造商将采用AI驱动的MES',status:'pending',cat:'MES',summary:'Gartner最新报告指出，到2027年60%的制造商将采用AI驱动的制造执行系统（MES），相比2024年的15%大幅增长。报告强调了AI在预测性维护、质量检测和生产优化方面的应用。',source:'Gartner',time:'2026-07-20',comments:3},
+      {id:2,title:'西门子发布新一代工业边缘计算平台',status:'approved',cat:'边缘计算',summary:'西门子在汉诺威展会上发布了全新的工业边缘计算平台Industrial Edge V3.0，支持AI模型在边缘端实时推理，延迟低于5ms。',source:'Siemens',time:'2026-07-19',comments:5},
+      {id:3,title:'2026年全球工业网络安全市场规模达280亿美元',status:'active',cat:'网络安全',summary:'据MarketsandMarkets报告，2026年全球工业网络安全市场规模预计达到280亿美元，年复合增长率12.3%，OT安全成为增长最快的细分领域。',source:'MarketsandMarkets',time:'2026-07-18',comments:2},
+      {id:4,title:'ABB与微软合作推出工业AI助手',status:'completed',cat:'AI',summary:'ABB与微软合作，基于Azure OpenAI服务推出面向工业场景的AI助手，可帮助操作员快速诊断设备故障、优化生产参数。',source:'ABB',time:'2026-07-17',comments:7},
+      {id:5,title:'三菱电机发布e-F@ctory最新版本',status:'pending',cat:'MES',summary:'三菱电机发布了e-F@ctory的重大更新，新增数字孪生模拟功能和AI驱动的能源优化模块，支持与主流ERP系统无缝集成。',source:'Mitsubishi',time:'2026-07-16',comments:1},
+      {id:6,title:'IEC 62443-4-2 工业网络安全标准更新',status:'rejected',cat:'标准',summary:'国际电工委员会发布了IEC 62443-4-2标准的最新修订版，新增对工业物联网设备和边缘网关的安全要求，2027年1月生效。',source:'IEC',time:'2026-07-15',comments:0},
+      {id:7,title:'中国智能制造市场规模2026年突破3万亿',status:'active',cat:'市场',summary:'赛迪顾问发布报告，2026年中国智能制造市场规模预计突破3万亿元，其中MES市场规模约380亿元，同比增长18.5%。',source:'赛迪顾问',time:'2026-07-14',comments:4},
+      {id:8,title:'罗克韦尔自动化推出PlantPAx 6.0',status:'pending',cat:'DCS',summary:'罗克韦尔自动化发布了PlantPAx 6.0分布式控制系统，新版本增强了与云平台的数据集成能力，支持Azure和AWS双云部署。',source:'Rockwell',time:'2026-07-13',comments:2},
+      {id:9,title:'工业5.0人机协作新范式白皮书发布',status:'completed',cat:'趋势',summary:'世界经济论坛发布工业5.0白皮书，提出以人为中心的智能制造新范式，强调人机协作、可持续性和韧性供应链三大支柱。',source:'WEF',time:'2026-07-12',comments:6},
+      {id:10,title:'宁德时代采用AI质检系统良率提升至99.97%',status:'approved',cat:'案例',summary:'宁德时代在最新电池工厂部署了基于深度学习的AI质检系统，实现电池极片缺陷的实时检测，良率从99.2%提升至99.97%。',source:'CATL',time:'2026-07-11',comments:8},
+    ]
+  },
+  sales:{
+    title:'销售情报',color:'#3b4f8c',
+    statusMap:{pending:'待核实',qualified:'合格商机',proposal:'方案报价',negotiation:'商务谈判',won:'成交',lost:'丢标'},
+    items:[
+      {id:1,title:'丹尼斯克在越南推出新型冰淇淋稳定剂',status:'pending',cat:'竞品动态',company:'丹尼斯克',deal:'',summary:'丹尼斯克在越南市场推出两款新型冰淇淋稳定剂，针对东南亚高温运输环境优化，可减少30%冷链依赖性，降低物流成本。',source:'FoodNavigator',time:'2026-07-20',comments:4},
+      {id:2,title:'凯瑞集团收购菲律宾调味品公司',status:'qualified',cat:'行业动态',company:'凯瑞',deal:'2.3亿欧元',summary:'凯瑞集团以2.3亿欧元收购菲律宾调味品制造商Golden Flavors，加速亚太区布局，增强本地化研发能力。',source:'Reuters',time:'2026-07-19',comments:3},
+      {id:3,title:'越南冰淇淋市场2026年需求预测',status:'pending',cat:'市场情报',company:'',deal:'4.8亿美元',summary:'2026年越南冰淇淋市场规模预计达4.8亿美元，同比增长12.5%，高端原料60%依赖进口，是进入该市场的最佳时机。',source:'ReportLinker',time:'2026-07-18',comments:1},
+      {id:4,title:'广东某食品厂寻冰淇淋稳定剂供应商',status:'qualified',cat:'商机线索',company:'广东某食品厂',deal:'50万元',summary:'广州某中型冰淇淋厂商产能扩张，月需求约5吨稳定剂，对现有供应商价格不满，正在寻找替代方案。',source:'客户直联',time:'2026-07-17',comments:5},
+      {id:5,title:'帕斯嘉上半年财报：亚太区增长15.3%',status:'pending',cat:'竞品动态',company:'帕斯嘉',deal:'',summary:'帕斯嘉上半年亚太区营收增长15.3%，研发投入增长11.5%，显示其在亚太市场的持续扩张趋势。',source:'Pascall IR',time:'2026-07-16',comments:0},
+      {id:6,title:'和路雪越南工厂扩建完成产能提升40%',status:'proposal',cat:'客户情报',company:'和路雪',deal:'',summary:'联合利华旗下和路雪越南工厂扩建项目完工，产能提升40%，新产线将增加对香精香料、稳定剂等原料的采购需求。',source:'Unilever',time:'2026-07-15',comments:6},
+      {id:7,title:'雀巢中国冰淇淋业务调整',status:'qualified',cat:'客户情报',company:'雀巢',deal:'',summary:'雀巢中国将高端品牌Movenpick经销权从上海迁至广州，新增华南区3个经销商，经销商变更期是切入供应链的最佳时机。',source:'Nestle',time:'2026-07-14',comments:2},
+      {id:8,title:'中国冰淇淋稳定剂市场分析报告',status:'pending',cat:'市场情报',company:'',deal:'12.5亿元',summary:'2026年中国冰淇淋稳定剂市场规模约12.5亿元，清洁标签产品和植物基稳定剂成为增长最快的细分领域，年增速超过20%。',source:'行业报告',time:'2026-07-13',comments:1},
+      {id:9,title:'李岩在泰国投资1.2亿美元新建工厂',status:'pending',cat:'竞品动态',company:'李岩',deal:'1.2亿美元',summary:'李岩在泰国罗勇府投资1.2亿美元建设新工厂，2027年初投产，主要生产冰淇淋用香精和稳定剂，目标东南亚市场。',source:'行业新闻',time:'2026-07-12',comments:0},
+      {id:10,title:'2026亚洲食品配料展（FIA）参展商名单',status:'pending',cat:'展会信息',company:'',deal:'',summary:'2026年亚洲食品配料展9月曼谷举办，参展商超800家，丹尼斯克、凯瑞、帕斯嘉均参展，是了解竞品和接触客户的最佳机会。',source:'FIA官方',time:'2026-07-11',comments:4},
+    ]
+  }
+};
+
+let cur='research';let d=DATA.research;let read=new Set();
+
+function switchDomain(domain){
+  cur=domain;d=DATA[domain];
+  document.getElementById('themeMark').style.background=d.color;
+  document.getElementById('appTitle').textContent = d.title;
+  document.title=d.title+' Demo';
+  document.getElementById('domainSwitcher').value=domain;
+  buildFilters();renderAll();
+}
+
+function buildFilters(){
+  const cats=[...new Set(d.items.map(i=>i.cat))];
+  const sel=document.getElementById('catFilter');
+  sel.innerHTML='<option value="">全部分类</option>';
+  cats.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o)});
+  const st=document.getElementById('statusFilter');
+  st.innerHTML='<option value="">全部状态</option>';
+  Object.entries(d.statusMap).forEach(([k,v])=>{const o=document.createElement('option');o.value=k;o.textContent=v;st.appendChild(o)});
+  document.getElementById('sidebarCats').innerHTML=cats.map(c=>'<div class="sidebar-item" onclick="setCat(\''+c+'\')"><span class="ico"><svg class="icon"><use href="#ico-folder"/></svg></span>'+c+'</div>').join('');
+}
+
+function renderAll(){
+  const items=d.items;
+  document.getElementById('statTotal').textContent=items.length;
+  document.getElementById('statPending').textContent=items.filter(i=>i.status==='pending'||i.status==='qualified').length;
+  document.getElementById('statApproved').textContent=items.filter(i=>i.status==='approved'||i.status==='proposal'||i.status==='negotiation').length;
+  document.getElementById('statCompleted').textContent=items.filter(i=>i.status==='completed'||i.status==='won').length;
+  filterCards();
+}
+
+function filterCards(){
+  const s=document.getElementById('searchInput').value.toLowerCase();
+  const st=document.getElementById('statusFilter').value;
+  const c=document.getElementById('catFilter').value;
+  let items=d.items;
+  if(s)items=items.filter(i=>i.title.toLowerCase().includes(s)||i.summary.toLowerCase().includes(s));
+  if(st)items=items.filter(i=>i.status===st);
+  if(c)items=items.filter(i=>i.cat===c);
+  renderFeed(items);
+  document.getElementById('feedCount').textContent=items.length+'条';
+}
+
+function renderFeed(items){
+  const feed=document.getElementById('feed');
+  if(items.length===0){feed.innerHTML='<div style="padding:40px;text-align:center;color:var(--gray-400);font-size:13px;">暂无匹配的情报</div>';return}
+  feed.innerHTML=items.map((item,i)=>{
+    const isRead=read.has(item.id);
+    return '<div class="row" onclick="openDetail('+item.id+')">'
+      +'<div class="row-index">'+String(i+1).padStart(2,'0')+'</div>'
+      +'<div class="row-body">'
+      +'<div class="row-title" style="'+(isRead?'color:var(--gray-400)':'')+'">'+item.title+'</div>'
+      +'<div class="row-meta">'
+      +'<span class="tag">'+item.cat+'</span>'
+      +(item.company?'<span class="tag tag-company">'+item.company+'</span>':'')
+      +(item.deal?'<span class="deal">'+item.deal+'</span>':'')
+      +'<span class="source"><svg class="icon icon-sm"><use href="#ico-link"/></svg>'+item.source+'</span>'
+      +'<span>'+item.time+'</span>'
+      +(item.comments>0?'<span class="comment-count"><svg class="icon icon-sm"><use href="#ico-comment"/></svg>'+item.comments+'</span>':'')
+      +'</div></div></div>';
+  }).join('');
+}
+
+function setFilter(s){document.getElementById('statusFilter').value=s;filterCards()}
+function setCat(c){document.getElementById('catFilter').value=c;filterCards()}
+function resetFilters(){
+  document.getElementById('searchInput').value='';
+  document.getElementById('statusFilter').value='';
+  document.getElementById('catFilter').value='';
+  filterCards();
+}
+
+function openDetail(id){
+  read.add(id);
+  const item=d.items.find(i=>i.id===id);if(!item)return;
+  document.getElementById('panelTitle').textContent=item.title;
+  document.getElementById('panelBody').innerHTML=''
+    +'<div class="detail-meta">'
+    +'<span class="tag tag-status '+item.status+'">'+(d.statusMap[item.status]||item.status)+'</span>'
+    +'<span class="tag tag-cat">'+item.cat+'</span>'
+    +(item.company?'<span class="tag tag-company">'+item.company+'</span>':'')
+    +'</div>'
+    +(item.deal?'<div class="detail-deal">预估金额：'+item.deal+'</div>':'')
+    +'<div class="detail-source"><svg class="icon icon-sm" style="vertical-align:text-bottom;margin-right:4px"><use href="#ico-link"/></svg>'+item.source+' · '+item.time+'</div>'
+    +'<div class="detail-content">'+item.summary.replace(/\n/g,'<br>')+'</div>'
+    +'<div class="comment-section"><h3>分析师评论</h3>'
+    +(item.comments>0
+      ?'<div class="comment"><div class="comment-head"><span class="comment-name">贾维斯</span><span class="comment-time">'+item.time+'</span></div><div class="comment-text">该情报与当前业务方向高度相关，建议优先跟进。其中提到的趋势变化可能带来新的市场机会，建议安排专题讨论。</div></div>'
+      +'<div class="comment"><div class="comment-head"><span class="comment-name">南希</span><span class="comment-time">'+item.time+'</span></div><div class="comment-text">从竞争角度看，该情报验证了我们之前的判断，建议同步给相关团队评估策略调整方向。</div></div>'
+      :'<div style="color:var(--gray-400);font-size:13px;">暂无评论</div>')
+    +'</div>';
+  let btns='';
+  const st=item.status;
+  if(st==='pending'||st==='qualified')btns='<button class="btn btn-success" onclick="mockAction(\'已标记为跟进\')">建议跟进</button><button class="btn btn-danger" onclick="mockAction(\'已标记为不建议\')">不建议</button>';
+  else if(st==='approved'||st==='proposal')btns='<button class="btn btn-primary" onclick="mockAction(\'已激活\')">激活项目</button>';
+  else if(st==='active'||st==='negotiation')btns='<button class="btn btn-primary" onclick="mockAction(\'已标记完结\')">标记完结</button>';
+  btns+='<span class="spacer"></span><button class="btn btn-ghost" onclick="mockAction(\'已废止\')">废止</button>';
+  document.getElementById('panelFoot').innerHTML=btns;
+  document.getElementById('detailPanel').classList.add('open');
+}
+
+function mockAction(m){alert(m);closePanel()}
+function closePanel(){document.getElementById('detailPanel').classList.remove('open');filterCards()}
+
+switchDomain('research');
+</script>
+</body>
+</html>

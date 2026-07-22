@@ -1,31 +1,93 @@
-version: '3.8'
-
-# 注意：engine.py 已废弃，情报采集由 OpenClaw Agent 定时任务自动执行
-# 定时任务: intelligence-scout (全天每4小时: 0:00, 4:00, 8:00, 12:00, 16:00, 20:00)
-
 services:
-  api:
+  # Meilisearch
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_MASTER_KEY: "intel-search-key"
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - ./meili_data:/meili_data
+    restart: unless-stopped
+
+  # Research domain
+  research:
     build:
-      context: ./intelligence_web
-      dockerfile: Dockerfile.api
-    container_name: intelligence_web_api
+      context: .
+      dockerfile: intelligence_web/Dockerfile.api
+    image: intelligence_web_api:latest
     ports:
       - "8766:8766"
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}
+      - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://localhost:8765
     volumes:
-      - ./intelligence_web/data:/app/data
-    restart: always
+      - ./intelligence_web/data:/app/intelligence_web/data
+    restart: unless-stopped
 
-  web:
+  # Sales domain
+  sales:
+    build:
+      context: .
+      dockerfile: intelligence_sales/Dockerfile.api
+    image: intelligence_sales_api:latest
+    ports:
+      - "8767:8767"
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}
+      - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://localhost:8765
+    volumes:
+      - ./intelligence_sales/data:/app/intelligence_sales/data
+    restart: unless-stopped
+
+  # Crawler Service
+  crawler:
+    build:
+      context: .
+      dockerfile: crawler_service/Dockerfile
+    image: intelligence_crawler:latest
+    ports:
+      - "8768:8768"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./crawler_cache:/app/.crawl4ai_cache
+    restart: unless-stopped
+
+  # Backup cron service
+  backup-cron:
+    image: alpine:3.20
+    volumes:
+      - ./intelligence_web/data:/data/intelligence_web/data
+      - ./intelligence_sales/data:/data/intelligence_sales/data
+      - ./backups:/backups
+      - ./scripts/backup.sh:/scripts/backup.sh:ro
+    environment:
+      - INTELLIGENCE_DATA_DIR=/data
+      - INTELLIGENCE_BACKUP_DIR=/backups
+      - CRON_SCHEDULE=0 2 * * *
+    command: >
+      sh -c '
+        apk add --no-cache sqlite gzip bash tini &&
+        echo "0 2 * * * /bin/bash /scripts/backup.sh >> /var/log/backup.log 2>&1" > /etc/crontabs/root &&
+        /usr/sbin/crond -f -l 0
+      '
+    restart: unless-stopped
+
+  # nginx gateway
+  gateway:
     image: nginx:alpine
-    container_name: intelligence_web_web
     ports:
       - "8765:80"
     volumes:
-      - ./intelligence_web/web:/usr/share/nginx/html:ro
+      - ./portal:/var/www/portal
+      - ./intelligence_sales/web:/var/www/intelligence_sales
+      - ./favicon.ico:/var/www/favicon.ico
+      - ./nginx/gateway.conf:/etc/nginx/conf.d/default.conf
     depends_on:
-      - api
-    restart: always
-
-networks:
-  default:
-    name: intelligence_network
+      - research
+      - sales
+      - crawler
+      - backup-cron
+    restart: unless-stopped
