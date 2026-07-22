@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>角色管理</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.role-table{width:100%;border-collapse:collapse}
+.role-table th{text-align:left;padding:10px 16px;font-size:12px;font-weight:600;color:var(--gray-600);background:var(--gray-50);border-bottom:2px solid var(--gray-200)}
+.role-table td{padding:12px 16px;font-size:13px;color:var(--gray-800);border-bottom:1px solid var(--gray-200);background:#fff}
+.role-table tr:hover td{background:var(--gray-50)}
+.role-name{font-weight:600;color:var(--gray-800)}
+.role-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:500}
+.role-badge-1{background:#fde8e8;color:var(--red)}
+.role-badge-2{background:var(--amber-light);color:var(--amber)}
+.role-badge-3{background:var(--gray-100);color:var(--gray-600)}
+.role-user-count{color:var(--gray-600);font-weight:500}
+.actions .btn{padding:5px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;cursor:pointer;background:#fff;color:var(--gray-600);transition:all 0.12s}
+.actions .btn:hover{border-color:var(--accent);color:var(--accent)}
+.actions .btn-danger:hover{border-color:var(--red);color:var(--red)}
+</style>
+</head>
+<body>
+<main class="main">
+  <div style="font-size:18px;font-weight:600;color:var(--gray-800);margin-bottom:20px">角色列表</div>
+  <table class="role-table">
+    <thead>
+      <tr>
+        <th style="width:40px">#</th>
+        <th>角色名称</th>
+        <th>用户数</th>
+        <th>创建时间</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="roleList">
+      <tr><td colspan="5" class="empty">加载中...</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<!-- Edit Panel -->
+<div class="panel" id="editPanel">
+  <div class="panel-head"><h2 id="editTitle">编辑角色</h2><button class="panel-close" onclick="closeEdit()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body">
+    <div class="form-feedback" id="editFeedback"></div>
+    <div class="form-group">
+      <label>角色名称</label>
+      <input type="text" id="editRoleName" placeholder="角色名称">
+      <div class="hint" style="font-size:11px;color:var(--gray-400);margin-top:4px">角色名称用于权限控制（如 admin/editor/viewer）</div>
+    </div>
+    <input type="hidden" id="editRoleId">
+  </div>
+  <div class="panel-foot">
+    <button class="btn btn-primary" onclick="saveRole()">保存</button>
+    <button class="btn btn-ghost" onclick="closeEdit()">取消</button>
+  </div>
+</div>
+<div class="panel-overlay" id="overlay" onclick="closeEdit()"></div>
+
+<script>
+var token = getToken();
+if (!token) { window.location.href = '/portal/login.html'; }
+
+function formatDate(iso){if(!iso)return'-';var d=new Date(iso);if(isNaN(d))return iso;return d.getFullYear()+'-'+(d.getMonth()+1).toString().padStart(2,'0')+'-'+d.getDate().toString().padStart(2,'0')}
+
+function loadRoles(){
+  apiFetch(apiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
+    var tbody = document.getElementById('roleList');
+    if(!roles.length){tbody.innerHTML='<tr><td colspan="5" class="empty">暂无角色</td></tr>';return;}
+    tbody.innerHTML = roles.map(function(role, i){
+      var badgeClass = 'role-badge-'+role.id;
+      return '<tr>'
+        +'<td style="color:var(--gray-400)">'+(i+1).toString().padStart(2,'0')+'</td>'
+        +'<td><span class="role-name">'+escapeHtml(role.name)+'</span></td>'
+        +'<td><span class="role-user-count">'+(role.user_count||0)+' 人</span></td>'
+        +'<td>'+formatDate(role.created_at)+'</td>'
+        +'<td><div class="actions"><button class="btn" onclick="openEdit('+role.id+',\''+escapeHtml(role.name).replace(/'/g,"\\'")+'\')">编辑</button></div></td>'
+        +'</tr>';
+    }).join('');
+  }).catch(function(){
+    document.getElementById('roleList').innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
+  });
+}
+
+function openEdit(id, name){
+  document.getElementById('editTitle').textContent = '编辑角色';
+  document.getElementById('editRoleId').value = id;
+  document.getElementById('editRoleName').value = name;
+  document.getElementById('editFeedback').className = 'form-feedback';
+  document.getElementById('editFeedback').textContent = '';
+  document.getElementById('editPanel').classList.add('open');
+  document.getElementById('editRoleName').focus();
+}
+
+function closeEdit(){
+  document.getElementById('editPanel').classList.remove('open');
+}
+
+function saveRole(){
+  var id = parseInt(document.getElementById('editRoleId').value);
+  var name = document.getElementById('editRoleName').value.trim();
+  var fb = document.getElementById('editFeedback');
+  if(!name){fb.className='form-feedback error';fb.textContent='角色名称不能为空';return;}
+  apiFetch(apiBase()+'/api/roles/'+id, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name: name})
+  }).then(function(r){
+    return r.json().then(function(e){
+      if(r.ok){
+        fb.className = 'form-feedback success';
+        fb.textContent = '角色名称已更新';
+        setTimeout(function(){
+          closeEdit();
+          loadRoles();
+        }, 800);
+      } else {
+        fb.className = 'form-feedback error';
+        fb.textContent = e.error || '保存失败';
+      }
+    });
+  }).catch(function(e){
+    fb.className = 'form-feedback error';
+    fb.textContent = '网络错误: '+e.message;
+  });
+}
+
+loadRoles();
+</script>
+</body>
+</html>
