@@ -1,0 +1,26 @@
+/* portal/css/header.css */
+.header{height:56px;display:flex;align-items:center;padding:0 24px;background:#fff;border-bottom:1px solid var(--gray-200);gap:8px}
+.header-logo{font-weight:600;font-size:16px;color:var(--gray-800);display:flex;align-items:center;gap:8px}
+.header-logo .mark{width:6px;height:6px;border-radius:2px;background:var(--accent);display:inline-block}
+.header-grow{flex:1}
+.header-domain select{padding:5px 20px 5px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);background:#fff;font-size:13px;color:var(--gray-600);cursor:pointer}
+.header-search{display:flex;align-items:center;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius);padding:0 10px;flex:1;max-width:280px;transition:border-color 0.2s}
+.header-search:focus-within{border-color:var(--accent)}
+.header-search input{border:none;background:transparent;padding:7px 0;font-size:13px;color:var(--gray-800);outline:none;width:100%}
+.header-search input::placeholder{color:var(--gray-400)}
+.header-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-light);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;cursor:pointer}
+.header-nav{display:flex;gap:12px;align-items:center}
+.header-nav a{font-size:13px;color:var(--gray-600);text-decoration:none}
+.header-nav a:hover{color:var(--accent)}
+
+/* Tab Bar */
+.tab-bar{display:flex;align-items:center;gap:2px;height:56px;padding:0 8px;overflow-x:auto;overflow-y:hidden;flex-shrink:0}
+.tab-bar::-webkit-scrollbar{display:none}
+.tab{display:flex;align-items:center;gap:6px;padding:6px 12px;font-size:12px;color:var(--gray-600);background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius);cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all 0.12s}
+.tab:hover{background:var(--gray-200)}
+.tab.active{background:var(--accent-light);color:var(--accent);font-weight:500;border-color:var(--accent)}
+.tab-close{width:14px;height:14px;display:flex;align-items:center;justify-content:center;border-radius:2px;font-size:14px;color:var(--gray-400);line-height:1}
+.tab-close:hover{background:var(--gray-300);color:var(--gray-700)}
+.tab:not(.pinned) .tab-close{display:flex}
+.tab-bar .tab-new{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--gray-300);border-radius:var(--radius);cursor:pointer;font-size:16px;color:var(--gray-500);flex-shrink:0;transition:all 0.12s}
+.tab-bar .tab-new:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}

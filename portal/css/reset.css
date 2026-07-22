@@ -1,0 +1,5 @@
+/* portal/css/reset.css */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-font-smoothing:antialiased}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e1e1e;min-height:100vh}
+input,select,button{font-family:inherit;font-size:inherit}

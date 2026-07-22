@@ -1,0 +1,7 @@
+/* portal/css/responsive.css */
+@media(max-width:768px){
+  .sidebar{display:none}
+  .main{padding:16px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .panel{width:100vw;max-width:100vw}
+}

@@ -1,0 +1,94 @@
+/* portal/css/components.css */
+
+/* Buttons */
+.btn{padding:6px 14px;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#2f3f70}
+.btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.btn-ghost:hover{background:var(--gray-200)}
+.btn-success{background:var(--green);color:#fff}
+.btn-success:hover{background:#1f613b}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger:hover{background:#8f2e2e}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
+th{text-align:left;padding:10px 14px;font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--gray-200);background:var(--gray-50)}
+td{padding:10px 14px;font-size:13px;color:var(--gray-600);border-bottom:1px solid var(--gray-100)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--gray-50)}
+
+/* Forms */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--accent)}
+.form-row{display:flex;gap:12px}
+.form-row .form-group{flex:1}
+
+/* Tags */
+.tag{display:inline-flex;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:500}
+
+/* Stats Cards */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;box-shadow:var(--shadow-sm)}
+.stat-num{font-size:22px;font-weight:600;color:var(--gray-800);letter-spacing:-0.3px;line-height:1.2}
+.stat-label{font-size:12px;color:var(--gray-400);margin-top:2px}
+
+/* Section Header */
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-header h2{font-size:15px;font-weight:600;color:var(--gray-800)}
+.section-header .count{font-size:12px;color:var(--gray-400);font-weight:400;margin-left:6px}
+.section-header .filter-group{display:flex;gap:6px;align-items:center}
+.section-header .filter-group select{padding:4px 20px 4px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer}
+.section-header .btn-reset{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer}
+
+/* Panel (Right Drawer) */
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:560px;max-width:92vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}.panel.open+.panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-close:hover{background:var(--gray-200);color:var(--gray-700)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-primary{background:var(--accent);color:#fff}
+.panel-foot .btn-primary:hover{background:#2f3f70}
+.panel-foot .btn-success{background:var(--green);color:#fff}
+.panel-foot .btn-success:hover{background:#1f613b}
+.panel-foot .btn-danger{background:var(--red);color:#fff}
+.panel-foot .btn-danger:hover{background:#8f2e2e}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.panel-foot .spacer{flex:1}
+
+/* Detail */
+.detail-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.detail-meta .tag{display:inline-flex;padding:2px 8px;border-radius:3px;font-size:12px;font-weight:500;line-height:1.5}
+.detail-source{font-size:12px;color:var(--gray-400);margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--gray-200)}
+.detail-content{font-size:14px;line-height:1.7;color:var(--gray-700)}
+.detail-content ul{padding-left:18px;margin-bottom:10px}
+.detail-content li{margin-bottom:4px}
+.detail-opinion{background:var(--accent-light);padding:10px 14px;border-radius:var(--radius);margin-bottom:14px;font-size:13px;color:var(--accent)}
+
+/* Comments */
+.comment-section{margin-top:20px;padding-top:16px;border-top:1px solid var(--gray-200)}
+.comment-section h3{font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:10px}
+.comment{padding:10px 14px;background:var(--gray-50);border-radius:var(--radius);margin-bottom:6px}
+.comment-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
+.comment-name{font-weight:500;font-size:12px;color:var(--accent)}
+.comment-time{font-size:11px;color:var(--gray-400)}
+.comment-text{font-size:12px;color:var(--gray-600);line-height:1.5}
+
+/* Modal (Center) */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.modal-overlay.open{display:flex;align-items:center;justify-content:center}
+.modal{background:#fff;border-radius:var(--radius);padding:24px;width:420px;max-width:90vw;box-shadow:var(--shadow-lg)}
+
+/* Empty State */
+.empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+
+/* Icon */
+.icon{width:16px;height:16px;display:inline-block;vertical-align:middle;flex-shrink:0}

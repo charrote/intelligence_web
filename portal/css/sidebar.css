@@ -1,0 +1,8 @@
+/* portal/css/sidebar.css */
+.sidebar{width:200px;background:#fff;border-right:1px solid var(--gray-200);padding:16px 0;flex-shrink:0;overflow-y:auto}
+.sidebar-label{padding:6px 16px 5px;font-size:10px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.8px}
+.sidebar-item{display:flex;align-items:center;gap:8px;padding:7px 16px;font-size:13px;color:var(--gray-600);cursor:pointer;transition:all 0.12s}
+.sidebar-item:hover{color:var(--gray-800);background:var(--gray-50)}
+.sidebar-item.active{color:var(--accent);font-weight:500;background:var(--accent-light)}
+.sidebar-item .ico{width:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sidebar-divider{height:1px;background:var(--gray-200);margin:10px 16px}
