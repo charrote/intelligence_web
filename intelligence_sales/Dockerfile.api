@@ -2,24 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Use domestic mirrors for faster downloads
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip install --no-cache-dir flask flask-cors gunicorn mcp pydantic uvicorn requests beautifulsoup4 lxml html5lib
 
-# Copy shared core
+COPY api/ /app/api/
 COPY core/ /app/core/
-
-# Copy Sales domain
-COPY intelligence_sales/ /app/intelligence_sales/
-
-# Copy project root files needed for path resolution
-COPY intelligence_sales/domain_spec.py /app/domain_spec.py
-
-# Copy WSGI entry point
-COPY intelligence_sales/wsgi.py /app/wsgi.py
-
-# Copy crawler service (for datasource_crawler import)
-COPY crawler_service/ /app/crawler_service/
+COPY domain_spec.py /app/domain_spec.py
+COPY wsgi.py /app/wsgi.py
 
 ENV PYTHONUNBUFFERED=1
 

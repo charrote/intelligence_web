@@ -5,6 +5,7 @@ var ROUTES = {
   '': { page: 'index.html', label: '情报列表', pinned: true },
   'dashboard': { page: 'dashboard.html', label: '数据看板' },
   'datasources': { page: 'datasources.html', label: '数据源管理' },
+  'target_types': { page: 'target_types.html', label: '目标类型' },
   'projects': { page: 'projects.html', label: '采集项目' },
   'analyst': { page: 'analyst.html', label: 'AI 分析师' },
   'users': { page: 'users.html', label: '用户管理' },
@@ -12,6 +13,7 @@ var ROUTES = {
   'import': { page: 'import.html', label: '批量导入' },
   'audit': { page: 'audit.html', label: '操作日志' },
   'settings': { page: 'settings.html', label: '个人设置' },
+  'sys-settings': { page: 'settings.html?tab=system', label: '系统设置' },
   'notifications': { page: 'notifications.html', label: '通知中心' }
 };
 
@@ -47,6 +49,7 @@ function openTab(hash) {
   TABS.push(tab);
   renderTabBar();
   switchToTab(tab.id);
+  updateBreadcrumb(hash);
 }
 
 function closeTab(tabId) {
@@ -73,6 +76,7 @@ function closeTab(tabId) {
   }
 
   renderTabBar();
+  updateBreadcrumb(getHash());
 }
 
 function switchToTab(tabId) {
@@ -143,9 +147,22 @@ function renderTabBar() {
     html += '<div class="tab' + (tab.id === currentTabId ? ' active' : '') + (tab.pinned ? ' pinned' : '') + '" data-tab-id="' + tab.id + '" onclick="switchToTab(' + tab.id + ')">'
       + escapeHtml(tab.label) + closeLabel + '</div>';
   });
-  html += '<div class="tab-new" onclick="openTab(\'\'") title="打开首页">+</div>';
 
   bar.innerHTML = html;
+}
+
+function updateBreadcrumb(hash) {
+  var bc = document.getElementById('breadcrumb');
+  if (!bc) return;
+  var currentLabel = '首页';
+  if (hash && ROUTES[hash]) {
+    currentLabel = ROUTES[hash].label;
+  }
+  if (hash === '') {
+    bc.innerHTML = '<a href="#" onclick="openTab(\'\');return false;">首页</a>';
+  } else {
+    bc.innerHTML = '<a href="#" onclick="openTab(\'\');return false;">首页</a><span class="sep">&gt;</span>' + escapeHtml(currentLabel);
+  }
 }
 
 function initTabs() {
@@ -153,6 +170,7 @@ function initTabs() {
   window.addEventListener('hashchange', function() {
     var hash = getHash();
     setActiveSidebar(hash);
+    updateBreadcrumb(hash);
     var existing = TABS.find(function(t) { return t.hash === hash; });
     if (existing) {
       switchToTab(existing.id);

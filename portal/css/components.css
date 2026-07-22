@@ -1,15 +1,61 @@
 /* portal/css/components.css */
 
-/* Buttons */
-.btn{padding:6px 14px;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.12s}
+/* ══════════════════════════════════════
+   Buttons
+   ══════════════════════════════════════ */
+.btn{padding:7px 16px;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;justify-content:center;gap:4px;line-height:1.4}
+.btn:hover{transform:translateY(-0.5px);box-shadow:var(--shadow-sm)}
+.btn:active{transform:translateY(0)}
 .btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{background:#2f3f70}
-.btn-ghost{background:var(--gray-100);color:var(--gray-600)}
-.btn-ghost:hover{background:var(--gray-200)}
+.btn-primary:hover{background:#2f3f70;box-shadow:0 2px 8px rgba(59,79,140,0.25)}
+.btn-ghost{background:var(--gray-100);color:var(--gray-600);border:1px solid var(--gray-200)}
+.btn-ghost:hover{background:#fff;border-color:var(--gray-300);color:var(--gray-700)}
 .btn-success{background:var(--green);color:#fff}
-.btn-success:hover{background:#1f613b}
+.btn-success:hover{background:#1f613b;box-shadow:0 2px 8px rgba(42,125,79,0.25)}
 .btn-danger{background:var(--red);color:#fff}
-.btn-danger:hover{background:#8f2e2e}
+.btn-danger:hover{background:#8f2e2e;box-shadow:0 2px 8px rgba(179,58,58,0.25)}
+.btn-sm{padding:2px 10px;font-size:12px;line-height:1.4;min-height:28px}
+
+/* Action buttons in table cells — uniform spacing */
+.action-btns{display:flex;gap:6px;align-items:center}
+.btn-lg{padding:10px 24px;font-size:14px;border-radius:var(--radius-md)}
+
+/* ══════════════════════════════════════
+   Toolbar — 筛选/操作工具栏容器
+   ══════════════════════════════════════ */
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)}
+
+/* Toolbar label + select/input pairs */
+.toolbar label{display:inline-flex;flex-direction:column;gap:4px;font-size:12px;font-weight:500;color:var(--gray-500)}
+.toolbar label select,
+.toolbar label input{padding:6px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-700);background:#fff;transition:border-color 0.15s,box-shadow 0.15s;min-width:140px}
+.toolbar label select:focus,
+.toolbar label input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.toolbar label select:hover,
+.toolbar label input:hover{border-color:var(--gray-300)}
+
+/* Toolbar standalone inputs (search) */
+.toolbar input[type="text"],
+.toolbar input[type="date"],
+.toolbar input[type="search"]{padding:7px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-700);background:#fff;transition:border-color 0.15s,box-shadow 0.15s;width:200px}
+.toolbar input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.toolbar input:hover{border-color:var(--gray-300)}
+.toolbar input::placeholder{color:var(--gray-400)}
+
+/* Toolbar select (standalone, not wrapped in label) */
+.toolbar select{padding:7px 32px 7px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-700);background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239a9b9d'/%3E%3C/svg%3E") no-repeat right 10px center;appearance:none;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s;min-width:120px}
+.toolbar select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.toolbar select:hover{border-color:var(--gray-300)}
+
+/* Toolbar spacer */
+.toolbar .spacer{flex:1;min-width:8px}
+
+/* Toolbar divider (optional) */
+.toolbar .divider{width:1px;height:24px;background:var(--gray-200);margin:0 4px}
+
+/* ══════════════════════════════════════
+   Tables
+   ══════════════════════════════════════ */
 
 /* Tables */
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
@@ -26,8 +72,16 @@ tr:hover td{background:var(--gray-50)}
 .form-row{display:flex;gap:12px}
 .form-row .form-group{flex:1}
 
-/* Tags */
-.tag{display:inline-flex;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:500}
+/* ══════════════════════════════════════
+   Tags
+   ══════════════════════════════════════ */
+.tag{display:inline-flex;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500;line-height:1.6;letter-spacing:0.1px}
+.tag.website{background:var(--accent-light);color:var(--accent)}
+.tag.rss{background:var(--amber-light);color:var(--amber)}
+.tag.api{background:var(--blue-light);color:var(--blue)}
+.tag.daily{background:var(--green-light);color:var(--green)}
+.tag.weekly{background:var(--accent-light);color:var(--accent)}
+.tag.monthly{background:var(--gray-100);color:var(--gray-600)}
 
 /* Stats Cards */
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
@@ -85,10 +139,23 @@ tr:hover td{background:var(--gray-50)}
 /* Modal (Center) */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
 .modal-overlay.open{display:flex;align-items:center;justify-content:center}
-.modal{background:#fff;border-radius:var(--radius);padding:24px;width:420px;max-width:90vw;box-shadow:var(--shadow-lg)}
+.modal{background:#fff;border-radius:var(--radius-lg);padding:0;width:460px;max-width:90vw;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;overflow:hidden}
+.modal-header{display:flex;align-items:center;padding:18px 24px 14px;border-bottom:1px solid var(--gray-100);flex-shrink:0}
+.modal-header h2{font-size:16px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4}
+.modal-body{padding:16px 24px 20px;flex:1;overflow-y:auto}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:14px 24px;border-top:1px solid var(--gray-200);flex-shrink:0}
 
 /* Empty State */
 .empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+
+/* ══════════════════════════════════════
+   Card — 内容卡片容器
+   ══════════════════════════════════════ */
+.card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden}
+.card-header{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-100);flex-shrink:0}
+.card-header h2{font-size:15px;font-weight:600;color:var(--gray-800);margin:0}
+.card-body{padding:20px}
+.card-actions{display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-100)}
 
 /* Icon */
 .icon{width:16px;height:16px;display:inline-block;vertical-align:middle;flex-shrink:0}

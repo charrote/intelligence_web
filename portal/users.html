@@ -20,55 +20,184 @@
 .tag.power_user{background:var(--accent);color:#fff}
 .tag.viewer{background:var(--gray-400);color:#fff}
 .tag.agent{background:var(--green);color:#fff}
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:560px;max-width:94vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}.panel.open+.panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-close:hover{background:var(--gray-200);color:var(--gray-700)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-primary{background:var(--accent);color:#fff}
+.panel-foot .btn-primary:hover{background:#2f3f70}
+.panel-foot .btn-danger{background:var(--red);color:#fff}
+.panel-foot .btn-danger:hover{background:#8f2e2e}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.panel-foot .spacer{flex:1}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px}
+.form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff}
+.form-group input:focus,.form-group select:focus{border-color:var(--accent);outline:none}
+.empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+@media(max-width:768px){.panel{width:100vw;max-width:100vw}}
 </style>
 </head>
 <body>
 <main class="main">
   <h1>用户管理</h1>
-  <div class="sub">管理系统用户及角色分配</div>
-  <div class="toolbar" style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+  <p class="sub">管理系统用户及角色分配</p>
+  <div class="toolbar">
     <input type="text" id="searchInput" placeholder="搜索用户名..." oninput="loadUsers()">
-    <span class="spacer" style="flex:1"></span>
-    <button class="btn btn-primary" onclick="openCreateModal()">+ 新建用户</button>
+    <span class="spacer"></span>
+    <button class="btn btn-primary" onclick="openCreate()">+ 新建用户</button>
   </div>
-  <table>
-    <thead>
-      <tr><th>ID</th><th>用户名</th><th>显示名称</th><th>角色</th><th>所属域</th><th>创建时间</th><th>操作</th></tr>
-    </thead>
-    <tbody id="userList"></tbody>
-  </table>
+  <div class="table-wrapper" style="margin-top:16px">
+    <table>
+      <thead>
+        <tr><th>ID</th><th>用户名</th><th>显示名称</th><th>角色</th><th>所属域</th><th>创建时间</th><th>操作</th></tr>
+      </thead>
+      <tbody id="userList"></tbody>
+    </table>
+  </div>
 </main>
 
-<!-- Create/Edit Modal -->
-<div class="modal-overlay" id="userModal">
-  <div class="modal">
-    <h2 id="modalTitle">新建用户</h2>
-    <label>用户名 *</label>
-    <input type="text" id="mu_username" placeholder="username">
-    <label>显示名称 *</label>
-    <input type="text" id="mu_display" placeholder="张三">
-    <label>密码 *</label>
-    <input type="password" id="mu_password" placeholder="至少6位">
-    <label>角色</label>
-    <select id="mu_role">
-      <option value="3">viewer</option>
-      <option value="2">power_user</option>
-      <option value="1">admin</option>
-      <option value="4">agent</option>
-    </select>
-    <label>所属域 (逗号分隔)</label>
-    <input type="text" id="mu_domains" placeholder="intelligence_web, intelligence_sales">
-    <input type="hidden" id="mu_user_id">
-    <div class="actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-      <button class="btn btn-ghost" onclick="closeModal()">取消</button>
-      <button class="btn btn-primary" onclick="saveUser()">保存</button>
+<!-- Create/Edit Panel -->
+<div class="panel" id="panel">
+  <div class="panel-head"><h2 id="panelTitle">新建用户</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body">
+    <div class="form-group">
+      <label>用户名 *</label>
+      <input type="text" id="mu_username" placeholder="username">
     </div>
+    <div class="form-group">
+      <label>显示名称 *</label>
+      <input type="text" id="mu_display" placeholder="张三">
+    </div>
+    <div class="form-group">
+      <label>密码 *</label>
+      <input type="password" id="mu_password" placeholder="至少6位">
+    </div>
+    <div class="form-group">
+      <label>角色</label>
+      <select id="mu_role">
+        <option value="3">viewer</option>
+        <option value="2">power_user</option>
+        <option value="1">admin</option>
+        <option value="4">agent</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>所属域 (逗号分隔)</label>
+      <input type="text" id="mu_domains" placeholder="intelligence_web, intelligence_sales">
+    </div>
+    <input type="hidden" id="mu_user_id">
+    <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
+  </div>
+  <div class="panel-foot">
+    <button class="btn btn-primary" onclick="saveUser()">保存</button>
+    <button class="btn btn-ghost" onclick="closePanel()">取消</button>
   </div>
 </div>
+<div class="panel-overlay" onclick="closePanel()"></div>
 
 <script>
 var token = getToken();
 if (!token) { window.location.href = '/portal/login.html'; }
+
+function openCreate() {
+  document.getElementById('panelTitle').textContent = '新建用户';
+  document.getElementById('mu_user_id').value = '';
+  document.getElementById('mu_username').value = '';
+  document.getElementById('mu_username').disabled = false;
+  document.getElementById('mu_display').value = '';
+  document.getElementById('mu_password').value = '';
+  document.getElementById('mu_password').placeholder = '至少6位';
+  document.getElementById('mu_role').value = '3';
+  document.getElementById('mu_domains').value = '';
+  document.getElementById('panelFeedback').style.display = 'none';
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('mu_username').focus();
+}
+
+function openEdit(id) {
+  document.getElementById('panelTitle').textContent = '编辑用户';
+  document.getElementById('mu_user_id').value = id;
+  apiFetch(apiBase()+'/api/users/'+id).then(function(r){return r.json()}).then(function(u){
+    document.getElementById('mu_username').value = u.username;
+    document.getElementById('mu_username').disabled = true;
+    document.getElementById('mu_display').value = u.display_name || '';
+    document.getElementById('mu_password').value = '';
+    document.getElementById('mu_password').placeholder = '留空不修改';
+    document.getElementById('mu_role').value = u.role_id || '3';
+    document.getElementById('mu_domains').value = Array.isArray(u.domains) ? u.domains.join(', ') : '';
+    document.getElementById('panelFeedback').style.display = 'none';
+    document.getElementById('panel').classList.add('open');
+  });
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('mu_username').disabled = false;
+}
+
+function saveUser() {
+  var id = document.getElementById('mu_user_id').value;
+  var username = document.getElementById('mu_username').value.trim();
+  var display = document.getElementById('mu_display').value.trim();
+  var password = document.getElementById('mu_password').value;
+  var role_id = parseInt(document.getElementById('mu_role').value);
+  var domains_raw = document.getElementById('mu_domains').value.trim();
+  var domains = domains_raw ? domains_raw.split(',').map(function(d){return d.trim()}).filter(Boolean) : [];
+  var fb = document.getElementById('panelFeedback');
+
+  if (!username || !display) {
+    fb.style.display = 'block';
+    fb.style.background = '#fceef0';
+    fb.style.color = 'var(--red)';
+    fb.textContent = '用户名和显示名称不能为空';
+    return;
+  }
+
+  var body = { username: username, display_name: display, role_id: role_id, domains: domains };
+  if (id) {
+    if (password) body.password = password;
+    apiFetch(apiBase()+'/api/users/'+id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(){
+      closePanel();
+      loadUsers();
+    });
+  } else {
+    if (!password || password.length < 6) {
+      fb.style.display = 'block';
+      fb.style.background = '#fceef0';
+      fb.style.color = 'var(--red)';
+      fb.textContent = '密码至少6位';
+      return;
+    }
+    body.password = password;
+    apiFetch(apiBase()+'/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(){
+      closePanel();
+      loadUsers();
+    });
+  }
+}
+
+function deleteUser(id) {
+  if (!confirm('确认删除此用户？')) return;
+  apiFetch(apiBase()+'/api/users/'+id, { method: 'DELETE' }).then(function(){
+    loadUsers();
+  });
+}
 
 function loadUsers() {
   var search = document.getElementById('searchInput').value;
@@ -85,7 +214,7 @@ function loadUsers() {
         +'<td>'+domains+'</td>'
         +'<td>'+(u.created_at ? new Date(u.created_at).toLocaleDateString() : '-')+'</td>'
         +'<td>'
-          +'<button class="btn btn-ghost" onclick="openEditModal('+u.id+')">编辑</button>'
+          +'<button class="btn btn-ghost" onclick="openEdit('+u.id+')">编辑</button>'
           +(u.id !== 1 ? '<button class="btn btn-danger" style="margin-left:4px" onclick="deleteUser('+u.id+')">删除</button>' : '')
         +'</td>'
         +'</tr>';
@@ -93,80 +222,6 @@ function loadUsers() {
     if (!data.items.length) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">暂无用户</td></tr>';
   }).catch(function(){
     document.getElementById('userList').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
-  });
-}
-
-function openCreateModal() {
-  document.getElementById('modalTitle').textContent = '新建用户';
-  document.getElementById('mu_user_id').value = '';
-  document.getElementById('mu_username').value = '';
-  document.getElementById('mu_display').value = '';
-  document.getElementById('mu_password').value = '';
-  document.getElementById('mu_role').value = '3';
-  document.getElementById('mu_domains').value = '';
-  document.getElementById('userModal').classList.add('open');
-}
-
-function openEditModal(id) {
-  document.getElementById('modalTitle').textContent = '编辑用户';
-  document.getElementById('mu_user_id').value = id;
-  apiFetch(apiBase()+'/api/users/'+id).then(function(r){return r.json()}).then(function(u){
-    document.getElementById('mu_username').value = u.username;
-    document.getElementById('mu_username').disabled = true;
-    document.getElementById('mu_display').value = u.display_name || '';
-    document.getElementById('mu_password').value = '';
-    document.getElementById('mu_password').placeholder = '留空不修改';
-    document.getElementById('mu_role').value = u.role_id || '3';
-    document.getElementById('mu_domains').value = Array.isArray(u.domains) ? u.domains.join(', ') : '';
-    document.getElementById('userModal').classList.add('open');
-  });
-}
-
-function closeModal() {
-  document.getElementById('userModal').classList.remove('open');
-  document.getElementById('mu_username').disabled = false;
-}
-
-function saveUser() {
-  var id = document.getElementById('mu_user_id').value;
-  var username = document.getElementById('mu_username').value.trim();
-  var display = document.getElementById('mu_display').value.trim();
-  var password = document.getElementById('mu_password').value;
-  var role_id = parseInt(document.getElementById('mu_role').value);
-  var domains_raw = document.getElementById('mu_domains').value.trim();
-  var domains = domains_raw ? domains_raw.split(',').map(function(d){return d.trim()}).filter(Boolean) : [];
-
-  if (!username || !display) { alert('用户名和显示名称不能为空'); return; }
-
-  var body = { username: username, display_name: display, role_id: role_id, domains: domains };
-  if (id) {
-    if (password) body.password = password;
-    apiFetch(apiBase()+'/api/users/'+id, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }).then(function(){
-      closeModal();
-      loadUsers();
-    });
-  } else {
-    if (!password || password.length < 6) { alert('密码至少6位'); return; }
-    body.password = password;
-    apiFetch(apiBase()+'/api/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }).then(function(){
-      closeModal();
-      loadUsers();
-    });
-  }
-}
-
-function deleteUser(id) {
-  if (!confirm('确认删除此用户？')) return;
-  apiFetch(apiBase()+'/api/users/'+id, { method: 'DELETE' }).then(function(){
-    loadUsers();
   });
 }
 

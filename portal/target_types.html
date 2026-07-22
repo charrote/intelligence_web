@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>目标类型管理</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.table-wrapper{overflow-x:auto;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)}
+.table-wrapper table{border:none;background:transparent}
+.table-wrapper th{border-bottom:1px solid var(--gray-200)}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.status-dot.on{background:var(--green)}
+.status-dot.off{background:var(--gray-400)}
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:600px;max-width:94vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}.panel.open+.panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-close:hover{background:var(--gray-200);color:var(--gray-700)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-primary{background:var(--accent);color:#fff}
+.panel-foot .btn-primary:hover{background:#2f3f70}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff}
+.form-group textarea{resize:vertical;min-height:60px}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent);outline:none}
+.form-row{display:flex;gap:12px}
+.form-row .form-group{flex:1}
+.empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+.color-swatch{width:24px;height:24px;border-radius:4px;display:inline-block;border:1px solid var(--gray-200)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.panel.open{animation:fadeIn 0.2s ease-out}
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>目标类型管理</h1>
+  <p class="sub">管理采集项目的目标类型分类</p>
+  <div class="toolbar">
+    <span class="spacer"></span>
+    <button class="btn btn-primary" onclick="openCreate()">+ 新增类型</button>
+  </div>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:60px">排序</th>
+          <th>类型名称</th>
+          <th>标识符</th>
+          <th>描述</th>
+          <th>颜色</th>
+          <th>状态</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+</main>
+
+<!-- Create/Edit Panel -->
+<div class="panel" id="panel">
+  <div class="panel-head"><h2 id="panelTitle">新增目标类型</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body">
+    <div class="form-row">
+      <div class="form-group">
+        <label>标识符 (slug) *</label>
+        <input type="text" id="ttSlug" placeholder="如：product, technology">
+      </div>
+      <div class="form-group">
+        <label>显示名称 *</label>
+        <input type="text" id="ttLabel" placeholder="如：产品、技术">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>描述</label>
+      <textarea id="ttDesc" placeholder="类型描述..." rows="2"></textarea>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>颜色</label>
+        <input type="color" id="ttColor" value="#3b4f8c" style="height:40px">
+      </div>
+      <div class="form-group">
+        <label>排序</label>
+        <input type="number" id="ttSort" value="0" min="0">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>
+        <input type="checkbox" id="ttEnabled" checked> 启用
+      </label>
+    </div>
+    <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
+  </div>
+  <div class="panel-foot">
+    <button class="btn btn-primary" onclick="saveTargetType()">保存</button>
+    <button class="btn btn-ghost" onclick="closePanel()">取消</button>
+  </div>
+</div>
+<div class="panel-overlay" id="overlay" onclick="closePanel()"></div>
+
+<script>
+var targetTypes = [];
+var editingId = null;
+
+async function init() {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/target_types?enabled=true');
+    targetTypes = await r.json();
+    renderTable();
+  } catch(e) {
+    document.getElementById('tableBody').innerHTML = '<tr><td colspan="7" class="empty">加载失败</td></tr>';
+  }
+}
+
+function renderTable() {
+  var html = '';
+  if (targetTypes.length === 0) {
+    html = '<tr><td colspan="7" class="empty">暂无目标类型</td></tr>';
+  } else {
+    targetTypes.forEach(function(tt) {
+      html += '<tr>'
+        + '<td style="color:var(--gray-400);font-size:12px">' + tt.sort_order + '</td>'
+        + '<td><strong>' + escapeHtml(tt.label) + '</strong></td>'
+        + '<td><code style="background:var(--gray-100);padding:2px 6px;border-radius:3px;font-size:12px">' + escapeHtml(tt.slug) + '</code></td>'
+        + '<td style="color:var(--gray-600);font-size:13px">' + escapeHtml(tt.description || '-') + '</td>'
+        + '<td><span class="color-swatch" style="background:' + (tt.color || '#3b4f8c') + '"></span></td>'
+        + '<td><span class="status-dot ' + (tt.enabled ? 'on' : 'off') + '"></span>' + (tt.enabled ? '启用' : '停用') + '</td>'
+        + '<td class="action-cell">'
+          + '<div class="action-btns">'
+          + '<button class="btn btn-ghost btn-sm" onclick="editTargetType(' + tt.id + ')">编辑</button>'
+          + '<button class="btn btn-ghost btn-sm" onclick="toggleEnabled(' + tt.id + ', ' + (tt.enabled ? 'false' : 'true') + ')">' + (tt.enabled ? '停用' : '启用') + '</button>'
+          + '<button class="btn btn-danger btn-sm" onclick="deleteTargetType(' + tt.id + ')">删除</button>'
+          + '</div>'
+        + '</td>'
+        + '</tr>';
+    });
+  }
+  document.getElementById('tableBody').innerHTML = html;
+}
+
+function openCreate() {
+  editingId = null;
+  document.getElementById('panelTitle').textContent = '新增目标类型';
+  document.getElementById('ttSlug').value = '';
+  document.getElementById('ttLabel').value = '';
+  document.getElementById('ttDesc').value = '';
+  document.getElementById('ttColor').value = '#3b4f8c';
+  document.getElementById('ttSort').value = '0';
+  document.getElementById('ttEnabled').checked = true;
+  document.getElementById('panelFeedback').style.display = 'none';
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('ttSlug').focus();
+}
+
+function editTargetType(id) {
+  var tt = targetTypes.find(function(t) { return t.id === id; });
+  if (!tt) return;
+  editingId = id;
+  document.getElementById('panelTitle').textContent = '编辑目标类型';
+  document.getElementById('ttSlug').value = tt.slug;
+  document.getElementById('ttLabel').value = tt.label;
+  document.getElementById('ttDesc').value = tt.description || '';
+  document.getElementById('ttColor').value = tt.color || '#3b4f8c';
+  document.getElementById('ttSort').value = tt.sort_order || 0;
+  document.getElementById('ttEnabled').checked = !!tt.enabled;
+  document.getElementById('panelFeedback').style.display = 'none';
+  document.getElementById('panel').classList.add('open');
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.remove('open');
+}
+
+async function saveTargetType() {
+  var slug = document.getElementById('ttSlug').value.trim();
+  var label = document.getElementById('ttLabel').value.trim();
+  var desc = document.getElementById('ttDesc').value.trim();
+  var color = document.getElementById('ttColor').value;
+  var sort = parseInt(document.getElementById('ttSort').value) || 0;
+  var enabled = document.getElementById('ttEnabled').checked;
+  var fb = document.getElementById('panelFeedback');
+
+  if (!slug || !label) {
+    fb.style.display = 'block';
+    fb.style.background = '#fceef0';
+    fb.style.color = 'var(--red)';
+    fb.textContent = '标识符和名称为必填项';
+    return;
+  }
+
+  var payload = { slug: slug, label: label, description: desc, color: color, sort_order: sort, enabled: enabled };
+
+  var method = editingId ? 'PUT' : 'POST';
+  var urlPath = editingId ? APP_API_BASE + '/api/target_types/' + editingId : APP_API_BASE + '/api/target_types';
+  try {
+    var r = await apiFetch(urlPath, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (r.ok) {
+      closePanel();
+      init();
+    } else {
+      var data;
+      try { data = await r.json(); } catch(e) { data = {}; }
+      fb.style.display = 'block';
+      fb.style.background = '#fceef0';
+      fb.style.color = 'var(--red)';
+      fb.textContent = data.error || '保存失败 (HTTP ' + r.status + ')';
+    }
+  } catch(e) {
+    fb.style.display = 'block';
+    fb.style.background = '#fceef0';
+    fb.style.color = 'var(--red)';
+    fb.textContent = '请求失败：' + (e.message || '保存失败');
+  }
+}
+
+async function toggleEnabled(id, enabled) {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/target_types/' + id + '/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled })
+    });
+    if (r.ok) init();
+  } catch(e) { alert('操作失败'); }
+}
+
+async function deleteTargetType(id) {
+  if (!confirm('确定删除此目标类型？')) return;
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/target_types/' + id, { method: 'DELETE' });
+    if (r.ok) init();
+  } catch(e) { alert('删除失败'); }
+}
+
+init();
+</script>
+</body>
+</html>

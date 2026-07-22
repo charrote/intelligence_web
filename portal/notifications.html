@@ -97,6 +97,7 @@ async function loadUnreadCount() {
 
 function updateBadge() {
   const badge = document.getElementById('bellBadge');
+  if (!badge) return;
   if (unreadCount > 0) {
     badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
     badge.classList.add('show');

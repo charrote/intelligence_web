@@ -16,33 +16,42 @@
 <script src="js/init.js"></script>
 <script src="js/tabs.js"></script>
 <style>
-.toolbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
-.toolbar input,.toolbar select{padding:5px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px}
-.toolbar label{font-size:12px;color:var(--gray-600)}
-.toolbar .spacer{flex:1}
-.count-bar{font-size:12px;color:var(--gray-400);margin-bottom:12px}
-.method{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;min-width:42px;text-align:center}
-.method-POST{background:#eaf5ef;color:var(--green)}
+.count-bar{font-size:13px;color:var(--gray-400);margin:14px 0 0 0}
+.count-bar strong{color:var(--gray-700);font-weight:600}
+.method{display:inline-block;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:0.3px}
+.method-POST{background:var(--green-light);color:var(--green)}
 .method-PUT{background:var(--accent-light);color:var(--accent)}
 .method-DELETE{background:#fde8e8;color:var(--red)}
 .path-cell{font-family:monospace;font-size:11px;color:var(--gray-600);max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.detail-btn{color:var(--accent);cursor:pointer;border:none;background:none;font-size:12px;text-decoration:underline}
-.pagination{display:flex;align-items:center;gap:8px;margin-top:12px;justify-content:center}
-.pagination button{padding:5px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;background:#fff;cursor:pointer}
+.detail-btn{color:var(--accent);cursor:pointer;border:none;background:none;font-size:12px;font-weight:500;text-decoration:none}
+.detail-btn:hover{text-decoration:underline}
+.pagination{display:flex;align-items:center;gap:8px;margin-top:16px;justify-content:center}
+.pagination button{padding:6px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;background:#fff;cursor:pointer;transition:all 0.12s}
 .pagination button:disabled{opacity:0.4;cursor:default}
-.pagination button:not(:disabled):hover{background:var(--gray-50)}
-.pagination span{font-size:12px;color:var(--gray-600)}
-.empty-state{text-align:center;padding:40px;color:var(--gray-400)}
-.modal .field{margin-bottom:10px}
-.modal .field-label{font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;margin-bottom:2px}
-.modal .field-value{font-size:13px;color:var(--gray-700);word-break:break-all}
-.modal .actions{display:flex;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--gray-200)}
+.pagination button:not(:disabled):hover{background:var(--gray-50);border-color:var(--gray-300)}
+.pagination span{font-size:13px;color:var(--gray-500)}
+.empty-state{text-align:center;padding:40px;color:var(--gray-400);font-size:13px}
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:600px;max-width:94vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}.panel.open+.panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-close:hover{background:var(--gray-200);color:var(--gray-700)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.field{margin-bottom:12px}
+.field-label{font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px}
+.field-value{font-size:13px;color:var(--gray-700);word-break:break-all}
 </style>
 </head>
 <body>
 <main class="main">
   <h1>操作日志</h1>
-  <div class="sub">查看系统用户操作记录</div>
+  <p class="sub">查看系统用户操作记录</p>
 
   <div class="toolbar">
     <label>用户
@@ -71,36 +80,37 @@
     <button class="btn btn-ghost" onclick="loadLogs()">刷新</button>
   </div>
 
-  <div class="count-bar" id="countBar">共 0 条记录</div>
+  <div class="count-bar" id="countBar">共 <strong>0</strong> 条记录</div>
 
-  <table>
-    <thead>
-      <tr>
-        <th style="width:50px">ID</th>
-        <th style="width:60px">方法</th>
-        <th>操作路径</th>
-        <th style="width:80px">用户</th>
-        <th style="width:80px">状态</th>
-        <th style="width:140px">时间</th>
-        <th style="width:80px">详情</th>
-      </tr>
-    </thead>
-    <tbody id="logList"></tbody>
-  </table>
+  <div class="table-wrapper" style="margin-top:16px">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:50px">ID</th>
+          <th style="width:60px">方法</th>
+          <th>操作路径</th>
+          <th style="width:80px">用户</th>
+          <th style="width:80px">状态</th>
+          <th style="width:140px">时间</th>
+          <th style="width:80px">详情</th>
+        </tr>
+      </thead>
+      <tbody id="logList"></tbody>
+    </table>
+  </div>
 
   <div class="pagination" id="pagination"></div>
 </main>
 
-<!-- Detail Modal -->
-<div class="modal-overlay" id="detailModal">
-  <div class="modal">
-    <h2 style="font-size:16px;font-weight:600;color:var(--gray-800);margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--gray-200)">操作详情</h2>
-    <div id="detailContent"></div>
-    <div class="actions">
-      <button class="btn btn-ghost" onclick="closeDetail()">关闭</button>
-    </div>
+<!-- Detail Panel -->
+<div class="panel" id="detailPanel">
+  <div class="panel-head"><h2>操作详情</h2><button class="panel-close" onclick="closeDetail()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body" id="detailContent"></div>
+  <div class="panel-foot">
+    <button class="btn btn-ghost" onclick="closeDetail()">关闭</button>
   </div>
 </div>
+<div class="panel-overlay" onclick="closeDetail()"></div>
 
 <script>
 var token = getToken();
@@ -143,7 +153,7 @@ function loadLogs() {
     totalItems = data.total;
     totalPages = Math.ceil(totalItems / 50) || 1;
 
-    document.getElementById('countBar').textContent = '共 '+totalItems+' 条记录';
+    document.getElementById('countBar').innerHTML = '共 <strong>'+totalItems+'</strong> 条记录';
 
     if (!data.items.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无操作记录</td></tr>';
@@ -203,19 +213,15 @@ function showDetail(logId) {
       +'<div class="field"><div class="field-label">User-Agent</div><div class="field-value" style="max-height:60px;overflow:auto">'+escapeHtml(log.user_agent || '-')+'</div></div>'
       +'<div class="field"><div class="field-label">请求体</div><div class="field-value" style="max-height:120px;overflow:auto;background:var(--gray-50);padding:8px;border-radius:var(--radius);font-family:monospace;font-size:11px">'+escapeHtml(log.detail || '(无)')+'</div></div>'
       +'<div class="field"><div class="field-label">时间</div><div class="field-value">'+time+'</div></div>';
-    document.getElementById('detailModal').classList.add('open');
+    document.getElementById('detailPanel').classList.add('open');
   }).catch(function(){
     alert('加载详情失败');
   });
 }
 
 function closeDetail() {
-  document.getElementById('detailModal').classList.remove('open');
+  document.getElementById('detailPanel').classList.remove('open');
 }
-
-document.getElementById('detailModal').addEventListener('click', function(e) {
-  if (e.target === this) closeDetail();
-});
 
 loadLogs();
 </script>

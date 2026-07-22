@@ -27,10 +27,10 @@
 .section-header .filter-group{display:flex;gap:6px;align-items:center}
 .section-header .filter-group select{padding:4px 20px 4px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer}
 .section-header .btn-reset{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer}
-.btn-sm{padding:4px 10px;font-size:12px}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
 th{text-align:left;padding:10px 14px;font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--gray-200);background:var(--gray-50)}
 td{padding:10px 14px;font-size:13px;color:var(--gray-600);border-bottom:1px solid var(--gray-100)}
+td.action-cell{padding-top:6px;padding-bottom:6px}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:var(--gray-50)}
 tr.cursor-pointer{cursor:pointer}
@@ -42,6 +42,11 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
 .tag.customer{background:#f5eef8;color:#7b2d8e}
 .tag.technology{background:#eef1f7;color:var(--accent)}
 .tag.trend{background:#f5f6f8;color:var(--gray-600)}
+.tag.product{background:#e8f4fd;color:#1976d2}
+.tag.company{background:#fce4ec;color:#c62828}
+.tag.policy{background:#e0f2f1;color:#00695c}
+.tag.standard{background:#f3e5f5;color:#7b1fa2}
+.tag.investment{background:#fff3e0;color:#e65100}
 .tag.active{background:var(--green-light);color:var(--green)}
 .tag.paused{background:var(--gray-100);color:var(--gray-600)}
 .tag.completed{background:#f5eef8;color:#7b2d8e}
@@ -50,9 +55,8 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
 .tag.weekly{background:var(--accent-light);color:var(--accent)}
 .tag.monthly{background:#eaf5ef;color:var(--green)}
 .tag.oneshot{background:var(--gray-100);color:var(--gray-600)}
-.tag-0{background:var(--gray-100);color:var(--gray-600)}
 .panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
-.panel{display:none;position:fixed;top:0;right:0;width:640px;max-width:92vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
+.panel{display:none;position:fixed;top:0;right:0;width:680px;max-width:94vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
 .panel.open{display:flex}.panel.open+.panel-overlay{display:block}
 .panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
 .panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
@@ -84,14 +88,14 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
 .intel-item-index{font-size:11px;color:var(--gray-400);width:24px;text-align:center;flex-shrink:0}
 .intel-item-title{flex:1;font-size:13px;color:var(--gray-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .intel-item-meta{font-size:11px;color:var(--gray-400);margin-left:8px}
-.entity-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
-.entity-tag{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600)}
-.entity-tag .type{color:var(--gray-400);font-size:11px;margin-left:4px}
-.ds-list{display:flex;flex-direction:column;gap:4px}
-.ds-item{display:flex;align-items:center;padding:6px 12px;background:var(--gray-50);border-radius:4px;font-size:12px;color:var(--gray-600)}
+.ds-list{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.ds-item{display:flex;align-items:center;padding:6px 10px;background:var(--gray-50);border-radius:4px;font-size:12px;color:var(--gray-600)}
 .ds-item-name{flex:1;font-weight:500}
 .ds-item-type{margin-left:8px;padding:1px 6px;border-radius:2px;font-size:10px;background:var(--accent-light);color:var(--accent)}
-.ds-item-schedule{margin-left:8px;padding:1px 6px;border-radius:2px;font-size:10px;background:var(--gray-100);color:var(--gray-500)}
+.ds-item-schedule{margin-left:6px;padding:1px 6px;border-radius:2px;font-size:10px;background:var(--gray-100);color:var(--gray-500)}
+.ds-item-tag{margin-left:4px;font-size:10px;padding:1px 4px;border-radius:2px}
+.ds-item-tag.active{background:var(--green-light);color:var(--green)}
+.ds-item-tag.inactive{background:var(--gray-100);color:var(--gray-500)}
 .form-group{margin-bottom:16px}
 .form-group label{display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px}
 .form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff}
@@ -100,6 +104,24 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
 .form-row{display:flex;gap:12px}
 .form-row .form-group{flex:1}
 .empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+
+/* Datasource multi-select */
+.ds-select{position:relative;margin-bottom:16px}
+.ds-select-input{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff;cursor:pointer;min-height:38px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.ds-select-input:focus-within{border-color:var(--accent);outline:none}
+.ds-select-input .ds-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 6px;background:var(--accent-light);color:var(--accent);border-radius:3px;font-size:11px;font-weight:500}
+.ds-select-input .ds-chip .chip-remove{cursor:pointer;font-size:14px;line-height:1;padding:0 2px;opacity:0.6}
+.ds-select-input .ds-chip .chip-remove:hover{opacity:1}
+.ds-select-input .ds-placeholder{color:var(--gray-400);font-size:13px}
+.ds-select-dropdown{position:fixed;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:10001;max-height:200px;overflow-y:auto;display:none;margin-top:2px;width:100%}
+.ds-select-dropdown.open{display:block}
+.ds-select-search{width:100%;padding:8px 12px;border:none;border-bottom:1px solid var(--gray-100);font-size:13px;color:var(--gray-800);outline:none}
+.ds-select-option{padding:8px 12px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px}
+.ds-select-option:hover{background:var(--accent-light)}
+.ds-select-option.selected{background:var(--gray-50);font-weight:500}
+.ds-select-option .opt-name{flex:1;color:var(--gray-800)}
+.ds-select-option .opt-type{font-size:11px;padding:1px 6px;border-radius:2px;background:var(--gray-100);color:var(--gray-500)}
+
 @media(max-width:768px){.main{padding:16px}.stats{grid-template-columns:repeat(2,1fr)}.panel{width:100vw;max-width:100vw}.form-row{flex-direction:column}}
 </style>
 </head>
@@ -128,10 +150,12 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
         <th>项目名称</th>
         <th>目标类型</th>
         <th>目标名称</th>
+        <th>数据源</th>
         <th>采集频率</th>
         <th>情报数</th>
         <th>状态</th>
         <th>创建时间</th>
+        <th style="width:120px">操作</th>
       </tr>
     </thead>
     <tbody id="projectList"></tbody>
@@ -149,14 +173,7 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
     <div class="form-row">
       <div class="form-group">
         <label>目标类型 *</label>
-        <select id="fType">
-          <option value="competitor">竞争对手</option>
-          <option value="market">市场/区域</option>
-          <option value="supplier">供应商</option>
-          <option value="customer">客户</option>
-          <option value="technology">技术</option>
-          <option value="trend">行业趋势</option>
-        </select>
+        <select id="fType"><option value="">加载中...</option></select>
       </div>
       <div class="form-group">
         <label>采集频率 *</label>
@@ -176,6 +193,18 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
       <label>范围/描述</label>
       <textarea id="fScope" placeholder="例：越南冰淇淋稳定剂市场，关注东南亚区域"></textarea>
     </div>
+    <div class="form-group">
+      <label>关联数据源（可选）</label>
+      <div class="ds-select" id="dsSelectWrap">
+        <div class="ds-select-input" onclick="toggleDsDropdown()">
+          <span class="ds-placeholder">点击选择数据源...</span>
+        </div>
+      </div>
+      <div class="ds-select-dropdown" id="dsDropdown">
+        <input class="ds-select-search" type="text" placeholder="搜索数据源..." id="dsSearch" oninput="filterDsOptions()">
+        <div id="dsOptions"></div>
+      </div>
+    </div>
     <div id="createFormFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
   </div>
   <div class="panel-foot">
@@ -193,11 +222,122 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
 <div class="panel-overlay" id="overlay" onclick="closeCreate();closeDetail()"></div>
 
 <script>
+// ── Target type labels ─────────────────────────────────────────────────────
+const TARGET_TYPE_LABELS = {
+  competitor: '竞争对手', market: '市场/区域', supplier: '供应商',
+  customer: '客户', technology: '技术', trend: '行业趋势',
+  product: '产品', company: '企业', policy: '政策',
+  standard: '标准', investment: '投资'
+};
+let availableTargetTypes = [];
+
+// ── Datasource selection state ─────────────────────────────────────────────
+let allDatasources = [];
+let selectedDsIds = [];
+
+// ── Init ───────────────────────────────────────────────────────────────────
 async function init(){
   const u=getUser();const a=document.getElementById('userAvatar');if(a)a.textContent=u?u.display_name||u.username.charAt(0).toUpperCase():'管';
+  await loadDomainConfig();
   await loadProjects();
 }
 
+async function loadDomainConfig(){
+  try{
+    const r = await apiFetch(APP_API_BASE+'/api/domain_config');
+    const cfg = await r.json();
+    availableTargetTypes = cfg.target_types || [];
+    populateTypeSelect(cfg.target_types || []);
+    await loadDatasourcesList();
+  }catch(e){ console.error('loadDomainConfig failed', e); }
+}
+
+function populateTypeSelect(types){
+  const sel = document.getElementById('fType');
+  sel.innerHTML = types.map(t =>
+    `<option value="${t}">${TARGET_TYPE_LABELS[t] || t}</option>`
+  ).join('') || '<option value="">无可用类型</option>';
+}
+
+async function loadDatasourcesList(){
+  try{
+    const r = await apiFetch(APP_API_BASE+'/api/datasources');
+    allDatasources = await r.json();
+  }catch(e){ console.error('loadDatasourcesList failed', e); }
+}
+
+// ── Datasource multi-select ────────────────────────────────────────────────
+function toggleDsDropdown(){
+  const dd = document.getElementById('dsDropdown');
+  const input = document.querySelector('.ds-select-input');
+  const rect = input.getBoundingClientRect();
+  
+  dd.style.top = (rect.bottom + 2 + window.scrollY) + 'px';
+  dd.style.left = rect.left + 'px';
+  dd.style.width = rect.width + 'px';
+  
+  dd.classList.toggle('open');
+  if(dd.classList.contains('open')){
+    renderDsOptions();
+    setTimeout(()=>document.getElementById('dsSearch').focus(), 10);
+  }
+}
+
+function renderDsOptions(){
+  const search = document.getElementById('dsSearch').value.toLowerCase();
+  const filtered = allDatasources.filter(d =>
+    d.name.toLowerCase().includes(search) ||
+    (d.url || '').toLowerCase().includes(search)
+  );
+  const container = document.getElementById('dsOptions');
+  container.innerHTML = filtered.map(d => {
+    const isSelected = selectedDsIds.includes(d.id);
+    return `<div class="ds-select-option ${isSelected?'selected':''}" onclick="toggleDs(${d.id})">
+      <span class="opt-name">${escapeHtml(d.name)}</span>
+      <span class="opt-type">${d.type}</span>
+    </div>`;
+  }).join('') || '<div style="padding:12px;text-align:center;color:var(--gray-400);font-size:12px">无匹配数据源</div>';
+}
+
+function filterDsOptions(){ renderDsOptions(); }
+
+function toggleDs(id){
+  const idx = selectedDsIds.indexOf(id);
+  if(idx >= 0) selectedDsIds.splice(idx, 1);
+  else selectedDsIds.push(id);
+  updateDsChips();
+  renderDsOptions();
+}
+
+function updateDsChips(){
+  const input = document.querySelector('.ds-select-input');
+  if(selectedDsIds.length === 0){
+    input.innerHTML = '<span class="ds-placeholder">点击选择数据源...</span>';
+  } else {
+    input.innerHTML = selectedDsIds.map(id => {
+      const ds = allDatasources.find(d => d.id === id);
+      return ds ? `<span class="ds-chip">${escapeHtml(ds.name)}<span class="chip-remove" onclick="event.stopPropagation();toggleDs(${id})">&times;</span></span>` : '';
+    }).join('');
+  }
+}
+
+// Re-load datasources when opening create panel
+const _origOpenCreate = openCreate;
+openCreate = function(){
+  _origOpenCreate();
+  if(allDatasources.length === 0) loadDatasourcesList();
+};
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e){
+  const wrap = document.getElementById('dsSelectWrap');
+  const dropdown = document.getElementById('dsDropdown');
+  if(dropdown && wrap && !wrap.contains(e.target) && !dropdown.contains(e.target)){
+    dropdown.classList.remove('open');
+  }
+});
+
+// ── Projects ───────────────────────────────────────────────────────────────
 async function loadProjects(){
   const df=document.getElementById('domainFilter')?.value||'';
   const sf=document.getElementById('statusFilter')?.value||'';
@@ -212,33 +352,51 @@ async function loadProjects(){
     document.getElementById('statTotal').textContent=d.total;
     document.getElementById('statActive').textContent=items.filter(i=>i.status==='active').length;
     document.getElementById('countLabel').textContent=d.total+' 个项目';
-    let totalIntels=0,totalDs=0;
+    let totalIntels=0,totalDsCount=0;
     const tableRows=items.map((p,i)=>{
-      totalIntels+=p.total_intel||0;
-      totalDs+=(p.entities_created||[]).length+(p.datasources_created||[]).length;
+      totalIntels+=0; // will need real intel count from a separate API
+      totalDsCount+=(p.datasource_count||0);
+      const dsText = p.datasource_count > 0
+        ? '<span style="font-size:11px;color:var(--accent)">'+p.datasource_count+' 个</span>'
+        : '<span style="color:var(--gray-400)">未关联</span>';
       return '<tr class="cursor-pointer" onclick="openDetail('+p.id+')">'
         +'<td style="color:var(--gray-400)">'+(i+1).toString().padStart(2,'0')+'</td>'
         +'<td><strong>'+escapeHtml(p.name)+'</strong><div style="font-size:11px;color:var(--gray-400);margin-top:2px">'+escapeHtml(p.scope||'')+'</div></td>'
-        +'<td><span class="tag '+p.target_type+'">'+p.target_type+'</span></td>'
+        +'<td><span class="tag '+(p.target_type||'')+'">'+(TARGET_TYPE_LABELS[p.target_type]||p.target_type||p.target_type)+'</span></td>'
         +'<td>'+escapeHtml(p.target_name)+'</td>'
+        +'<td>'+dsText+'</td>'
         +'<td><span class="tag '+p.frequency+'">'+p.frequency+'</span></td>'
-        +'<td>'+p.total_intel+'</td>'
+        +'<td>'+(p.total_intel||0)+'</td>'
         +'<td><span class="tag '+p.status+'">'+p.status+'</span></td>'
-        +'<td>'+formatDate(p.created_at)+'</td></tr>';
+        +'<td>'+formatDate(p.created_at)+'</td>'
+        +'<td class="action-cell" onclick="event.stopPropagation()">'
+        +'<div class="action-btns">'
+        +'<button class="btn btn-ghost btn-sm" onclick="openEdit('+p.id+')">编辑</button>'
+        +'<button class="btn btn-danger btn-sm" onclick="deleteProject('+p.id+')">删除</button>'
+        +'</div></td></tr>';
     }).join('');
-    tbody.innerHTML=tableRows||'<tr><td colspan="8" class="empty">暂无采集项目</td></tr>';
+    tbody.innerHTML=tableRows||'<tr><td colspan="10" class="empty">暂无采集项目</td></tr>';
     document.getElementById('statIntels').textContent=totalIntels;
-    document.getElementById('statDs').textContent=totalDs;
+    document.getElementById('statDs').textContent=totalDsCount;
   }catch(e){
-    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
+    tbody.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
   }
 }
 
 function setStatusFilter(s){document.getElementById('statusFilter').value=s;loadProjects()}
 function resetFilters(){document.getElementById('domainFilter').value='';document.getElementById('statusFilter').value='';loadProjects()}
 
-function openCreate(){document.getElementById('createPanel').classList.add('open');document.getElementById('fName').focus()}
-function closeCreate(){document.getElementById('createPanel').classList.remove('open');document.getElementById('createFormFeedback').style.display='none'}
+function openCreate(){
+  document.getElementById('createPanel').classList.add('open');
+  document.getElementById('fName').value='';
+  document.getElementById('fTarget').value='';
+  document.getElementById('fScope').value='';
+  selectedDsIds = [];
+  updateDsChips();
+  document.getElementById('createFormFeedback').style.display='none';
+  document.getElementById('fName').focus();
+}
+function closeCreate(){document.getElementById('createPanel').classList.remove('open')}
 
 async function createProject(){
   const name=document.getElementById('fName').value.trim();
@@ -250,15 +408,18 @@ async function createProject(){
   if(!name){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入项目名称';return}
   if(!target){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入目标名称';return}
   try{
-    const r=await apiFetch(APP_API_BASE+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq})});
+    const r=await apiFetch(APP_API_BASE+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      name, target_type:type_, target_name:target, scope, frequency:freq, datasource_ids:selectedDsIds
+    })});
     if(r.status===201){
       const d=await r.json();
       fb.style.background='var(--green-light)';fb.style.color='var(--green)';
       fb.innerHTML='<strong>创建成功！</strong><br>项目 ID: '+d.id
-        +(d.auto_setup?'<br>自动创建: '+d.auto_setup.entities_created.length+' 个实体, '+d.auto_setup.datasources_created.length+' 个数据源':'');
+        +(d.datasource_count?'<br>关联数据源: '+d.datasource_count+' 个':'');
       document.getElementById('fName').value='';
       document.getElementById('fTarget').value='';
       document.getElementById('fScope').value='';
+      selectedDsIds=[];updateDsChips();
       await new Promise(r=>setTimeout(r,1500));
       closeCreate();
       await loadProjects();
@@ -271,6 +432,7 @@ async function createProject(){
   }
 }
 
+// ── Detail ─────────────────────────────────────────────────────────────────
 async function openDetail(pid){
   document.getElementById('detailTitle').textContent='项目详情';
   document.getElementById('detailBody').innerHTML='<div class="empty">加载中...</div>';
@@ -280,8 +442,9 @@ async function openDetail(pid){
     const p=d.project;
     const body=document.getElementById('detailBody');
     const foot=document.getElementById('detailFoot');
+    const typeLabel = TARGET_TYPE_LABELS[p.target_type] || p.target_type;
     let html='<div class="detail-section"><h3>项目信息</h3><div class="detail-meta">'
-      +'<span class="tag '+p.target_type+'">'+p.target_type+'</span>'
+      +'<span class="tag '+(p.target_type||'')+'">'+typeLabel+'</span>'
       +'<span class="tag '+p.status+'">'+p.status+'</span>'
       +'<span class="tag '+p.frequency+'">'+p.frequency+'</span></div>'
       +'<div class="detail-info"><strong>名称：</strong>'+escapeHtml(p.name)+'</div>'
@@ -289,42 +452,39 @@ async function openDetail(pid){
       +'<div class="detail-info"><strong>范围：</strong>'+(p.scope?escapeHtml(p.scope):'<span style="color:var(--gray-400)">未指定</span>')+'</div>'
       +'<div class="detail-info"><strong>创建时间：</strong>'+formatDate(p.created_at)+'</div>'
       +'<div class="detail-info"><strong>更新时间：</strong>'+formatDate(p.updated_at)+'</div></div>';
-    html+='<div class="detail-section"><h3>情报统计</h3>'
-      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">'
-      +'<div style="background:var(--accent-light);padding:10px;border-radius:var(--radius);text-align:center"><div style="font-size:20px;font-weight:600;color:var(--accent)">'+d.total_intel+'</div><div style="font-size:11px;color:var(--gray-400)">情报总数</div></div>'
-      +'<div style="background:var(--gray-100);padding:10px;border-radius:var(--radius);text-align:center"><div style="font-size:20px;font-weight:600;color:var(--gray-600)">'+d.intel_by_domain.length+'</div><div style="font-size:11px;color:var(--gray-400)">涉及域数</div></div>'
-      +'<div style="background:var(--gray-100);padding:10px;border-radius:var(--radius);text-align:center"><div style="font-size:20px;font-weight:600;color:var(--gray-600)">'+(p.instruction?'✓':'✗')+'</div><div style="font-size:11px;color:var(--gray-400)">采集指令</div></div>'
-      +'</div>';
-    if(d.intel_by_domain.length){
-      html+='<div style="margin-top:8px">';
-      d.intel_by_domain.forEach(dom=>{
-        html+='<div style="display:flex;align-items:center;padding:4px 0;font-size:12px">'
-          +'<span style="width:100px;color:var(--gray-600)">'+dom.domain+'</span>'
-          +'<span style="font-weight:600;color:var(--accent)">'+dom.intel_count+' 条</span></div>';
+
+    // Linked datasources section
+    const linkedDs = p.datasources || [];
+    html+='<div class="detail-section"><h3>关联数据源 <span style="font-weight:400;color:var(--gray-400)">('+linkedDs.length+' 个)</span></h3>';
+    if(linkedDs.length){
+      html+='<div class="ds-list">';
+      linkedDs.forEach(ds=>{
+        const isActive = ds.status === 'active';
+        html+='<div class="ds-item">'
+          +'<span class="ds-item-name">'+escapeHtml(ds.name)+'</span>'
+          +'<span class="ds-item-type">'+ds.type+'</span>'
+          +'<span class="ds-item-schedule">'+ds.schedule+'</span>'
+          +'<span class="ds-item-tag '+ds.status+'">'+(isActive?'启用':'停用')+'</span>'
+          +'</div>';
       });
       html+='</div>';
+    } else {
+      html+='<div class="empty" style="padding:16px;font-size:12px">未关联任何数据源</div>';
     }
     html+='</div>';
-    html+='<div class="detail-section"><h3>最近情报 <span style="font-weight:400;color:var(--gray-400)">('+d.latest_intels.length+' 条)</span></h3>';
-    if(d.latest_intels.length){
-      html+='<div class="intel-list">';
-      d.latest_intels.forEach((intel,i)=>{
-        html+='<div class="intel-item" onclick="openIntelDetail('+pid+','+intel.id+')">'
-          +'<div class="intel-item-index">'+(i+1)+'</div>'
-          +'<div class="intel-item-title">'+escapeHtml(intel.title)+'</div>'
-          +'<div class="intel-item-meta">'+formatDate(intel.created_at)+'</div></div>';
-      });
-      html+='</div>';
-    }else{
-      html+='<div class="empty" style="padding:20px">暂无关联情报</div>';
-    }
-    html+='</div>';
+
+    html+='<div class="detail-section"><h3>采集指令</h3>';
     if(p.instruction){
-      html+='<div class="detail-section"><h3>采集指令</h3><div class="detail-instruction">'+escapeHtml(p.instruction)+'</div></div>';
+      html+='<div class="detail-instruction">'+escapeHtml(p.instruction)+'</div>';
+    } else {
+      html+='<div style="font-size:12px;color:var(--gray-400)">暂无采集指令，可在编辑时补充</div>';
     }
+    html+='</div>';
+
     body.innerHTML=html;
     const isActive=p.status==='active';
-    foot.innerHTML='<button class="btn '+((isActive)?'btn-danger':'btn-success')+'" onclick="toggleStatus('+pid+',!'+isActive+')">'
+    foot.innerHTML='<button class="btn btn-ghost" onclick="openEdit('+pid+')">编辑</button>'
+      +'<button class="btn '+((isActive)?'btn-danger':'btn-success')+'" onclick="toggleStatus('+pid+',!'+isActive+')">'
       +((isActive)?'暂停':'激活')+'</button>'
       +'<span class="spacer"></span>'
       +'<button class="btn btn-ghost" onclick="closeDetail()">关闭</button>';
@@ -335,6 +495,59 @@ async function openDetail(pid){
 }
 
 function closeDetail(){document.getElementById('detailPanel').classList.remove('open')}
+
+async function deleteProject(pid){
+  const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid);
+  if(!r.ok){alert('加载项目信息失败');return}
+  const d=await r.json();
+  const name=d.project?.name||'该项目';
+  if(!confirm('确定删除项目「'+name+'」？此操作不可恢复。')) return;
+  try{
+    const r2=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'DELETE'});
+    if(r2.ok){closeDetail();await loadProjects();}
+    else alert('删除失败');
+  }catch(e){alert('删除失败');}
+}
+
+async function openEdit(pid){
+  closeDetail();
+  document.getElementById('detailTitle').textContent='编辑项目';
+  document.getElementById('detailBody').innerHTML='<div class="empty">加载中...</div>';
+  try{
+    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid);
+    const d=await r.json();
+    const p=d.project;
+    const body=document.getElementById('detailBody');
+    const foot=document.getElementById('detailFoot');
+    body.innerHTML='<div class="form-group"><label>项目名称 *</label><input type="text" id="editName" value="'+escapeHtml(p.name)+'" maxlength="80"></div>'
+      +'<div class="form-row">'
+      +'<div class="form-group"><label>目标类型</label><select id="editType">'+availableTargetTypes.map(t=>'<option value="'+t+'" '+(p.target_type===t?'selected':'')+'>'+TARGET_TYPE_LABELS[t]+'<\/option>').join('')+'</select></div>'
+      +'<div class="form-group"><label>采集频率</label><select id="editFrequency"><option value="daily" '+(p.frequency==='daily'?'selected':'')+'>每日<\/option><option value="weekly" '+(p.frequency==='weekly'?'selected':'')+'>每周<\/option><option value="monthly" '+(p.frequency==='monthly'?'selected':'')+'>每月<\/option><option value="oneshot" '+(p.frequency==='oneshot'?'selected':'')+'>一次性<\/option><\/select></div>'
+      +'</div>'
+      +'<div class="form-group"><label>目标名称</label><input type="text" id="editTarget" value="'+escapeHtml(p.target_name)+'"></div>'
+      +'<div class="form-group"><label>范围/描述</label><textarea id="editScope" rows="3">'+escapeHtml(p.scope||'')+'</textarea></div>';
+    foot.innerHTML='<button class="btn btn-primary" onclick="saveEdit('+pid+')">保存</button>'
+      +'<span class="spacer"></span>'
+      +'<button class="btn btn-ghost" onclick="openDetail('+pid+')">返回</button>'
+      +'<button class="btn btn-danger" onclick="deleteProject('+pid+')">删除</button>';
+    document.getElementById('detailPanel').classList.add('open');
+  }catch(e){
+    document.getElementById('detailBody').innerHTML='<div class="empty">加载失败</div>';
+  }
+}
+
+async function saveEdit(pid){
+  const name=document.getElementById('editName').value.trim();
+  const type_=document.getElementById('editType').value;
+  const target=document.getElementById('editTarget').value.trim();
+  const scope=document.getElementById('editScope').value.trim();
+  const freq=document.getElementById('editFrequency').value;
+  if(!name||!target){alert('项目名称和目标名称为必填项');return}
+  try{
+    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq})});
+    if(r.ok){openDetail(pid);await loadProjects();}
+  }catch(e){alert('保存失败');}
+}
 
 async function openIntelDetail(pid, intelId){
   try{

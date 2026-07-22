@@ -1,8 +1,12 @@
 """Sales domain — Flask application entry point."""
 
 import os, sys
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_DOMAIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# In Docker: /app is the project root. Local dev: project root is one level up.
+if os.path.isdir("/app/api"):
+    _PROJECT_ROOT = "/app"
+else:
+    _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_DOMAIN_DIR = _PROJECT_ROOT
 sys.path.insert(0, _PROJECT_ROOT)
 sys.path.insert(0, _DOMAIN_DIR)
 

@@ -141,9 +141,12 @@ function renderTable() {
         + '<td><span class="tag ' + (src.schedule || 'daily') + '">' + (src.schedule || 'daily') + '</span></td>'
         + '<td><span class="status-dot ' + (src.status === 'active' ? 'on' : 'off') + '"></span>' + (src.status === 'active' ? '启用' : '停用') + '</td>'
         + '<td>' + (src.last_crawled_at || '-') + '</td>'
-        + '<td>'
+        + '<td class="action-cell">'
+          + '<div class="action-btns">'
+          + '<button class="btn btn-ghost btn-sm" onclick="editSource(' + src.id + ')">编辑</button>'
           + '<button class="btn btn-ghost btn-sm" onclick="toggleStatus(' + src.id + ',\'' + (src.status === 'active' ? 'inactive' : 'active') + '\')">' + (src.status === 'active' ? '停用' : '启用') + '</button>'
-          + ' <button class="btn btn-danger btn-sm" onclick="deleteSource(' + src.id + ')">删除</button>'
+          + '<button class="btn btn-danger btn-sm" onclick="deleteSource(' + src.id + ')">删除</button>'
+          + '</div>'
         + '</td>'
         + '</tr>';
     });

@@ -85,4 +85,22 @@ SPEC = build_spec(
         {"name": "凯瑞集团官网", "type": "website", "url": "https://www.kerry.com",
          "indicators": ["财报", "收购动态", "新品发布"], "schedule": "daily"},
     ],
+
+    target_types=[
+        "competitor",
+        "market",
+        "customer",
+        "supplier",
+        "investment",
+        "product",
+    ],
+
+    target_type_initial_data=[
+        {"slug": "competitor", "label": "竞争对手", "description": "同行业竞争对手动态、产品发布、市场策略", "color": "#b33a3a", "sort_order": 1},
+        {"slug": "market", "label": "市场", "description": "目标市场规模、增长趋势、区域分布", "color": "#3b6ea5", "sort_order": 2},
+        {"slug": "customer", "label": "客户", "description": "潜在客户、现有客户业务变化、采购需求", "color": "#2a7d4f", "sort_order": 3},
+        {"slug": "supplier", "label": "供应商", "description": "原材料供应商、价格波动、供应风险", "color": "#b8862d", "sort_order": 4},
+        {"slug": "investment", "label": "投资", "description": "行业投资、并购重组、新厂建设", "color": "#722ed1", "sort_order": 5},
+        {"slug": "product", "label": "产品", "description": "竞品产品、新品发布、技术升级", "color": "#3b4f8c", "sort_order": 6},
+    ],
 )

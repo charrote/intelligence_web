@@ -2,6 +2,8 @@ import sqlite3
 import os
 import json
 from datetime import datetime, timedelta
+import base64
+import os
 from contextlib import contextmanager
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'intelligence.db')
@@ -81,6 +83,39 @@ def init_db():
             FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
         )
     ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            display_name TEXT DEFAULT '',
+            role TEXT DEFAULT 'user',
+            created_at TEXT NOT NULL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            category TEXT DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    
+    # 创建默认管理员账号（密码: admin123）
+    import hashlib
+    now = datetime.now().isoformat()
+    admin_hash = hashlib.sha256(b'admin123').hexdigest()
+    cursor.execute(
+        'INSERT OR IGNORE INTO users (username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?)',
+        ('admin', admin_hash, '管理员', 'admin', now)
+    )
+    cursor.execute(
+        'INSERT OR IGNORE INTO users (username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?)',
+        ('yoo', admin_hash, 'Yoo', 'user', now)
+    )
     
     conn.commit()
     conn.close()
@@ -315,3 +350,68 @@ def reorder_commands_batch(ids):
             cursor.execute('UPDATE commands SET created_at = ? WHERE id = ?', (new_created_at, cmd_id))
         conn.commit()
         return True
+
+
+# =============================================================================
+# System Settings (key-value store)
+# =============================================================================
+
+def _encrypt(value):
+    """Base64 + XOR simple obfuscation (not real encryption, just avoids plaintext in DB)"""
+    key = os.environ.get('SETTINGS_ENCRYPT_KEY', 'sys-settings-key-2026')
+    encoded = value.encode('utf-8')
+    encrypted = bytes([b ^ ord(key[i % len(key)]) for b in encoded])
+    return base64.b64encode(encrypted).decode('ascii')
+
+
+def _decrypt(encrypted_b64):
+    key = os.environ.get('SETTINGS_ENCRYPT_KEY', 'sys-settings-key-2026')
+    encrypted = base64.b64decode(encrypted_b64)
+    decrypted = bytes([b ^ ord(key[i % len(key)]) for b in encrypted])
+    return decrypted.decode('utf-8')
+
+
+def get_setting(key, decrypt_sensitive=False):
+    """Get a single setting value by key"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        value = row['value']
+        if decrypt_sensitive:
+            try:
+                value = _decrypt(value)
+            except Exception:
+                pass  # Fall back to raw value
+        return value
+
+
+def set_setting(key, value, category=''):
+    """Set or update a setting value"""
+    now = datetime.now().isoformat()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO settings (key, value, category, updated_at) VALUES (?, ?, ?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value=excluded.value, category=excluded.category, updated_at=excluded.updated_at',
+            (key, value, category, now)
+        )
+        conn.commit()
+        return True
+
+
+def get_all_settings(category=None):
+    """Get all settings. Returns {key: value} dict."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if category:
+            cursor.execute('SELECT key, value FROM settings WHERE category = ? ORDER BY key', (category,))
+        else:
+            cursor.execute('SELECT key, value FROM settings ORDER BY key')
+        rows = cursor.fetchall()
+        result = {}
+        for row in rows:
+            result[row['key']] = row['value']
+        return result
