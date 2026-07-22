@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --no-cache-dir flask flask-cors gunicorn mcp pydantic uvicorn
+
+# Copy shared core
+COPY core/ /app/core/
+
+# Copy MCP server
+COPY mcp_server/ /app/mcp_server/
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "mcp_server/server.py"]

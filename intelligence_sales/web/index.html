@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>销售情报</title>
+<!-- Google Fonts 已移除（国内网络不可达），改用系统字体栈 -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-font-smoothing:antialiased}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e1e1e;min-height:100vh}
+:root{--accent:#3b4f8c;--accent-light:#eef1f7;--green:#2a7d4f;--green-light:#eaf5ef;--amber:#b8862d;--red:#b33a3a;--gray-200:#e0e1e3;--gray-400:#9a9b9d;--gray-600:#545557;--gray-800:#262728;--radius:6px;--shadow-sm:0 1px 2px rgba(0,0,0,0.04)}
+.icon{width:16px;height:16px;display:inline-block;vertical-align:middle;flex-shrink:0}
+.icon-sm{width:14px;height:14px}
+
+.header{height:56px;display:flex;align-items:center;padding:0 24px;background:#fff;border-bottom:1px solid var(--gray-200);position:sticky;top:0;z-index:100;gap:8px}
+.header-logo{font-weight:600;font-size:16px;color:var(--gray-800);display:flex;align-items:center;gap:8px}
+.header-logo .mark{width:6px;height:6px;border-radius:2px;background:var(--accent);display:inline-block}
+.header-grow{flex:1}
+.header select{padding:5px 20px 5px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);background:#fff;font-size:13px;color:var(--gray-600);cursor:pointer}
+.header-search{display:flex;align-items:center;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius);padding:0 10px;flex:1;max-width:280px;transition:border-color 0.2s}
+.header-search:focus-within{border-color:var(--accent)}
+.header-search input{border:none;background:transparent;padding:7px 0;font-size:13px;color:var(--gray-800);outline:none;width:100%}
+.header-search input::placeholder{color:var(--gray-400)}
+.header-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-light);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;cursor:pointer}
+
+.layout{display:flex;min-height:calc(100vh - 56px)}
+.sidebar{width:200px;background:#fff;border-right:1px solid var(--gray-200);padding:16px 0;flex-shrink:0}
+.sidebar-label{padding:6px 16px 5px;font-size:10px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.8px}
+.sidebar-item{display:flex;align-items:center;gap:8px;padding:7px 16px;font-size:13px;color:var(--gray-600);cursor:pointer;transition:all 0.12s}
+.sidebar-item:hover{color:var(--gray-800);background:var(--gray-50)}
+.sidebar-item.active{color:var(--accent);font-weight:500;background:var(--accent-light)}
+.sidebar-item .ico{width:16px;display:flex;align-items:center;justify-content:center}
+.sidebar-divider{height:1px;background:var(--gray-200);margin:10px 16px}
+
+.main{flex:1;padding:24px 28px;overflow-y:auto}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;box-shadow:var(--shadow-sm)}
+.stat-num{font-size:22px;font-weight:600;color:var(--gray-800);letter-spacing:-0.3px;line-height:1.2}
+.stat-label{font-size:12px;color:var(--gray-400);margin-top:2px}
+.stat-num.gold{color:var(--amber)}.stat-num.green{color:var(--green)}.stat-num.accent{color:var(--accent)}
+
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-header h2{font-size:15px;font-weight:600;color:var(--gray-800)}
+.section-header .count{font-size:12px;color:var(--gray-400);font-weight:400;margin-left:6px}
+.section-header .filter-group{display:flex;gap:6px;align-items:center}
+.section-header .filter-group select{padding:4px 20px 4px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm,4px);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer}
+.section-header .btn-reset{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius-sm,4px);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer}
+.section-header .btn-reset:hover{background:var(--gray-50)}
+
+.feed{display:flex;flex-direction:column;gap:6px}
+.row{display:flex;align-items:stretch;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);cursor:pointer;transition:all 0.15s}
+.row:hover{border-color:var(--accent);background:var(--gray-50)}
+.row-index{width:36px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--gray-400);flex-shrink:0}
+.row-body{flex:1;padding:12px 16px 12px 0;overflow:hidden;display:flex;flex-direction:column;gap:6px}
+.row-title{font-size:14px;font-weight:500;color:var(--gray-800);line-height:1.5;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.row-meta{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--gray-400);flex-wrap:wrap}
+.row-meta .tag{display:inline-flex;padding:1px 6px;border-radius:2px;font-size:11px;font-weight:500;color:var(--gray-600);background:var(--gray-100)}
+.row-meta .tag-company{color:var(--accent);background:var(--accent-light)}
+.row-meta .deal{color:var(--green);font-weight:500}
+.row-meta .source{display:flex;align-items:center;gap:3px;color:var(--gray-400)}
+.row-meta .comment-count{display:flex;align-items:center;gap:3px}
+
+/* Panel */
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:560px;max-width:92vw;height:100vh;background:#fff;box-shadow:0 12px 40px rgba(0,0,0,0.1);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}.panel.open+.panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-close:hover{background:var(--gray-200)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-body .detail-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.panel-body .detail-meta .tag{display:inline-flex;padding:2px 8px;border-radius:3px;font-size:12px;font-weight:500;line-height:1.5;color:#fff}
+.panel-body .detail-meta .tag.pending{background:var(--amber)}
+.panel-body .detail-meta .tag.qualified{background:var(--green)}
+.panel-body .detail-meta .tag.proposal{background:var(--accent)}
+.panel-body .detail-meta .tag.negotiation{background:var(--accent)}
+.panel-body .detail-meta .tag.won{background:var(--green)}
+.panel-body .detail-meta .tag.lost{background:var(--gray-400)}
+.panel-body .detail-meta .tag-cat{background:var(--gray-100);color:var(--gray-600)}
+.panel-body .detail-meta .tag-company{background:var(--accent-light);color:var(--accent)}
+.panel-body .detail-source{font-size:12px;color:var(--gray-400);margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--gray-200)}
+.panel-body .detail-content{font-size:14px;line-height:1.7;color:var(--gray-700)}
+.panel-body .detail-deal{background:var(--green-light);padding:10px 14px;border-radius:var(--radius);margin-bottom:14px;font-size:13px;color:var(--green);font-weight:500}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-primary{background:var(--accent);color:#fff}
+.panel-foot .btn-primary:hover{background:#2f3f70}
+.panel-foot .btn-success{background:var(--green);color:#fff}
+.panel-foot .btn-success:hover{background:#1f613b}
+.panel-foot .btn-danger{background:var(--red);color:#fff}
+.panel-foot .btn-danger:hover{background:#8f2e2e}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.panel-foot .spacer{flex:1}
+.comment-section{margin-top:20px;padding-top:16px;border-top:1px solid var(--gray-200)}
+.comment-section h3{font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:10px}
+.comment{padding:10px 14px;background:var(--gray-50);border-radius:var(--radius);margin-bottom:6px}
+.comment-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
+.comment-name{font-weight:500;font-size:12px;color:var(--accent)}
+.comment-time{font-size:11px;color:var(--gray-400)}
+.comment-text{font-size:12px;color:var(--gray-600);line-height:1.5}
+
+.map-wrap{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px;margin-bottom:20px;box-shadow:var(--shadow-sm)}
+.map-wrap h2{font-size:15px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
+.map-wrap .sub{font-size:12px;font-weight:400;color:var(--gray-400)}
+#mapChart{width:100%;height:520px;border-radius:var(--radius);margin-top:10px;background:#0f1a2b}
+.map-legend{display:flex;gap:20px;margin-top:10px;font-size:12px;color:var(--gray-600)}
+.map-legend .leg-item{display:flex;align-items:center;gap:6px}
+.map-legend .leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+@media(max-width:768px){.sidebar{display:none}.main{padding:16px}.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-logo"><span class="mark"></span>销售情报</div>
+  <div class="header-grow"></div>
+  <select id="viewSwitcher" onchange="switchView(this.value)">
+    <option value="list">情报列表</option>
+    <option value="dashboard">全球看板</option>
+  </select>
+  <div class="header-search"><input type="text" id="searchInput" placeholder="搜索情报..." oninput="filterCards()"></div>
+  <div class="header-avatar">管</div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-label">导航</div>
+    <div class="sidebar-item active" onclick="switchView('list')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg></span>情报列表</div>
+    <div class="sidebar-item" onclick="switchView('dashboard')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 6v12l5 3 6-3 6 3 5-3V6l-5-3-6 3-6-3-5 3z"/><path d="M12 3v15"/></svg></span>全球看板</div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-label">状态</div>
+    <div class="sidebar-item" onclick="setFilter('')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>全部</div>
+    <div class="sidebar-item" onclick="setFilter('pending')">待核实</div>
+    <div class="sidebar-item" onclick="setFilter('qualified')">合格商机</div>
+    <div class="sidebar-item" onclick="setFilter('proposal')">方案报价</div>
+    <div class="sidebar-item" onclick="setFilter('won')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>已成交</div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-label">系统</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/projects.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M9 14l2 2 4-4"/></svg></span>采集项目</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/datasources.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>数据源管理</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/analyst.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20z"/><path d="M12 8v4l3 3"/></svg></span>AI 分析师</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/users.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>用户管理</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/roles.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>角色管理</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/import.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>批量导入</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/audit.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>操作日志</div>
+        <div class="sidebar-item" onclick="window.location.href='/portal/settings.html'"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>个人设置</div>
+      </aside>
+
+  <main class="main" id="mainContent">
+    <!-- 由 JS 动态渲染 -->
+  </main>
+</div>
+<!-- Panel -->
+<div class="panel" id="detailPanel">
+  <div class="panel-head"><h2 id="panelTitle">详情</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+  <div class="panel-body" id="panelBody"></div>
+  <div class="panel-foot" id="panelFoot"></div>
+</div>
+<div class="panel-overlay" onclick="closePanel()"></div>
+
+<script>
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c];
+  });
+}
+// Dynamic API base — no hardcoded IP
+const API_PROTOCOL = window.location.protocol;
+const API_HOSTNAME = window.location.hostname;
+const API_PORT_N = parseInt(window.location.port) || (location.protocol === 'https:' ? 443 : 80);
+let apiBase = () => `${API_PROTOCOL}//${API_HOSTNAME}:${API_PORT_N}`;
+let domainConfig = null;
+let statusMap = {};
+let allItems = [];
+let currentView = 'list';
+
+// ========== Auth ==========
+function getToken() { return localStorage.getItem('token'); }
+function getUser() { try { return JSON.parse(localStorage.getItem('user')); } catch(e) { return null; } }
+
+function checkAuth() {
+  const token = getToken();
+  if (!token) {
+    window.location.href = '/portal/login.html';
+    return false;
+  }
+  const user = getUser();
+  if (user) {
+    const avatar = document.getElementById('userAvatar');
+    if (avatar) avatar.textContent = user.display_name || user.username.charAt(0).toUpperCase();
+  }
+  return true;
+}
+
+function apiFetch(url, options = {}) {
+  const token = getToken();
+  if (token) {
+    options.headers = { ...options.headers, 'Authorization': 'Bearer ' + token };
+  }
+  return fetch(url, options);
+}
+
+async function init() {
+  if (!checkAuth()) return;
+  try {
+    const res = await apiFetch(apiBase() + '/api/domain_config');
+    domainConfig = await res.json();
+    domainConfig.statuses.forEach(s => statusMap[s[0]] = s[1]);
+    document.title = domainConfig.title_prefix;
+    await loadData();
+    renderListView();
+  } catch(e) {
+    document.getElementById('mainContent').innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">无法连接服务器</div>';
+  }
+}
+
+async function loadData() {
+  const res = await apiFetch(apiBase() + '/api/intelligence?limit=100');
+  const data = await res.json();
+  allItems = data.items || [];
+}
+
+function switchView(view) {
+  currentView = view;
+  document.getElementById('viewSwitcher').value = view;
+  document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+  const idx = view === 'list' ? 0 : 1;
+  document.querySelectorAll('.sidebar-item')[idx].classList.add('active');
+  dashboardLoaded = false;
+  dashboardData = null;
+  if (view === 'list') renderListView();
+  else renderDashboard();
+}
+
+// ========== List View ==========
+function renderListView() {
+  const main = document.getElementById('mainContent');
+  const total = allItems.length;
+  const pending = allItems.filter(i => i.status === 'pending' || i.status === 'qualified').length;
+  const approved = allItems.filter(i => i.status === 'approved' || i.status === 'proposal').length;
+  const won = allItems.filter(i => i.status === 'won').length;
+
+  main.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="stat-num accent">${total}</div><div class="stat-label">全部情报</div></div>
+      <div class="stat"><div class="stat-num gold">${pending}</div><div class="stat-label">待跟进</div></div>
+      <div class="stat"><div class="stat-num green">${approved}</div><div class="stat-label">方案中</div></div>
+      <div class="stat"><div class="stat-num">${won}</div><div class="stat-label">已成交</div></div>
+    </div>
+    <div class="section-header">
+      <h2>情报列表 <span class="count" id="feedCount">${total}条</span></h2>
+      <div class="filter-group">
+        <select id="statusFilter" onchange="filterCards()"><option value="">全部状态</option>${Object.entries(statusMap).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')}</select>
+        <button class="btn-reset" onclick="resetFilter()">重置</button>
+      </div>
+    </div>
+    <div class="feed" id="feed"></div>`;
+  filterCards();
+}
+
+function filterCards() {
+  const s = document.getElementById('searchInput').value.toLowerCase();
+  const st = document.getElementById('statusFilter') ? document.getElementById('statusFilter').value : '';
+  let items = allItems;
+  if (s) items = items.filter(i => (i.title||'').toLowerCase().includes(s) || (i.content||'').toLowerCase().includes(s));
+  if (st) items = items.filter(i => i.status === st);
+  renderFeed(items);
+  const fc = document.getElementById('feedCount');
+  if (fc) fc.textContent = items.length + '条';
+}
+
+function renderFeed(items) {
+  const feed = document.getElementById('feed');
+  if (!feed) return;
+  if (items.length === 0) { feed.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400);font-size:13px;">暂无匹配的情报</div>'; return; }
+  feed.innerHTML = items.map((item,i) => {
+    const company = escapeHtml(item.company || '');
+    const deal = item.deal_value ? (item.deal_value > 10000 ? '¥' + (item.deal_value/10000).toFixed(0) + '万' : '¥' + item.deal_value) : '';
+    return '<div class="row" onclick="openDetail('+item.id+')">'
+      +'<div class="row-index">'+(i+1).toString().padStart(2,'0')+'</div>'
+      +'<div class="row-body">'
+      +'<div class="row-title">'+escapeHtml(item.title)+'</div>'
+      +'<div class="row-meta">'
+      +(item.category?'<span class="tag">'+escapeHtml(item.category)+'</span>':'')
+      +(company?'<span class="tag tag-company">'+company+'</span>':'')
+      +(deal?'<span class="deal">'+deal+'</span>':'')
+      +'<span>'+formatDate(item.created_at)+'</span>'
+      +(item.comment_count>0?'<span class="comment-count"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'+item.comment_count+'</span>':'')
+      +'</div></div></div>';
+  }).join('');
+}
+
+function setFilter(status) {
+  const sel = document.getElementById('statusFilter');
+  if (sel) { sel.value = status; filterCards(); }
+}
+
+function resetFilter() {
+  document.getElementById('searchInput').value = '';
+  const sel = document.getElementById('statusFilter');
+  if (sel) sel.value = '';
+  filterCards();
+}
+
+// ========== Dashboard Data ==========
+let dashboardData = null;
+let dashboardLoaded = false;
+
+async function loadDashboardData() {
+  if (dashboardLoaded && dashboardData) return dashboardData;
+  const res = await apiFetch(apiBase() + '/api/dashboard/stats');
+  dashboardData = await res.json();
+  dashboardLoaded = true;
+  return dashboardData;
+}
+
+// ========== Dashboard View ==========
+async function renderDashboard() {
+  const main = document.getElementById('mainContent');
+  try {
+    const data = await loadDashboardData();
+    const entities = data.entities_by_type || {};
+    const markers = data.geographic_markers || [];
+    const suppliers = data.supplier_capacity || [];
+    const totalCapacity = data.total_capacity || 0;
+    const competitorCount = entities.competitor || 0;
+    const marketCount = entities.market || 0;
+    const totalIntelligence = data.total_intelligence || 0;
+
+    main.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="stat-num accent">${competitorCount}</div><div class="stat-label">追踪供应商</div></div>
+      <div class="stat"><div class="stat-num">${marketCount}</div><div class="stat-label">关注市场区域</div></div>
+      <div class="stat"><div class="stat-num gold">${totalCapacity}万吨</div><div class="stat-label">全球总产能</div></div>
+      <div class="stat"><div class="stat-num green">${totalIntelligence}条</div><div class="stat-label">情报总数</div></div>
+    </div>
+    <div class="map-wrap"><h2>全球供应布局 <span class="sub">供应商 · 客户 · 工厂分布</span></h2>
+      <div id="mapChart"></div>
+      <div class="map-legend">
+        <span class="leg-item"><span class="leg-dot" style="background:#3b6ea5"></span>供应商</span>
+        <span class="leg-item"><span class="leg-dot" style="background:#2a7d4f"></span>客户</span>
+        <span class="leg-item"><span class="leg-dot" style="background:#b8862d"></span>投资</span>
+      </div>
+    </div>
+    <div class="map-wrap" id="capacityChartWrap"><h2>供应商产能 <span class="sub">主要竞争者产能对比</span></h2>
+      <div id="capacityChart"></div>
+    </div>`;
+    initMap(markers);
+    initCapacityChart(suppliers);
+  } catch(e) {
+    main.innerHTML = '<div style="padding:40px;text-align:center;color:var(--gray-400)">加载看板数据失败: ' + escapeHtml(e.message || String(e)) + '</div>';
+  }
+}
+
+function initMap(markers) {
+  const chart = echarts.init(document.getElementById('mapChart'));
+  const categoryConfig = {
+    competitor: { color: '#3b6ea5', symbol: 'circle', size: 14, labelColor: '#7eb8da', shadowColor: 'rgba(59,110,165,0.5)', zlevel: 2 },
+    customer: { color: '#2a7d4f', symbol: 'circle', size: 13, labelColor: '#6abf8a', shadowColor: 'rgba(42,125,79,0.5)', zlevel: 2 },
+    investment: { color: '#b8862d', symbol: 'diamond', size: 12, labelColor: '#e8c36a', shadowColor: 'rgba(184,134,45,0.5)', zlevel: 3 }
+  };
+  const lines = [];
+  const competitorMarkers = markers.filter(m => m.category === 'competitor');
+  const customerMarkers = markers.filter(m => m.category === 'customer');
+  for (const comp of competitorMarkers) {
+    for (const cust of customerMarkers) {
+      lines.push({ coords: [comp.value, cust.value] });
+    }
+  }
+  fetch('./static/world.json')
+    .then(r => r.json())
+    .then(map => {
+      echarts.registerMap('world', map);
+      const series = [{
+        type: 'lines', coordinateSystem: 'geo',
+        data: lines,
+        lineStyle: { color: 'rgba(59,110,165,0.25)', width: 1.5, curveness: 0.3, type: 'dashed' },
+        zlevel: 1
+      }];
+      for (const [cat, cfg] of Object.entries(categoryConfig)) {
+        const catMarkers = markers.filter(m => m.category === cat);
+        if (catMarkers.length === 0) continue;
+        series.push({
+          type: 'scatter', coordinateSystem: 'geo',
+          symbol: cfg.symbol, symbolSize: cfg.size, zlevel: cfg.zlevel,
+          label: { show: true, formatter: p => p.name, position: 'top', distance: 6, color: cfg.labelColor, fontSize: 11, fontWeight: 600, textShadowColor: 'rgba(0,0,0,0.6)', textShadowBlur: 4 },
+          itemStyle: { color: cfg.color, borderColor: '#fff', borderWidth: 2, shadowBlur: 8, shadowColor: cfg.shadowColor },
+          data: catMarkers.map(m => ({ name: m.name, value: m.value, detail: m.detail, category: m.category }))
+        });
+      }
+      chart.setOption({
+        backgroundColor: '#0f1a2b',
+        tooltip: { trigger: 'item', formatter: p => p.name + (p.data && p.data.detail ? '<br/>' + p.data.detail : ''), backgroundColor: 'rgba(255,255,255,0.95)', textStyle: {color:'#1e1e1e',fontSize:12} },
+        geo: { map: 'world', roam: true, zoom: 1.1, center: [15, 15],
+          itemStyle: { areaColor: '#1a2d44', borderColor: '#2a4560', borderWidth: 0.5 },
+          emphasis: { itemStyle: { areaColor: '#243b56' }, label: { show: false } }
+        },
+        series: series
+      });
+      window.addEventListener('resize', () => chart.resize());
+    })
+    .catch(() => {
+      document.getElementById('mapChart').innerHTML = '<div style="padding:40px;text-align:center;color:#7eb8da">地图数据加载失败</div>';
+    });
+}
+
+function initCapacityChart(suppliers) {
+  const chart = echarts.init(document.getElementById('capacityChart'));
+  if (!suppliers || suppliers.length === 0) {
+    chart.setOption({
+      title: { text: '暂无产能数据', left: 'center', textStyle: { color: '#9a9b9d', fontSize: 13 } },
+      grid: { left: 60, right: 20, top: 30, bottom: 40 }
+    });
+    return;
+  }
+  const sorted = suppliers.slice().sort((a, b) => b.capacity - a.capacity);
+  const names = sorted.map(s => s.name);
+  const capacities = sorted.map(s => s.capacity);
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: p => p[0].name + '<br/>' + p[0].value + (p[0].data && p[0].data.unit ? ' ' + p[0].data.unit : ''),
+      backgroundColor: 'rgba(255,255,255,0.95)', textStyle: {color:'#1e1e1e',fontSize:12}
+    },
+    grid: { left: 80, right: 30, top: 20, bottom: 30 },
+    xAxis: { type: 'value', name: '万吨/年', nameTextStyle: { fontSize: 11, color: '#9a9b9d' }, splitLine: { lineStyle: { color: '#e0e1e3' } }, axisLabel: { color: '#545557' } },
+    yAxis: { type: 'category', data: names, axisLabel: { color: '#545557', fontSize: 12 } },
+    series: [{
+      type: 'bar', barWidth: 28,
+      data: capacities.map((c, i) => ({
+        value: c,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+            { offset: 0, color: '#3b4f8c' },
+            { offset: 1, color: '#5a7cc4' }
+          ])
+        }
+      })),
+      label: { show: true, position: 'right', formatter: '{c}', color: '#545557', fontSize: 12 }
+    }]
+  });
+  window.addEventListener('resize', () => chart.resize());
+}
+
+// ========== Detail Panel ==========
+let currentIntel = null;
+
+async function openDetail(id) {
+  try {
+    const r = await apiFetch(apiBase() + '/api/intelligence/' + id);
+    currentIntel = await r.json();
+    document.getElementById('panelTitle').textContent = currentIntel.title;
+    renderDetail();
+    loadComments(id);
+    document.getElementById('detailPanel').classList.add('open');
+  } catch(e) {
+    alert('加载详情失败');
+  }
+}
+
+function closePanel() {
+  document.getElementById('detailPanel').classList.remove('open');
+  currentIntel = null;
+  filterCards();
+}
+
+function renderDetail() {
+  const d = currentIntel;
+  const body = document.getElementById('panelBody');
+  const foot = document.getElementById('panelFoot');
+  const statusMap = {};
+  domainConfig.statuses.forEach(s => statusMap[s[0]] = s[1]);
+  const deal = d.deal_value ? (d.deal_value > 10000 ? '¥' + (d.deal_value/10000).toFixed(0) + '万' : '¥' + d.deal_value) : '';
+  body.innerHTML = ''
+    + '<div class="detail-meta">'
+    + '<span class="tag ' + d.status + '">' + (statusMap[d.status] || d.status) + '</span>'
+    + (d.category ? '<span class="tag tag-cat">' + escapeHtml(d.category) + '</span>' : '')
+    + (d.company ? '<span class="tag tag-company">' + escapeHtml(d.company) + '</span>' : '')
+    + '</div>'
+    + (deal ? '<div class="detail-deal">预估金额：' + deal + '</div>' : '')
+    + '<div class="detail-source">' + formatDate(d.created_at) + '</div>'
+    + '<div class="detail-content">' + (d.content || d.summary || '') + '</div>'
+    + '<div class="comment-section"><h3>Agent 评论</h3><div id="commentsContainer">加载中...</div></div>';
+
+  let btns = '';
+  if (d.status === 'pending') btns = '<button class="btn btn-success" onclick="updateStatus(\'qualified\')">标记商机</button><button class="btn btn-danger" onclick="updateStatus(\'lost\')">丢标</button>';
+  else if (d.status === 'qualified') btns = '<button class="btn btn-primary" onclick="updateStatus(\'proposal\')">进入报价</button>';
+  else if (d.status === 'proposal') btns = '<button class="btn btn-primary" onclick="updateStatus(\'negotiation\')">进入谈判</button>';
+  else if (d.status === 'negotiation') btns = '<button class="btn btn-success" onclick="updateStatus(\'won\')">成交</button><button class="btn btn-danger" onclick="updateStatus(\'lost\')">丢标</button>';
+  btns += '<span class="spacer"></span><button class="btn btn-ghost" onclick="updateStatus(\'discarded\')">废止</button>';
+  foot.innerHTML = btns;
+}
+
+async function updateStatus(status) {
+  if (!currentIntel) return;
+  if (status === 'discarded' && !confirm('确定废止？')) return;
+  try {
+    const r = await fetch(apiBase() + '/api/intelligence/' + currentIntel.id + '/status', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    if (r.ok) {
+      currentIntel.status = status;
+      renderDetail();
+      await loadData();
+      filterCards();
+    }
+  } catch(e) {}
+}
+
+async function loadComments(id) {
+  try {
+    const r = await apiFetch(apiBase() + '/api/intelligence/' + id + '/comments?limit=20');
+    const comments = await r.json();
+    const c = document.getElementById('commentsContainer');
+    if (!c) return;
+    if (!comments.length) { c.innerHTML = '<div style="color:var(--gray-400);font-size:13px;">暂无评论</div>'; return; }
+    c.innerHTML = comments.map(co =>
+      '<div class="comment"><div class="comment-head"><span class="comment-name">' + escapeHtml(co.agent_name) + '</span><span class="comment-time">' + formatDate(co.created_at) + '</span></div><div class="comment-text">' + escapeHtml(co.content || '') + '</div></div>'
+    ).join('');
+  } catch(e) {}
+}
+
+function formatDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return (d.getMonth()+1)+'月'+d.getDate()+'日';
+}
+
+init();
+</script>
+</body>
+</html>
