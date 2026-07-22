@@ -26,9 +26,14 @@
 .role-badge-2{background:var(--amber-light);color:var(--amber)}
 .role-badge-3{background:var(--gray-100);color:var(--gray-600)}
 .role-user-count{color:var(--gray-600);font-weight:500}
-.actions .btn{padding:5px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;cursor:pointer;background:#fff;color:var(--gray-600);transition:all 0.12s}
-.actions .btn:hover{border-color:var(--accent);color:var(--accent)}
-.actions .btn-danger:hover{border-color:var(--red);color:var(--red)}
+/* 图标按钮 */
+.btn-icon{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:var(--radius);background:transparent;color:var(--gray-500);cursor:pointer;transition:all 0.12s;padding:0;position:relative}
+.btn-icon:hover{background:var(--gray-100);color:var(--gray-700)}
+.btn-icon::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:6px;padding:4px 8px;background:#1a1a1a;color:#fff;font-size:11px;border-radius:4px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.15s;z-index:10}
+.btn-icon:hover::after{opacity:1}
+/* 操作列固定 */
+.action-cell{position:sticky;right:0;background:#fff;z-index:1;min-width:60px;text-align:right;padding:12px 12px!important}
+.action-btns{display:flex;gap:4px;justify-content:flex-end;align-items:center}
 </style>
 </head>
 <body>
@@ -80,13 +85,14 @@ function loadRoles(){
     var tbody = document.getElementById('roleList');
     if(!roles.length){tbody.innerHTML='<tr><td colspan="5" class="empty">暂无角色</td></tr>';return;}
     tbody.innerHTML = roles.map(function(role, i){
-      var badgeClass = 'role-badge-'+role.id;
       return '<tr>'
         +'<td style="color:var(--gray-400)">'+(i+1).toString().padStart(2,'0')+'</td>'
         +'<td><span class="role-name">'+escapeHtml(role.name)+'</span></td>'
         +'<td><span class="role-user-count">'+(role.user_count||0)+' 人</span></td>'
         +'<td>'+formatDate(role.created_at)+'</td>'
-        +'<td><div class="actions"><button class="btn" onclick="openEdit('+role.id+',\''+escapeHtml(role.name).replace(/'/g,"\\'")+'\')">编辑</button></div></td>'
+        +'<td class="action-cell"><div class="action-btns">'
+          + '<button class="btn-icon" onclick="openEdit('+role.id+')" data-tip="编辑"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
+        +'</div></td>'
         +'</tr>';
     }).join('');
   }).catch(function(){
@@ -94,14 +100,16 @@ function loadRoles(){
   });
 }
 
-function openEdit(id, name){
-  document.getElementById('editTitle').textContent = '编辑角色';
-  document.getElementById('editRoleId').value = id;
-  document.getElementById('editRoleName').value = name;
-  document.getElementById('editFeedback').className = 'form-feedback';
-  document.getElementById('editFeedback').textContent = '';
-  document.getElementById('editPanel').classList.add('open');
-  document.getElementById('editRoleName').focus();
+function openEdit(id){
+  apiFetch(apiBase()+'/api/roles/'+id).then(function(r){return r.json()}).then(function(role){
+    document.getElementById('editTitle').textContent = '编辑角色';
+    document.getElementById('editRoleId').value = id;
+    document.getElementById('editRoleName').value = role.name;
+    document.getElementById('editFeedback').className = 'form-feedback';
+    document.getElementById('editFeedback').textContent = '';
+    document.getElementById('editPanel').classList.add('open');
+    document.getElementById('editRoleName').focus();
+  });
 }
 
 function closeEdit(){
