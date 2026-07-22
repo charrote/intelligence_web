@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全球供需看板 Demo</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.main{padding:24px 28px;overflow-y:auto}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;box-shadow:var(--shadow-sm)}
+.stat-num{font-size:22px;font-weight:600;color:var(--gray-800);letter-spacing:-0.3px;line-height:1.2}
+.stat-label{font-size:12px;color:var(--gray-400);margin-top:2px}
+.stat-num.green{color:var(--green)}.stat-num.gold{color:var(--amber)}.stat-num.accent{color:var(--accent)}
+
+.map-wrap{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px;margin-bottom:20px;box-shadow:var(--shadow-sm)}
+.map-wrap h2{font-size:15px;font-weight:600;color:var(--gray-800);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.map-wrap .sub{font-size:12px;font-weight:400;color:var(--gray-400)}
+#mapChart{width:100%;height:520px;border-radius:var(--radius);margin-top:10px}
+.map-legend{display:flex;gap:20px;margin-top:10px;font-size:12px;color:var(--gray-600)}
+.map-legend .leg-item{display:flex;align-items:center;gap:6px}
+.map-legend .leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+.bottom-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow-sm)}
+.panel h3{font-size:14px;font-weight:600;color:var(--gray-800);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+.panel h3 .more{font-size:11px;font-weight:400;color:var(--gray-400);cursor:pointer}
+.panel h3 .more:hover{color:var(--accent)}
+.panel-table{width:100%;font-size:13px;border-collapse:collapse}
+.panel-table th{text-align:left;padding:6px 8px;font-weight:500;color:var(--gray-400);font-size:11px;text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--gray-200)}
+.panel-table td{padding:7px 8px;border-bottom:1px solid var(--gray-100);color:var(--gray-600)}
+.panel-table tr:last-child td{border-bottom:none}
+.panel-table .tag{display:inline-flex;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:500}
+.panel-table .tag.sup{background:var(--accent-light);color:var(--accent)}
+.panel-table .tag.cus{background:var(--green-light);color:var(--green)}
+.panel-table .val{font-weight:500}
+.panel-table .val.green{color:var(--green)}
+.panel-table .val.red{color:var(--red)}
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="stats">
+    <div class="stat"><div class="stat-num accent">12</div><div class="stat-label">追踪供应商</div></div>
+    <div class="stat"><div class="stat-num">8</div><div class="stat-label">关注市场区域</div></div>
+    <div class="stat"><div class="stat-num gold">46.2万吨</div><div class="stat-label">全球总产能</div></div>
+    <div class="stat"><div class="stat-num green">38.7万吨</div><div class="stat-label">全球总需求</div></div>
+  </div>
+
+  <div class="map-wrap">
+    <h2>全球供应布局 <span class="sub">供应商 · 客户 · 工厂分布</span></h2>
+    <div id="mapChart"></div>
+    <div class="map-legend">
+      <span class="leg-item"><span class="leg-dot" style="background:#3b6ea5"></span>供应商</span>
+      <span class="leg-item"><span class="leg-dot" style="background:#2a7d4f"></span>客户</span>
+      <span class="leg-item"><span class="leg-dot" style="background:#b8862d"></span>投资/新工厂</span>
+      <span class="leg-item"><span class="leg-dot" style="background:rgba(59,110,165,0.3);width:24px;height:2px;border-radius:0"></span>供应流向</span>
+    </div>
+  </div>
+
+  <div class="bottom-row">
+    <div class="panel">
+      <h3>供应商产能对比 <span class="more">查看全部</span></h3>
+      <table class="panel-table">
+        <tr><th>供应商</th><th>总部</th><th>年产能</th><th>同比变化</th></tr>
+        <tr><td><span class="tag sup">丹尼斯克</span></td><td>丹麦</td><td class="val">18.5万吨</td><td class="val green">+4.2%</td></tr>
+        <tr><td><span class="tag sup">凯瑞</span></td><td>爱尔兰</td><td class="val">12.3万吨</td><td class="val green">+8.1%</td></tr>
+        <tr><td><span class="tag sup">帕斯嘉</span></td><td>意大利</td><td class="val">9.8万吨</td><td class="val">+2.3%</td></tr>
+        <tr><td><span class="tag sup">李岩</span></td><td>日本</td><td class="val">5.6万吨</td><td class="val green">+15.0%</td></tr>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>区域供需平衡 <span class="more">查看全部</span></h3>
+      <table class="panel-table">
+        <tr><th>区域</th><th>供应量</th><th>需求量</th><th>供需状态</th></tr>
+        <tr><td>东南亚</td><td>6.8万吨</td><td class="val">9.2万吨</td><td><span class="val red">供不应求</span></td></tr>
+        <tr><td>欧洲</td><td class="val green">18.5万吨</td><td>12.3万吨</td><td><span class="val green">供大于求</span></td></tr>
+        <tr><td>中国</td><td>8.2万吨</td><td class="val">11.5万吨</td><td><span class="val red">供不应求</span></td></tr>
+        <tr><td>东北亚</td><td class="val green">12.7万吨</td><td>9.8万吨</td><td><span class="val green">供大于求</span></td></tr>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const chart = echarts.init(document.getElementById('mapChart'), undefined, { renderer: 'canvas' });
+  fetch('https://echarts.apache.org/examples/data/asset/geo/world.json')
+    .then(r => { if (!r.ok) throw new Error('Map data not found'); return r.json(); })
+    .then(worldMap => {
+      echarts.registerMap('world', worldMap);
+      renderMap();
+    })
+    .catch(err => {
+      console.warn('World map data failed to load, using fallback:', err.message);
+      return fetch('https://cdn.jsdelivr.net/gh/apache/echarts-website@asf-site/examples/data/asset/geo/world.json');
+    })
+    .then(r => r && r.json())
+    .then(worldMap => {
+      if (worldMap) {
+        echarts.registerMap('world', worldMap);
+        renderMap();
+      }
+    })
+    .catch(() => {
+      document.getElementById('mapChart').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:rgba(255,255,255,0.5);font-size:14px;">地图数据加载中，请检查网络连接</div>';
+    });
+
+  function renderMap() {
+    const option = {
+      backgroundColor: '#0f1a2b',
+      tooltip: {
+        trigger: 'item',
+        formatter: params => {
+          if (params.seriesType === 'scatter') {
+            return '<strong>' + params.name + '</strong><br/>' + params.data.detail || '';
+          }
+          return params.name;
+        },
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        borderColor: '#e0e1e3',
+        borderWidth: 1,
+        textStyle: { color: '#1e1e1e', fontSize: 12 }
+      },
+      visualMap: { show: false },
+      geo: {
+        map: 'world',
+        roam: true,
+        zoom: 1.1,
+        center: [15, 15],
+        itemStyle: {
+          areaColor: '#1a2d44',
+          borderColor: '#2a4560',
+          borderWidth: 0.5,
+        },
+        emphasis: {
+          itemStyle: { areaColor: '#243b56' },
+          label: { show: false }
+        },
+        label: { show: false },
+        regions: [
+          { name: 'China', itemStyle: { areaColor: '#1e3448' } },
+          { name: 'Denmark', itemStyle: { areaColor: '#1e3448' } },
+          { name: 'Ireland', itemStyle: { areaColor: '#1e3448' } },
+          { name: 'Italy', itemStyle: { areaColor: '#1e3448' } },
+          { name: 'Japan', itemStyle: { areaColor: '#1e3448' } },
+          { name: 'Thailand', itemStyle: { areaColor: '#1e3448' } },
+          { name: 'Vietnam', itemStyle: { areaColor: '#1e3448' } },
+          { name: 'Philippines', itemStyle: { areaColor: '#1e3448' } },
+        ]
+      },
+      series: [
+        {
+          type: 'lines',
+          coordinateSystem: 'geo',
+          data: [
+            { coords: [[10.5, 56], [105.8, 21]] },
+            { coords: [[10.5, 56], [104, 30]] },
+            { coords: [[-8, 53], [113.5, 23]] },
+            { coords: [[12.5, 42], [105.8, 21]] },
+            { coords: [[138, 36], [100.5, 14]] },
+            { coords: [[-8, 53], [122, 13]] },
+          ],
+          lineStyle: {
+            color: 'rgba(59,110,165,0.25)',
+            width: 1.5,
+            curveness: 0.3,
+            type: 'dashed',
+          },
+          effect: { show: false },
+          zlevel: 1,
+        },
+        {
+          type: 'scatter',
+          coordinateSystem: 'geo',
+          symbol: 'circle',
+          symbolSize: 14,
+          zlevel: 2,
+          encode: { value: 2 },
+          label: {
+            show: true,
+            formatter: params => params.name,
+            position: 'top',
+            distance: 6,
+            color: '#7eb8da',
+            fontSize: 11,
+            fontWeight: 600,
+            textShadowColor: 'rgba(0,0,0,0.6)',
+            textShadowBlur: 4,
+          },
+          emphasis: {
+            scale: 1.5,
+            label: { show: true, fontSize: 12 }
+          },
+          itemStyle: {
+            color: '#3b6ea5',
+            borderColor: '#fff',
+            borderWidth: 2,
+            shadowBlur: 8,
+            shadowColor: 'rgba(59,110,165,0.5)',
+          },
+          data: [
+            { name: '丹尼斯克', value: [10.5, 56], detail: '丹麦总部 · 年产能18.5万吨' },
+            { name: '凯瑞', value: [-8, 53], detail: '爱尔兰总部 · 年产能12.3万吨' },
+            { name: '帕斯嘉', value: [12.5, 42], detail: '意大利总部 · 年产能9.8万吨' },
+            { name: '李岩', value: [138, 36], detail: '日本总部 · 年产能5.6万吨' },
+          ],
+        },
+        {
+          type: 'scatter',
+          coordinateSystem: 'geo',
+          symbol: 'circle',
+          symbolSize: 13,
+          zlevel: 2,
+          label: {
+            show: true,
+            formatter: params => params.name,
+            position: 'top',
+            distance: 6,
+            color: '#6abf8a',
+            fontSize: 11,
+            fontWeight: 600,
+            textShadowColor: 'rgba(0,0,0,0.6)',
+            textShadowBlur: 4,
+          },
+          emphasis: {
+            scale: 1.5,
+            label: { show: true, fontSize: 12 }
+          },
+          itemStyle: {
+            color: '#2a7d4f',
+            borderColor: '#fff',
+            borderWidth: 2,
+            shadowBlur: 8,
+            shadowColor: 'rgba(42,125,79,0.5)',
+          },
+          data: [
+            { name: '和路雪', value: [105.8, 21], detail: '越南工厂 · 扩建产能+40%' },
+            { name: '雀巢', value: [104, 30], detail: '中国 · 业务调整，新增3家经销商' },
+            { name: '广东某食品厂', value: [113.5, 23], detail: '寻稳定剂供应商 · 月需求5吨' },
+          ],
+        },
+        {
+          type: 'scatter',
+          coordinateSystem: 'geo',
+          symbol: 'diamond',
+          symbolSize: 12,
+          zlevel: 3,
+          label: {
+            show: true,
+            formatter: params => params.name,
+            position: 'top',
+            distance: 6,
+            color: '#e8c36a',
+            fontSize: 10,
+            fontWeight: 500,
+            textShadowColor: 'rgba(0,0,0,0.6)',
+            textShadowBlur: 4,
+          },
+          emphasis: {
+            scale: 1.5,
+            label: { show: true, fontSize: 11 }
+          },
+          itemStyle: {
+            color: '#b8862d',
+            borderColor: '#fff',
+            borderWidth: 2,
+            shadowBlur: 8,
+            shadowColor: 'rgba(184,134,45,0.5)',
+          },
+          data: [
+            { name: '李岩新工厂', value: [100.5, 14], detail: '泰国 · 投资1.2亿美元，2027投产' },
+            { name: 'Golden Flavors', value: [122, 13], detail: '菲律宾 · 凯瑞收购，金额2.3亿欧元' },
+          ],
+        },
+      ]
+    };
+
+    chart.setOption(option);
+    window.addEventListener('resize', () => chart.resize());
+  }
+})();
+</script>
+</body>
+</html>
