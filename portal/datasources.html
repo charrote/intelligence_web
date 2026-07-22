@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据源管理</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.table-wrapper{overflow-x:auto}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.status-dot.on{background:var(--green)}
+.status-dot.off{background:var(--gray-400)}
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>数据源管理</h1>
+  <p class="sub">管理数据采集源，支持网站、RSS、API 等多种类型</p>
+  <div class="toolbar">
+    <select id="sourceType">
+      <option value="">全部类型</option>
+      <option value="website">网站</option>
+      <option value="rss">RSS</option>
+      <option value="api">API</option>
+    </select>
+    <select id="sourceStatus">
+      <option value="">全部状态</option>
+      <option value="active">启用</option>
+      <option value="inactive">停用</option>
+    </select>
+    <button class="btn btn-primary" onclick="showModal()">+ 新增数据源</button>
+  </div>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>类型</th>
+          <th>URL / 地址</th>
+          <th>调度频率</th>
+          <th>状态</th>
+          <th>最近采集</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">新增数据源</h2>
+        <button class="btn-ghost" onclick="hideModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--gray-500)">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>名称</label>
+          <input type="text" id="srcName" placeholder="输入数据源名称">
+        </div>
+        <div class="form-group">
+          <label>类型</label>
+          <select id="srcType">
+            <option value="website">网站</option>
+            <option value="rss">RSS</option>
+            <option value="api">API</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>URL / 地址</label>
+          <input type="text" id="srcUrl" placeholder="输入采集目标地址">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>调度频率</label>
+            <select id="srcSchedule">
+              <option value="daily">每日</option>
+              <option value="weekly">每周</option>
+              <option value="monthly">每月</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>状态</label>
+            <select id="srcStatus">
+              <option value="active">启用</option>
+              <option value="inactive">停用</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>指标 (可选，逗号分隔)</label>
+          <input type="text" id="srcIndicators" placeholder="如: price, volume, sentiment">
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+        <button class="btn btn-ghost" onclick="hideModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveSource()">保存</button>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+var sources = [];
+var editingId = null;
+
+async function init() {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/datasources');
+    sources = await r.json();
+    renderTable();
+  } catch(e) {
+    document.getElementById('tableBody').innerHTML = '<tr><td colspan="7" class="empty">加载失败</td></tr>';
+  }
+}
+
+function renderTable() {
+  var typeF = document.getElementById('sourceType').value;
+  var statusF = document.getElementById('sourceStatus').value;
+  var filtered = sources;
+  if (typeF) filtered = filtered.filter(function(s) { return s.type === typeF; });
+  if (statusF) filtered = filtered.filter(function(s) { return s.status === statusF; });
+
+  var html = '';
+  if (!filtered.length) {
+    html = '<tr><td colspan="7" class="empty">暂无数据源</td></tr>';
+  } else {
+    filtered.forEach(function(src) {
+      html += '<tr>'
+        + '<td><strong>' + escapeHtml(src.name) + '</strong></td>'
+        + '<td><span class="tag ' + src.type + '">' + typeLabel(src.type) + '</span></td>'
+        + '<td title="' + escapeHtml(src.url || '') + '">' + truncate(escapeHtml(src.url || ''), 30) + '</td>'
+        + '<td><span class="tag ' + (src.schedule || 'daily') + '">' + (src.schedule || 'daily') + '</span></td>'
+        + '<td><span class="status-dot ' + (src.status === 'active' ? 'on' : 'off') + '"></span>' + (src.status === 'active' ? '启用' : '停用') + '</td>'
+        + '<td>' + (src.last_crawled_at || '-') + '</td>'
+        + '<td>'
+          + '<button class="btn btn-ghost btn-sm" onclick="toggleStatus(' + src.id + ',\'' + (src.status === 'active' ? 'inactive' : 'active') + '\')">' + (src.status === 'active' ? '停用' : '启用') + '</button>'
+          + ' <button class="btn btn-danger btn-sm" onclick="deleteSource(' + src.id + ')">删除</button>'
+        + '</td>'
+        + '</tr>';
+    });
+  }
+  document.getElementById('tableBody').innerHTML = html;
+}
+
+function typeLabel(t) {
+  return {website:'网站',rss:'RSS',api:'API'}[t] || t;
+}
+
+function truncate(s, len) {
+  return s.length > len ? s.substring(0, len) + '...' : s;
+}
+
+function showModal() {
+  editingId = null;
+  document.getElementById('modalTitle').textContent = '新增数据源';
+  document.getElementById('srcName').value = '';
+  document.getElementById('srcType').value = 'website';
+  document.getElementById('srcUrl').value = '';
+  document.getElementById('srcSchedule').value = 'daily';
+  document.getElementById('srcStatus').value = 'active';
+  document.getElementById('srcIndicators').value = '';
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function hideModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+
+async function saveSource() {
+  var name = document.getElementById('srcName').value.trim();
+  var type = document.getElementById('srcType').value;
+  var url = document.getElementById('srcUrl').value.trim();
+  var schedule = document.getElementById('srcSchedule').value;
+  var status = document.getElementById('srcStatus').value;
+  var indicators = document.getElementById('srcIndicators').value.trim();
+
+  if (!name || !url) { alert('名称和地址为必填项'); return; }
+
+  var payload = { name: name, type: type, url: url, schedule: schedule, status: status };
+  if (indicators) payload.indicators = indicators;
+
+  try {
+    var method = editingId ? 'PUT' : 'POST';
+    var urlPath = editingId ? APP_API_BASE + '/api/datasources/' + editingId : APP_API_BASE + '/api/datasources';
+    var r = await apiFetch(urlPath, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (r.ok) {
+      hideModal();
+      init();
+    } else {
+      var data = await r.json();
+      alert(data.error || '保存失败');
+    }
+  } catch(e) { alert('保存失败'); }
+}
+
+async function toggleStatus(id, status) {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/datasources/' + id + '/status', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: status })
+    });
+    if (r.ok) init();
+  } catch(e) { alert('操作失败'); }
+}
+
+async function deleteSource(id) {
+  if (!confirm('确定删除此数据源？')) return;
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/datasources/' + id, { method: 'DELETE' });
+    if (r.ok) init();
+  } catch(e) { alert('删除失败'); }
+}
+
+document.getElementById('sourceType').onchange = renderTable;
+document.getElementById('sourceStatus').onchange = renderTable;
+
+init();
+</script>
+</body>
+</html>
