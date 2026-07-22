@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>批量导入</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.upload-area{border:2px dashed var(--gray-200);border-radius:var(--radius);padding:40px 20px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
+.upload-area:hover,.upload-area.dragover{border-color:var(--accent);background:var(--accent-light)}
+.upload-icon{width:48px;height:48px;margin:0 auto 12px;color:var(--gray-400)}
+.upload-text{font-size:14px;color:var(--gray-600)}
+.upload-hint{font-size:12px;color:var(--gray-400);margin-top:4px}
+.mapping-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px}
+.mapping-item{display:flex;flex-direction:column;gap:4px}
+.mapping-label{font-size:11px;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px}
+.mapping-select{padding:5px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;background:#fff;cursor:pointer}
+.mapping-select.found{border-color:var(--green);background:var(--green-light)}
+.mapping-select label{font-size:12px;color:var(--gray-400)}
+.preview-table{width:100%;border-collapse:collapse;font-size:12px}
+.preview-table th{text-align:left;padding:8px 10px;font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);white-space:nowrap}
+.preview-table td{padding:8px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-600);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
+.preview-table tr:hover td{background:var(--gray-50)}
+.preview-table .row-num{color:var(--gray-400);width:40px;text-align:center}
+.status-ok{color:var(--green);font-weight:500}
+.status-err{color:var(--red);font-weight:500}
+.error-tag{display:inline-block;background:var(--red-light);color:var(--red);padding:1px 5px;border-radius:3px;font-size:10px;margin-top:2px}
+.stats-bar{display:flex;gap:16px;margin-bottom:16px}
+.stat-chip{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--radius);font-size:13px;background:#fff;border:1px solid var(--gray-200)}
+.stat-chip .num{font-weight:600}
+.stat-chip.total .num{color:var(--gray-800)}
+.stat-chip.valid .num{color:var(--green)}
+.stat-chip.error .num{color:var(--red)}
+.btn-lg{padding:10px 24px;font-size:14px}
+.result-summary{padding:16px;border-radius:var(--radius);margin-bottom:16px}
+.result-summary.success{background:var(--green-light);border:1px solid var(--green)}
+.result-summary.error{background:var(--red-light);border:1px solid var(--red)}
+.result-summary h3{font-size:14px;font-weight:600;margin-bottom:8px}
+.result-summary p{font-size:13px;color:var(--gray-600)}
+.result-summary .count{font-weight:600}
+.result-errors{margin-top:12px}
+.result-errors h4{font-size:13px;font-weight:600;color:var(--red);margin-bottom:8px}
+.error-row{padding:8px 12px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:6px;font-size:12px}
+.error-row .row-num{font-weight:600;color:var(--gray-800)}
+.error-row .errors{color:var(--red);margin-top:3px}
+.loading{display:none;text-align:center;padding:30px}
+.loading.show{display:block}
+.spinner{width:24px;height:24px;border:3px solid var(--gray-200);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;margin:0 auto 8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>批量导入</h1>
+  <div class="sub">通过 Excel 或 CSV 文件批量导入情报数据</div>
+
+  <!-- Step 1: File Upload -->
+  <div class="card" id="uploadSection">
+    <h2 style="font-size:15px;font-weight:600;color:var(--gray-800);margin-bottom:12px">上传文件</h2>
+    <div class="upload-area" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div class="upload-text">点击选择文件或拖拽文件到此处</div>
+      <div class="upload-hint">支持 .xlsx, .csv 格式，仅使用首行作为列名</div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="onFileSelect(this.files[0])">
+    <div class="loading" id="uploadLoading">
+      <div class="spinner"></div>
+      <div style="font-size:13px;color:var(--gray-400)">解析文件中...</div>
+    </div>
+  </div>
+
+  <!-- Step 2: Column Mapping -->
+  <div class="card hidden" id="mappingSection">
+    <h2 style="font-size:15px;font-weight:600;color:var(--gray-800);margin-bottom:12px">列映射配置</h2>
+    <div id="mappingConfig" class="mapping-grid"></div>
+    <div style="margin-top:12px">
+      <button class="btn btn-primary" id="previewBtn" onclick="showPreview()">预览数据</button>
+      <button class="btn btn-ghost" onclick="resetAll()">重新上传</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Preview -->
+  <div class="card hidden" id="previewSection">
+    <h2 style="font-size:15px;font-weight:600;color:var(--gray-800);margin-bottom:12px">数据预览</h2>
+    <div class="stats-bar" id="statsBar"></div>
+    <div style="overflow-x:auto">
+      <table class="preview-table" id="previewTable">
+        <thead id="previewHead"></thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+    </div>
+    <div id="moreRowsHint" class="hidden" style="font-size:12px;color:var(--gray-400);margin-top:8px">仅显示前 20 行</div>
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-primary btn-lg" id="importBtn" onclick="executeImport()">确认导入</button>
+      <button class="btn btn-ghost" onclick="goToMapping()">返回修改映射</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Results -->
+  <div class="card hidden" id="resultSection">
+    <h2 style="font-size:15px;font-weight:600;color:var(--gray-800);margin-bottom:12px">导入结果</h2>
+    <div id="resultContent"></div>
+    <div style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="resetAll()">关闭</button>
+    </div>
+  </div>
+</main>
+
+<script>
+var token = getToken();
+if (!token) { window.location.href = '/portal/login.html'; }
+
+var parsedData = null;
+var previewData = null;
+var fileContent = null;
+var fileName = '';
+var fileType = '';
+
+// ========== File Upload ==========
+var dropZone = document.getElementById('dropZone');
+
+dropZone.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', function() {
+  dropZone.classList.remove('dragover');
+});
+dropZone.addEventListener('drop', function(e) {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  var files = e.dataTransfer.files;
+  if (files.length) onFileSelect(files[0]);
+});
+
+function onFileSelect(file) {
+  if (!file) return;
+  fileName = file.name;
+  fileType = file.name.split('.').pop().toLowerCase();
+  if (['xlsx', 'xls', 'csv'].indexOf(fileType) === -1) {
+    alert('不支持的文件格式。请选择 .xlsx 或 .csv 文件。');
+    return;
+  }
+  showLoading(true);
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    fileContent = e.target.result;
+    sendPreview();
+  };
+  reader.onerror = function() {
+    alert('文件读取失败');
+    showLoading(false);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ========== Preview ==========
+function sendPreview() {
+  var fd = new FormData();
+  fd.append('file', new Blob([fileContent], { type: 'application/octet-stream' }), fileName);
+
+  fetch(apiBase() + '/api/intelligence/import', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token },
+    body: fd
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    showLoading(false);
+    if (data.error) {
+      alert(data.error);
+      return;
+    }
+    parsedData = data;
+    renderMapping(data.headers, data.mapping);
+    document.getElementById('mappingSection').classList.remove('hidden');
+  })
+  .catch(function(e) {
+    showLoading(false);
+    alert('解析失败: ' + e.message);
+  });
+}
+
+// ========== Column Mapping ==========
+function renderMapping(headers, mapping) {
+  var container = document.getElementById('mappingConfig');
+  var fields = [
+    { key: 'title', label: '标题 *' },
+    { key: 'content', label: '内容 *' },
+    { key: 'category', label: '分类' },
+    { key: 'status', label: '状态' },
+    { key: 'source_url', label: '来源链接' },
+    { key: 'opinion', label: '意见' }
+  ];
+
+  var html = '';
+  fields.forEach(function(f) {
+    var mappedIdx = mapping[f.key];
+    var detected = false;
+    var mappedHeader = '';
+    if (mappedIdx !== undefined && mappedIdx < headers.length) {
+      mappedHeader = headers[mappedIdx];
+      detected = true;
+    }
+    var selectClass = detected ? 'mapping-select found' : 'mapping-select';
+    var label = detected ? '<label>已自动检测: '+escapeHtml(mappedHeader || '(空)')+'</label>' : '';
+
+    var options = '<option value="">未映射</option>';
+    headers.forEach(function(h, i) {
+      var sel = (mappedIdx === i) ? ' selected' : '';
+      options += '<option value="'+i+'"'+sel+'>'+escapeHtml(h || '(空列 '+i+')')+'</option>';
+    });
+
+    html += '<div class="mapping-item">'
+      + '<span class="mapping-label">'+f.label+'</span>'
+      + '<select class="'+selectClass+'" data-field="'+f.key+'">'+options+'</select>'
+      + label +'</div>';
+  });
+  container.innerHTML = html;
+}
+
+function getMapping() {
+  var selects = document.querySelectorAll('#mappingConfig select');
+  var mapping = {};
+  selects.forEach(function(s) {
+    var field = s.dataset.field;
+    var val = s.value;
+    if (val !== '') {
+      mapping[field] = parseInt(val);
+    }
+  });
+  return mapping;
+}
+
+function goToMapping() {
+  document.getElementById('previewSection').classList.add('hidden');
+  document.getElementById('resultSection').classList.add('hidden');
+  document.getElementById('mappingSection').classList.remove('hidden');
+}
+
+// ========== Preview Table ==========
+function showPreview() {
+  if (!parsedData) return;
+  var mapping = getMapping();
+
+  previewData = {
+    headers: parsedData.headers,
+    mapping: mapping,
+    rows: parsedData.preview,
+    total: parsedData.total,
+    valid_count: parsedData.valid_count,
+    error_count: parsedData.error_count,
+    more_rows: parsedData.more_rows
+  };
+
+  renderStats();
+  renderPreviewTable();
+  document.getElementById('previewSection').classList.remove('hidden');
+  document.getElementById('mappingSection').classList.add('hidden');
+
+  document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderStats() {
+  var bar = document.getElementById('statsBar');
+  bar.innerHTML =
+    '<div class="stat-chip total"><span class="num">'+previewData.total+'</span> 总行数</div>' +
+    '<div class="stat-chip valid"><span class="num">'+previewData.valid_count+'</span> 有效</div>' +
+    '<div class="stat-chip error"><span class="num">'+previewData.error_count+'</span> 错误</div>';
+}
+
+function renderPreviewTable() {
+  var fields = ['title', 'content', 'category', 'status', 'source_url', 'opinion'];
+  var fieldLabels = { title: '标题', content: '内容', category: '分类', status: '状态', source_url: '来源', opinion: '意见' };
+
+  var headHtml = '<tr><th class="row-num">#</th>';
+  fields.forEach(function(f) { headHtml += '<th>'+fieldLabels[f]+'</th>'; });
+  headHtml += '<th>状态</th></tr>';
+  document.getElementById('previewHead').innerHTML = headHtml;
+
+  var bodyHtml = '';
+  previewData.rows.forEach(function(row) {
+    bodyHtml += '<tr>';
+    bodyHtml += '<td class="row-num">'+row.row+'</td>';
+    fields.forEach(function(f) {
+      var val = (row.mapped && row.mapped[f]) ? row.mapped[f] : '';
+      bodyHtml += '<td title="'+escapeHtml(val)+'">'+escapeHtml(val)+'</td>';
+    });
+    if (row.valid) {
+      bodyHtml += '<td><span class="status-ok">&#10003; 有效</span></td>';
+    } else {
+      bodyHtml += '<td><span class="status-err">&#10007; 错误</span>';
+      if (row.errors && row.errors.length) {
+        row.errors.forEach(function(err) {
+          bodyHtml += '<div class="error-tag">'+escapeHtml(err)+'</div>';
+        });
+      }
+      bodyHtml += '</td>';
+    }
+    bodyHtml += '</tr>';
+  });
+  document.getElementById('previewBody').innerHTML = bodyHtml;
+
+  document.getElementById('moreRowsHint').className = previewData.more_rows ? '' : 'hidden';
+}
+
+// ========== Import ==========
+function executeImport() {
+  if (!previewData) return;
+  document.getElementById('importBtn').disabled = true;
+  document.getElementById('importBtn').textContent = '导入中...';
+
+  var fd = new FormData();
+  fd.append('confirm', 'true');
+  fd.append('data', JSON.stringify(previewData));
+
+  fetch(apiBase() + '/api/intelligence/import', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token },
+    body: fd
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    document.getElementById('importBtn').disabled = false;
+    document.getElementById('importBtn').textContent = '确认导入';
+    renderResults(data);
+    document.getElementById('previewSection').classList.add('hidden');
+    document.getElementById('resultSection').classList.remove('hidden');
+  })
+  .catch(function(e) {
+    document.getElementById('importBtn').disabled = false;
+    document.getElementById('importBtn').textContent = '确认导入';
+    alert('导入失败: ' + e.message);
+  });
+}
+
+function renderResults(data) {
+  var content = document.getElementById('resultContent');
+  var html = '';
+
+  html += '<div class="result-summary success">';
+  html += '<h3>导入完成</h3>';
+  html += '<p>成功导入 <span class="count">'+(data.inserted_count || 0)+'</span> 条情报';
+  if (data.skipped_count > 0) {
+    html += '，跳过 <span class="count">'+data.skipped_count+'</span> 条';
+  }
+  html += '</p></div>';
+
+  if (data.errors && data.errors.length > 0) {
+    html += '<div class="result-errors">';
+    html += '<h4>失败详情 ('+data.errors.length+' 条)</h4>';
+    data.errors.forEach(function(err) {
+      html += '<div class="error-row">';
+      html += '<span class="row-num">第 '+err.row+' 行</span>';
+      if (err.mapped && err.mapped.title) {
+        html += ' — '+escapeHtml(err.mapped.title);
+      }
+      html += '<div class="errors">'+err.errors.map(function(e){return escapeHtml(e)}).join('; ')+'</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  content.innerHTML = html;
+}
+
+// ========== Utilities ==========
+function showLoading(show) {
+  document.getElementById('uploadLoading').className = show ? 'loading show' : 'loading';
+}
+
+function resetAll() {
+  parsedData = null;
+  previewData = null;
+  fileContent = null;
+  fileName = '';
+  document.getElementById('fileInput').value = '';
+  document.getElementById('mappingSection').classList.add('hidden');
+  document.getElementById('previewSection').classList.add('hidden');
+  document.getElementById('resultSection').classList.add('hidden');
+  document.getElementById('uploadSection').classList.remove('hidden');
+}
+
+function doLogout() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  window.location.href = '/portal/login.html';
+}
+</script>
+</body>
+</html>
