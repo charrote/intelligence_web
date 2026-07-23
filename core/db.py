@@ -15,7 +15,7 @@ def get_db_path(project_root, db_filename):
 
 def init_db(project_root, spec):
     """Initialize the domain database with the correct schema."""
-    db_path = get_db_path(project_root, spec["slug"])
+    db_path = get_db_path(project_root, spec.get("db_filename") or spec["slug"])
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
     status_names = [s[1] for s in spec["statuses"]]
@@ -380,6 +380,22 @@ def migrate_db(db_path):
                 status TEXT NOT NULL DEFAULT 'active',
                 indicators TEXT DEFAULT '',
                 last_crawled_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
+        # Target Types table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS target_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT NOT NULL UNIQUE,
+                label TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                color TEXT DEFAULT '#3b4f8c',
+                icon TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )

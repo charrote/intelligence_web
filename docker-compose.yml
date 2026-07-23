@@ -8,7 +8,7 @@ services:
       MEILI_MASTER_KEY: "intel-search-key"
       MEILI_NO_ANALYTICS: "true"
     volumes:
-      - ./meili_data:/meili_data
+      - meili_data:/meili_data
     restart: unless-stopped
 
   # Research domain
@@ -24,6 +24,7 @@ services:
       - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
     volumes:
       - ./intelligence_web/data:/app/data
+      - ./core:/app/core
     restart: unless-stopped
 
   # Sales domain
@@ -39,20 +40,7 @@ services:
       - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
     volumes:
       - ./intelligence_sales/data:/app/data
-    restart: unless-stopped
-
-  # Crawler Service
-  crawler:
-    build:
-      context: crawler_service
-      dockerfile: Dockerfile
-    image: intelligence_crawler:latest
-    ports:
-      - "8768:8768"
-    environment:
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ./crawler_cache:/app/.crawl4ai_cache
+      - ./core:/app/core
     restart: unless-stopped
 
   # nginx gateway
@@ -63,10 +51,11 @@ services:
     volumes:
       - ./portal:/var/www/portal
       - ./intelligence_sales/web:/var/www/intelligence_sales
-      - ./favicon.ico:/var/www/favicon.ico
       - ./nginx/gateway.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - research
       - sales
-      - crawler
     restart: unless-stopped
+
+volumes:
+  meili_data:

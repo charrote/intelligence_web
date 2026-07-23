@@ -19,16 +19,12 @@ from core import entity as entitylib
 from core import notify as notifylib
 from core import search as searchlib
 
-# Crawler MCP tools (Phase 15.3)
-import sys
-import os
-CRAWLER_DIR = os.path.join(PROJECT_ROOT, "crawler_service")
-if CRAWLER_DIR not in sys.path:
-    sys.path.insert(1, CRAWLER_DIR)
-from crawler_service.mcp_handler import CRAWLER_TOOLS as _CRAWLER_TOOLS, HANDLERS as _CRAWLER_HANDLERS
+# Crawler MCP tools (placeholder — crawler_service removed, stub for compatibility)
+_CRAWLER_TOOLS = {}
+_CRAWLER_HANDLERS = {}
 
-RESEARCH_DB = dblib.get_db_path(PROJECT_ROOT, "intelligence_web", "intelligence")
-SALES_DB = dblib.get_db_path(PROJECT_ROOT, "intelligence_sales", "intelligence_sales")
+RESEARCH_DB = dblib.get_db_path(PROJECT_ROOT, "intelligence")
+SALES_DB = dblib.get_db_path(PROJECT_ROOT, "intelligence_sales")
 
 
 def get_db(domain):
@@ -362,7 +358,6 @@ def system_status():
         },
         "available_tools": list(TOOLS.keys()),
         "total_tools": len(TOOLS),
-        "crawler_service": "http://crawler:8768",
     }
 
 

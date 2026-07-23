@@ -33,6 +33,7 @@ def build_spec(
     default_entities=None,
     default_data_sources=None,
     target_types=None,
+    target_type_initial_data=None,
 ):
     """Build a domain specification dict.
 
@@ -40,6 +41,7 @@ def build_spec(
         target_types: explicit list of valid target_type values for projects.
                       If not provided, derived automatically from
                       default_entities[].type (preserving first-seen order).
+        target_type_initial_data: initial seed data for target_types table.
     """
     if db_filename is None:
         db_filename = slug
@@ -60,4 +62,5 @@ def build_spec(
         "default_entities": default_entities or [],
         "default_data_sources": default_data_sources or [],
         "target_types": target_types or _derive_target_types(default_entities),
+        "target_type_initial_data": target_type_initial_data or [],
     }

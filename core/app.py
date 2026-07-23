@@ -2,30 +2,94 @@
 
 import os, sys, sqlite3
 import json
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from flask import Flask, request, jsonify, Response
 from core.db import (
-    init_db, get_db_path, create_intelligence,
+    init_db, migrate_db, get_db_path, create_intelligence,
     get_intelligences, get_intelligence_by_id, update_intelligence_status,
     get_history, get_categories,
     add_comment, get_comments,
     add_summary, get_summary, get_dashboard_stats,
+    get_commands, add_command_content,
     get_all_settings, set_setting,
 )
+from core import project as projlib
+from core import datasource as dslib
+from core import target_types as ttslib
+
+
+# Parse CORS origins from environment variable (comma-separated)
+_CORS_ORIGINS = [o.strip() for o in os.environ.get('CORS_ORIGINS', 'http://localhost:8765,http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174').split(',') if o.strip()]
+
+
+def _is_allowed_origin(origin):
+    """Check if the request origin is in the allowed list."""
+    if not origin:
+        return False
+    return origin in _CORS_ORIGINS
 
 
 def create_app(project_root, spec):
     """Create and configure the Flask application for a domain."""
-    # Static files served by nginx, not by Flask
-    app = Flask(__name__)
-    CORS(app, origins=os.environ.get("CORS_ORIGINS", "").split(","))
+    app = Flask(__name__, static_folder=os.path.join(project_root, spec["slug"], "web", "static"))
 
-    db_path = get_db_path(project_root, spec["slug"])
+    @app.before_request
+    def handle_cors_preflight():
+        """Handle CORS preflight OPTIONS requests and add CORS headers to all responses."""
+        origin = request.headers.get('Origin', '')
+        if _is_allowed_origin(origin):
+            if request.method == 'OPTIONS':
+                resp = Response('', status=200)
+                resp.headers['Access-Control-Allow-Origin'] = origin
+                resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+                resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
+                resp.headers['Access-Control-Allow-Credentials'] = 'true'
+                return resp
+            else:
+                # Add CORS headers to regular responses too
+                request.environ['cors_origin'] = origin
+
+    @app.after_request
+    def add_cors_headers(response):
+        """Add CORS headers to all responses if origin is allowed."""
+        origin = request.environ.get('cors_origin', '')
+        if _is_allowed_origin(origin):
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+        return response
+
+    db_path = get_db_path(project_root, spec.get("db_filename") or spec["slug"])
+
+    # --- Init (create base tables if missing) ---
+    init_db(project_root, spec)
+    
+    # --- Migrate (create new tables for projects/datasources/target_types) ---
+    migrate_db(db_path)
+
+    # --- Seed target types if empty ---
+    db_target_types = ttslib.get_target_types(db_path)
+    if not db_target_types:
+        initial_data = spec.get("target_type_initial_data", [])
+        if initial_data:
+            ttslib.seed_target_types(db_path, initial_data)
+        else:
+            default_types = spec.get("target_types", [])
+            if default_types:
+                types_data = []
+                for i, slug in enumerate(default_types):
+                    types_data.append({
+                        'slug': slug,
+                        'label': slug.capitalize(),
+                        'sort_order': i,
+                    })
+                ttslib.seed_target_types(db_path, types_data)
 
     # --- Domain Config ---
     @app.route('/api/domain_config')
     def domain_config():
         statuses = [{"key": k, "label": v} for k, v in spec["statuses"]]
+        # Load target types from database
+        db_target_types = ttslib.get_enabled_target_types(db_path)
+        target_types = [tt['slug'] for tt in db_target_types] if db_target_types else spec.get("target_types", [])
         return jsonify({
             "slug": spec["slug"],
             "title_prefix": spec["title_prefix"],
@@ -36,6 +100,8 @@ def create_app(project_root, spec):
             "search": spec.get("search"),
             "default_entities": spec.get("default_entities", []),
             "default_data_sources": spec.get("default_data_sources", []),
+            "target_types": target_types,
+            "target_type_details": [{"slug": tt['slug'], "label": tt['label'], "color": tt['color'], "icon": tt['icon']} for tt in db_target_types] if db_target_types else [],
             "extra_columns": spec["extra_columns"],
             "list_columns": spec["list_columns"],
             "intelligence_ttl_days": spec.get("intelligence_ttl_days", {}),
@@ -157,7 +223,215 @@ def create_app(project_root, spec):
         _db.close()
         return jsonify({'ok': True})
 
-    # --- System Settings ---
+    # ========================================================================
+    # Projects API
+    # ========================================================================
+
+    @app.route('/api/projects', methods=['GET'])
+    def list_projects():
+        items = projlib.get_projects(db_path, {
+            "status": request.args.get('status'),
+        })
+        total = projlib.get_project_count(db_path)
+        return jsonify({
+            "total": total,
+            "items": items,
+        })
+
+    @app.route('/api/projects', methods=['POST'])
+    def create_project():
+        data = request.json
+        if not data.get('name') or not data.get('target_type'):
+            return jsonify({'error': 'name and target_type are required'}), 400
+
+        target_types = spec.get("target_types", [])
+        if target_types and data['target_type'] not in target_types:
+            return jsonify({
+                'error': f'invalid target_type, must be one of: {target_types}'
+            }), 400
+
+        project_id = projlib.create_project(
+            db_path,
+            name=data['name'],
+            target_type=data['target_type'],
+            target_name=data.get('target_name', ''),
+            scope=data.get('scope', ''),
+            frequency=data.get('frequency', 'weekly'),
+            instruction=data.get('instruction', ''),
+            datasource_ids=data.get('datasource_ids', []),
+        )
+        project = projlib.get_project_by_id(db_path, project_id)
+        return jsonify(project), 201
+
+    @app.route('/api/projects/<int:id>', methods=['GET'])
+    def get_project(id):
+        project = projlib.get_project_by_id(db_path, id)
+        if project is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify({"project": project})
+
+    @app.route('/api/projects/<int:id>', methods=['PUT'])
+    def update_project_endpoint(id):
+        project = projlib.update_project(db_path, id, request.json)
+        if project is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(project)
+
+    @app.route('/api/projects/<int:id>/toggle', methods=['POST'])
+    def toggle_project_status(id):
+        data = request.json
+        enabled = data.get('enabled', True)
+        project = projlib.toggle_project_status(db_path, id, enabled)
+        if project is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(project)
+
+    @app.route('/api/projects/<int:id>/datasources', methods=['GET'])
+    def get_project_datasources(id):
+        project = projlib.get_project_by_id(db_path, id)
+        if project is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify({"datasources": project.get('datasources', [])})
+
+    @app.route('/api/projects/<int:id>/datasources', methods=['PUT'])
+    def set_project_datasources(id):
+        data = request.json
+        datasource_ids = data.get('datasource_ids', [])
+        project = projlib.set_project_datasources(db_path, id, datasource_ids)
+        if project is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(project)
+
+    @app.route('/api/projects/<int:id>', methods=['DELETE'])
+    def delete_project_endpoint(id):
+        projlib.delete_project(db_path, id)
+        return jsonify({'ok': True})
+
+    # ========================================================================
+    # Datasources API
+    # ========================================================================
+
+    @app.route('/api/datasources', methods=['GET'])
+    def list_datasources():
+        items = dslib.list_sources(db_path, {
+            "type": request.args.get('type'),
+            "status": request.args.get('status'),
+            "search": request.args.get('search'),
+        })
+        return jsonify(items)
+
+    @app.route('/api/datasources', methods=['POST'])
+    def create_datasource():
+        data = request.json
+        if not data.get('name') or not data.get('url'):
+            return jsonify({'error': 'name and url are required'}), 400
+
+        indicators = data.get('indicators', '')
+        if isinstance(indicators, str) and indicators:
+            indicators = [i.strip() for i in indicators.split(',') if i.strip()]
+
+        source_id = dslib.create_source(
+            db_path,
+            name=data['name'],
+            type_=data.get('type', 'website'),
+            url=data['url'],
+            schedule=data.get('schedule', 'daily'),
+            status=data.get('status', 'active'),
+            indicators=indicators,
+            description=data.get('description', ''),
+        )
+        source = dslib.get_source_by_id(db_path, source_id)
+        return jsonify(source), 201
+
+    @app.route('/api/datasources/<int:id>', methods=['GET'])
+    def get_datasource(id):
+        source = dslib.get_source_by_id(db_path, id)
+        if source is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(source)
+
+    @app.route('/api/datasources/<int:id>', methods=['PUT'])
+    def update_datasource_endpoint(id):
+        source = dslib.update_source(db_path, id, request.json)
+        if source is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(source)
+
+    @app.route('/api/datasources/<int:id>/status', methods=['PUT'])
+    def toggle_datasource_status(id):
+        data = request.json
+        enabled = data.get('status') == 'active'
+        source = dslib.toggle_source_status(db_path, id, enabled)
+        if source is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(source)
+
+    @app.route('/api/datasources/<int:id>', methods=['DELETE'])
+    def delete_datasource_endpoint(id):
+        dslib.delete_source(db_path, id)
+        return jsonify({'ok': True})
+
+    # ========================================================================
+    # Target Types API
+    # ========================================================================
+
+    @app.route('/api/target_types', methods=['GET'])
+    def list_target_types():
+        items = ttslib.get_target_types(db_path, {
+            "enabled": request.args.get('enabled'),
+        })
+        return jsonify(items)
+
+    @app.route('/api/target_types', methods=['POST'])
+    def create_target_type():
+        data = request.json
+        if not data.get('slug') or not data.get('label'):
+            return jsonify({'error': 'slug and label are required'}), 400
+
+        type_id = ttslib.create_target_type(
+            db_path,
+            slug=data['slug'],
+            label=data['label'],
+            description=data.get('description', ''),
+            color=data.get('color', '#3b4f8c'),
+            icon=data.get('icon', ''),
+            sort_order=data.get('sort_order', 0),
+            enabled=data.get('enabled', True),
+        )
+        tt = ttslib.get_target_type_by_id(db_path, type_id)
+        return jsonify(tt), 201
+
+    @app.route('/api/target_types/<int:id>', methods=['GET'])
+    def get_target_type(id):
+        tt = ttslib.get_target_type_by_id(db_path, id)
+        if tt is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(tt)
+
+    @app.route('/api/target_types/<int:id>', methods=['PUT'])
+    def update_target_type_endpoint(id):
+        tt = ttslib.update_target_type(db_path, id, request.json)
+        if tt is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(tt)
+
+    @app.route('/api/target_types/<int:id>/toggle', methods=['POST'])
+    def toggle_target_type_status(id):
+        data = request.json
+        enabled = data.get('enabled', True)
+        tt = ttslib.toggle_target_type_enabled(db_path, id, enabled)
+        if tt is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(tt)
+
+    @app.route('/api/target_types/<int:id>', methods=['DELETE'])
+    def delete_target_type_endpoint(id):
+        ttslib.delete_target_type(db_path, id)
+        return jsonify({'ok': True})
+
+    # ========================================================================
+    # System Settings
+    # ========================================================================
     SENSITIVE_KEYS = {'model.api_key', 'mcp.agent_key', 'system.jwt_secret'}
 
     @app.route('/api/system/settings', methods=['GET'])
@@ -187,14 +461,8 @@ def create_app(project_root, spec):
     def services_health():
         import urllib.request as _urlopen
         import json as _json
-
         services = []
-        ports = [
-            (8766, '制造情报 API'),
-            (8767, '销售情报 API'),
-            (8768, '爬虫服务'),
-            (7700, 'Meilisearch'),
-        ]
+        ports = [(8766, '制造情报 API'), (8767, '销售情报 API'), (8768, '爬虫服务'), (7700, 'Meilisearch')]
         for port, name in ports:
             try:
                 url = f'http://localhost:{port}/api/health' if port != 7700 else f'http://localhost:{port}/health'
