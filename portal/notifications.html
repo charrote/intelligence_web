@@ -21,11 +21,10 @@
 .bell-badge{position:absolute;top:2px;right:2px;min-width:16px;height:16px;background:var(--red);color:#fff;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0 4px;display:none}
 .bell-badge.show{display:flex}
 
-.page-title{font-size:18px;font-weight:600;color:var(--gray-800);margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
-.toolbar{display:flex;gap:8px}
-.toolbar .btn{padding:6px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer;transition:all 0.12s}
-.toolbar .btn:hover{border-color:var(--accent);color:var(--accent)}
-.toolbar .btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+/* 通知页面筛选按钮 */
+.btn-filter{padding:6px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer;transition:all 0.12s}
+.btn-filter:hover{border-color:var(--accent);color:var(--accent)}
+.btn-filter.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 
 .notif-list{display:flex;flex-direction:column;gap:6px}
 .notif{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;transition:all 0.15s;cursor:pointer}
@@ -46,9 +45,9 @@
   <div class="page-title">
     <span>通知列表</span>
     <div class="toolbar">
-      <button class="btn active" id="btnAll" onclick="setFilter('all')">全部</button>
-      <button class="btn" id="btnUnread" onclick="setFilter('unread')">未读</button>
-      <button class="btn" id="btnAllRead" onclick="markAllRead()">全部已读</button>
+      <button class="btn-ghost btn-filter active" id="btnAll" onclick="setFilter('all')">全部</button>
+      <button class="btn-ghost btn-filter" id="btnUnread" onclick="setFilter('unread')">未读</button>
+      <button class="btn-ghost" id="btnAllRead" onclick="markAllRead()">全部已读</button>
     </div>
   </div>
   <div class="notif-list" id="notifList">

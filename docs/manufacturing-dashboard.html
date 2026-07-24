@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>制造情报域 · 界面示意图</title>
+<style>
+  :root {
+    --bg: #f5f6fa;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #1f2937;
+    --text-2: #6b7280;
+    --text-3: #9ca3af;
+    --accent: #00b894;
+    --accent-2: #00b894;
+    --accent-dim: #e6f9f5;
+    --blue: #3b82f6;
+    --blue-dim: #eff6ff;
+    --amber: #f59e0b;
+    --amber-dim: #fef3c7;
+    --red: #ef4444;
+    --red-dim: #fef2f2;
+    --green: #10b981;
+    --green-dim: #ecfdf5;
+    --purple: #8b5cf6;
+    --purple-dim: #f3e8ff;
+    --shadow: 0 1px 4px rgba(0,0,0,.05);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", -apple-system, "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px 40px 64px;
+  }
+
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid var(--accent);
+  }
+  .page-header .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .page-header .brand-dot {
+    width: 28px; height: 28px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 14px;
+  }
+  .page-header .brand-text h2 {
+    font-size: 18px; font-weight: 700; letter-spacing: 0.5px;
+  }
+  .page-header .brand-text p {
+    font-size: 11px; color: var(--text-3); margin-top: 1px;
+  }
+  .page-header .user-bar {
+    display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-2);
+  }
+  .page-header .user-bar .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #20c997);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .page-header .user-bar .notif {
+    position: relative; cursor: pointer;
+    font-size: 14px;
+  }
+  .page-header .user-bar .notif::after {
+    content: "3"; position: absolute; top: -6px; right: -8px;
+    width: 14px; height: 14px; background: var(--red); color: #fff;
+    border-radius: 50%; font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ── KPI Row ── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .kpi {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 4px; height: 100%;
+  }
+  .kpi.k1::before { background: var(--accent); }
+  .kpi.k2::before { background: var(--blue); }
+  .kpi.k3::before { background: var(--amber); }
+  .kpi.k4::before { background: var(--purple); }
+  .kpi .k-label {
+    font-size: 11px; color: var(--text-3); letter-spacing: 0.5px;
+  }
+  .kpi .k-value {
+    font-size: 28px; font-weight: 800; margin: 4px 0 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .kpi.k1 .k-value { color: var(--accent); }
+  .kpi.k2 .k-value { color: var(--blue); }
+  .kpi.k3 .k-value { color: var(--amber); }
+  .kpi.k4 .k-value { color: var(--purple); }
+  .kpi .k-change {
+    font-size: 11px; color: var(--text-2);
+  }
+  .kpi .k-change .up { color: var(--green); font-weight: 600; }
+  .kpi .k-change .down { color: var(--red); font-weight: 600; }
+
+  /* ── Main Grid ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+  }
+
+  /* ── Card (shared) ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-head h3 {
+    font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-head h3 .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .card-head .meta {
+    font-size: 11px; color: var(--text-3);
+  }
+
+  /* ── Filter bar ── */
+  .filter-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .filter-bar .search-box {
+    flex: 1; min-width: 180px;
+    display: flex; align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    background: var(--bg);
+  }
+  .filter-bar .search-box input {
+    border: none; background: transparent; outline: none;
+    font-size: 12px; color: var(--text); flex: 1;
+    font-family: inherit;
+  }
+  .filter-bar .search-box .search-icon {
+    color: var(--text-3); font-size: 13px; margin-right: 6px;
+  }
+  .filter-btn {
+    padding: 5px 12px; border-radius: 6px;
+    font-size: 11px; cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-2);
+    transition: all .15s;
+  }
+  .filter-btn.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ── Intelligence Table ── */
+  .intel-list {
+    padding: 0;
+  }
+  .intel-item {
+    display: grid;
+    grid-template-columns: 32px 1fr 80px 100px 80px;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    transition: background .15s;
+  }
+  .intel-item:last-child { border-bottom: none; }
+  .intel-item:hover { background: #fafbfc; }
+  .intel-item .priority {
+    width: 8px; height: 8px; border-radius: 50%;
+    margin: 0 auto;
+  }
+  .intel-item .priority.high { background: var(--red); }
+  .intel-item .priority.medium { background: var(--amber); }
+  .intel-item .priority.low { background: var(--green); }
+  .intel-item .info .title {
+    font-size: 12px; font-weight: 600;
+    color: var(--text);
+    line-height: 1.4;
+    margin-bottom: 3px;
+  }
+  .intel-item .info .tags {
+    display: flex; gap: 4px; flex-wrap: wrap;
+  }
+  .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9.5px;
+    font-weight: 600;
+  }
+  .tag.tech { background: var(--blue-dim); color: var(--blue); }
+  .tag.company { background: var(--green-dim); color: var(--green); }
+  .tag.policy { background: var(--amber-dim); color: var(--amber); }
+  .tag.market { background: var(--purple-dim); color: var(--purple); }
+  .tag.product { background: var(--accent-dim); color: var(--accent); }
+  .intel-item .source {
+    font-size: 11px; color: var(--text-3); text-align: center;
+  }
+  .intel-item .date {
+    font-size: 11px; color: var(--text-3); text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .intel-item .action {
+    display: flex; justify-content: center; gap: 6px;
+  }
+  .action-btn {
+    width: 24px; height: 24px; border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: var(--text-3); cursor: pointer;
+    transition: all .15s;
+  }
+  .action-btn:hover {
+    border-color: var(--accent); color: var(--accent);
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    display: flex; flex-direction: column; gap: 20px;
+  }
+
+  /* Domain distribution */
+  .dist-list {
+    padding: 14px 20px;
+  }
+  .dist-item {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px;
+  }
+  .dist-item:last-child { margin-bottom: 0; }
+  .dist-item .dist-name {
+    font-size: 11.5px; color: var(--text);
+    width: 70px;
+  }
+  .dist-bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .dist-bar {
+    height: 100%;
+    border-radius: 3px;
+  }
+  .dist-bar.b1 { background: var(--accent); width: 38%; }
+  .dist-bar.b2 { background: var(--blue); width: 26%; }
+  .dist-bar.b3 { background: var(--amber); width: 18%; }
+  .dist-bar.b4 { background: var(--purple); width: 14%; }
+  .dist-bar.b5 { background: var(--red); width: 4%; }
+  .dist-item .dist-val {
+    font-size: 11px; color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    width: 28px; text-align: right;
+  }
+
+  /* Top competitors */
+  .comp-list {
+    padding: 0 20px 14px;
+  }
+  .comp-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .comp-item:last-child { border-bottom: none; }
+  .comp-rank {
+    width: 18px; height: 18px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 800;
+  }
+  .comp-rank.r1 { background: var(--accent); color: #fff; }
+  .comp-rank.r2 { background: var(--blue); color: #fff; }
+  .comp-rank.r3 { background: var(--amber); color: #fff; }
+  .comp-rank.r4 { background: var(--purple); color: #fff; }
+  .comp-name {
+    font-size: 11.5px; font-weight: 600;
+    color: var(--text);
+    flex: 1;
+  }
+  .comp-count {
+    font-size: 11px; color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .comp-change {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .comp-change.up { background: var(--green-dim); color: var(--green); }
+  .comp-change.down { background: var(--red-dim); color: var(--red); }
+
+  /* AI insight */
+  .ai-card {
+    background: linear-gradient(135deg, var(--accent-dim), var(--card));
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .ai-card-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 20px;
+    border-bottom: 1px solid rgba(0,184,148,.2);
+  }
+  .ai-badge {
+    font-size: 10px; font-weight: 700;
+    background: var(--accent);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+  }
+  .ai-card-head span {
+    font-size: 12px; font-weight: 600; color: var(--accent);
+  }
+  .ai-body {
+    padding: 14px 20px 16px;
+    font-size: 11.5px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+  .ai-body .highlight {
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .ai-tags {
+    display: flex; gap: 4px; flex-wrap: wrap;
+    margin-top: 10px;
+  }
+
+  /* Legend */
+  .legend {
+    display: flex; justify-content: center; gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 28px;
+    padding-top: 16px;
+    font-size: 10.5px;
+    color: var(--text-3);
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 5px;
+  }
+  .legend-dot {
+    width: 8px; height: 8px; border-radius: 2px;
+  }
+  .legend-dot.product { background: var(--accent); }
+  .legend-dot.company { background: var(--green); }
+  .legend-dot.policy { background: var(--amber); }
+  .legend-dot.market { background: var(--purple); }
+  .legend-dot.tech { background: var(--blue); }
+
+  @media (max-width: 1100px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .intel-item { grid-template-columns: 28px 1fr 60px 70px 60px; font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══ Header ══ -->
+<div class="page-header">
+  <div class="brand">
+    <div class="brand-dot">M</div>
+    <div class="brand-text">
+      <h2>制造情报域 · Manufacturing Intelligence</h2>
+      <p>面向技术研发与市场战略部门 · 系统性追踪行业前沿</p>
+    </div>
+  </div>
+  <div class="user-bar">
+    <span class="notif">&#128276;</span>
+    <span>管理员 · 研发战略部</span>
+    <div class="avatar">管</div>
+  </div>
+</div>
+
+<!-- ══ KPI Row ══ -->
+<div class="kpi-row">
+  <div class="kpi k1">
+    <div class="k-label">今日新增情报</div>
+    <div class="k-value">47</div>
+    <div class="k-change"><span class="up">&#9650; 12%</span> 较昨日</div>
+  </div>
+  <div class="kpi k2">
+    <div class="k-label">活跃采集项目</div>
+    <div class="k-value">8</div>
+    <div class="k-change">覆盖 3 个主要领域</div>
+  </div>
+  <div class="kpi k3">
+    <div class="k-label">待跟进高优线索</div>
+    <div class="k-value">5</div>
+    <div class="k-change"><span class="up">&#9650; 2 条</span> 新增</div>
+  </div>
+  <div class="kpi k4">
+    <div class="k-label">AI 自动分析完成</div>
+    <div class="k-value">23</div>
+    <div class="k-change">今日已完成</div>
+  </div>
+</div>
+
+<!-- ══ Main Grid ══ -->
+<div class="main-grid">
+
+  <!-- Left: Intelligence List -->
+  <div>
+    <div class="card">
+      <div class="card-head">
+        <h3><span class="dot"></span>情报列表</h3>
+        <span class="meta">共 1,284 条 · 最近更新 2 分钟前</span>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="filter-bar">
+        <div class="search-box">
+          <span class="search-icon">&#128269;</span>
+          <input type="text" placeholder="搜索情报内容、公司名、技术领域...">
+        </div>
+        <span class="filter-btn active">全部</span>
+        <span class="filter-btn">产品与技术</span>
+        <span class="filter-btn">公司与市场</span>
+        <span class="filter-btn">政策与标准</span>
+        <span class="filter-btn">按时间排序</span>
+      </div>
+
+      <!-- Intelligence items -->
+      <div class="intel-list">
+
+        <div class="intel-item">
+          <div class="priority high"></div>
+          <div class="info">
+            <div class="title">台积电宣布 2nm 工艺量产时间表提前至 2025 Q3</div>
+            <div class="tags">
+              <span class="tag tech">技术突破</span>
+              <span class="tag company">台积电</span>
+            </div>
+          </div>
+          <div class="source">半导体行业观察</div>
+          <div class="date">2026-07-23</div>
+          <div class="action">
+            <div class="action-btn">&#128065;</div>
+            <div class="action-btn">&#128196;</div>
+          </div>
+        </div>
+
+        <div class="intel-item">
+          <div class="priority high"></div>
+          <div class="info">
+            <div class="title">新能源汽车补贴政策调整：购置税减免延续至 2027 年</div>
+            <div class="tags">
+              <span class="tag policy">政策变化</span>
+              <span class="tag market">新能源汽车</span>
+            </div>
+          </div>
+          <div class="source">工信部官网</div>
+          <div class="date">2026-07-22</div>
+          <div class="action">
+            <div class="action-btn">&#128065;</div>
+            <div class="action-btn">&#128196;</div>
+          </div>
+        </div>
+
+        <div class="intel-item">
+          <div class="priority medium"></div>
+          <div class="info">
+            <div class="title">比亚迪宣布在匈牙利新建整车工厂，产能规划 30 万辆/年</div>
+            <div class="tags">
+              <span class="tag company">比亚迪</span>
+              <span class="tag product">产能扩张</span>
+            </div>
+          </div>
+          <div class="source">Reuters</div>
+          <div class="date">2026-07-22</div>
+          <div class="action">
+            <div class="action-btn">&#128065;</div>
+            <div class="action-btn">&#128196;</div>
+          </div>
+        </div>
+
+        <div class="intel-item">
+          <div class="priority medium"></div>
+          <div class="info">
+            <div class="title">ISO 26262 汽车功能安全标准 2027 年修订草案发布</div>
+            <div class="tags">
+              <span class="tag policy">标准修订</span>
+              <span class="tag tech">功能安全</span>
+            </div>
+          </div>
+          <div class="source">ISO 官方</div>
+          <div class="date">2026-07-21</div>
+          <div class="action">
+            <div class="action-btn">&#128065;</div>
+            <div class="action-btn">&#128196;</div>
+          </div>
+        </div>
+
+        <div class="intel-item">
+          <div class="priority low"></div>
+          <div class="info">
+            <div class="title">宁德时代发布第三代麒麟电池，能量密度突破 350Wh/kg</div>
+            <div class="tags">
+              <span class="tag tech">技术突破</span>
+              <span class="tag product">新能源</span>
+              <span class="tag company">宁德时代</span>
+            </div>
+          </div>
+          <div class="source">公司官网</div>
+          <div class="date">2026-07-21</div>
+          <div class="action">
+            <div class="action-btn">&#128065;</div>
+            <div class="action-btn">&#128196;</div>
+          </div>
+        </div>
+
+        <div class="intel-item">
+          <div class="priority low"></div>
+          <div class="info">
+            <div class="title">欧盟碳边境调节机制 (CBAM) 正式进入过渡期</div>
+            <div class="tags">
+              <span class="tag policy">法规更新</span>
+              <span class="tag market">欧盟市场</span>
+            </div>
+          </div>
+          <div class="source">欧盟委员会</div>
+          <div class="date">2026-07-20</div>
+          <div class="action">
+            <div class="action-btn">&#128065;</div>
+            <div class="action-btn">&#128196;</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Sidebar -->
+  <div class="sidebar">
+
+    <!-- Domain distribution -->
+    <div class="card">
+      <div class="card-head">
+        <h3><span class="dot"></span>情报领域分布</h3>
+      </div>
+      <div class="dist-list">
+        <div class="dist-item">
+          <span class="dist-name">产品与技术</span>
+          <div class="dist-bar-wrap"><div class="dist-bar b1"></div></div>
+          <span class="dist-val">486</span>
+        </div>
+        <div class="dist-item">
+          <span class="dist-name">公司与市场</span>
+          <div class="dist-bar-wrap"><div class="dist-bar b2"></div></div>
+          <span class="dist-val">334</span>
+        </div>
+        <div class="dist-item">
+          <span class="dist-name">政策与标准</span>
+          <div class="dist-bar-wrap"><div class="dist-bar b3"></div></div>
+          <span class="dist-val">231</span>
+        </div>
+        <div class="dist-item">
+          <span class="dist-name">产能与投资</span>
+          <div class="dist-bar-wrap"><div class="dist-bar b4"></div></div>
+          <span class="dist-val">178</span>
+        </div>
+        <div class="dist-item">
+          <span class="dist-name">其他</span>
+          <div class="dist-bar-wrap"><div class="dist-bar b5"></div></div>
+          <span class="dist-val">55</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top competitors -->
+    <div class="card">
+      <div class="card-head">
+        <h3><span class="dot"></span>重点关注企业</h3>
+        <span class="meta">近 30 天</span>
+      </div>
+      <div class="comp-list">
+        <div class="comp-item">
+          <div class="comp-rank r1">1</div>
+          <span class="comp-name">比亚迪</span>
+          <span class="comp-count">32 条</span>
+          <span class="comp-change up">+15%</span>
+        </div>
+        <div class="comp-item">
+          <div class="comp-rank r2">2</div>
+          <span class="comp-name">宁德时代</span>
+          <span class="comp-count">27 条</span>
+          <span class="comp-change up">+8%</span>
+        </div>
+        <div class="comp-item">
+          <div class="comp-rank r3">3</div>
+          <span class="comp-name">华为数字能源</span>
+          <span class="comp-count">21 条</span>
+          <span class="comp-change down">-3%</span>
+        </div>
+        <div class="comp-item">
+          <div class="comp-rank r4">4</div>
+          <span class="comp-name">比亚迪半导体</span>
+          <span class="comp-count">18 条</span>
+          <span class="comp-change up">+5%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Insight -->
+    <div class="ai-card">
+      <div class="ai-card-head">
+        <span class="ai-badge">AI INSIGHT</span>
+        <span>贾维斯 · 每日分析摘要</span>
+      </div>
+      <div class="ai-body">
+        基于近 7 日情报分析，<span class="highlight">新能源汽车产业链</span>关注度持续上升，
+        重点关注 <span class="highlight">固态电池量产进度</span> 及
+        <span class="highlight">欧盟碳关税政策</span> 对出口的影响。
+        建议本周安排一次专项研讨会。
+        <div class="ai-tags">
+          <span class="tag policy">政策关注</span>
+          <span class="tag tech">技术趋势</span>
+          <span class="tag company">竞品动态</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot product"></span>产品与技术</div>
+  <div class="legend-item"><span class="legend-dot company"></span>公司与市场</div>
+  <div class="legend-item"><span class="legend-dot policy"></span>政策与标准</div>
+  <div class="legend-item"><span class="legend-dot market"></span>市场走势</div>
+  <div class="legend-item"><span class="legend-dot tech"></span>技术突破</div>
+  <span style="margin-left: 24px; font-size: 10px; color: #9ca3af;">&#9679; 高优先级 &#9679; 中优先级 &#9679; 低优先级</span>
+</div>
+
+</body>
+</html>

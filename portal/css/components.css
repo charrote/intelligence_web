@@ -21,7 +21,8 @@
 .btn-lg{padding:10px 24px;font-size:14px;border-radius:var(--radius-md)}
 
 /* ══════════════════════════════════════
-   Toolbar — 筛选/操作工具栏容器
+   Toolbar — 统一工具栏容器
+   筛选控件靠左，操作按钮靠右（spacer 分隔）
    ══════════════════════════════════════ */
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)}
 
@@ -47,6 +48,10 @@
 .toolbar select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
 .toolbar select:hover{border-color:var(--gray-300)}
 
+/* Toolbar button reset (全局统一重置按钮) */
+.btn-reset{padding:7px 16px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;font-weight:500;color:var(--gray-600);background:var(--gray-100);cursor:pointer;transition:all 0.15s}
+.btn-reset:hover{background:#fff;border-color:var(--gray-300);color:var(--gray-700)}
+
 /* Toolbar spacer */
 .toolbar .spacer{flex:1;min-width:8px}
 
@@ -54,8 +59,26 @@
 .toolbar .divider{width:1px;height:24px;background:var(--gray-200);margin:0 4px}
 
 /* ══════════════════════════════════════
+   Page Title Block — 页面标题 + 工具栏行内布局
+   ══════════════════════════════════════ */
+.page-title{font-size:18px;font-weight:600;color:var(--gray-800);margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+.page-title .toolbar{margin-bottom:0;border:none;box-shadow:none;padding:0;background:transparent}
+
+/* ── Section Header — 页面内分组标题栏（兼容旧页面） ── */
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-header h2{font-size:15px;font-weight:600;color:var(--gray-800)}
+.count{font-size:12px;color:var(--gray-400);font-weight:400;margin-left:6px}
+.section-header .filter-group{display:flex;gap:6px;align-items:center}
+.section-header .filter-group select{padding:4px 20px 4px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer}
+.section-header .filter-group .btn-reset{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer}
+
+/* ══════════════════════════════════════
    Tables
    ══════════════════════════════════════ */
+
+/* Table wrapper — 统一卡片容器 */
+.table-wrapper{overflow-x:auto;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)}
+.table-wrapper table{width:100%;border:none;background:transparent;border-radius:0}
 
 /* Tables */
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
@@ -88,14 +111,6 @@ tr:hover td{background:var(--gray-50)}
 .stat{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;box-shadow:var(--shadow-sm)}
 .stat-num{font-size:22px;font-weight:600;color:var(--gray-800);letter-spacing:-0.3px;line-height:1.2}
 .stat-label{font-size:12px;color:var(--gray-400);margin-top:2px}
-
-/* Section Header */
-.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-.section-header h2{font-size:15px;font-weight:600;color:var(--gray-800)}
-.section-header .count{font-size:12px;color:var(--gray-400);font-weight:400;margin-left:6px}
-.section-header .filter-group{display:flex;gap:6px;align-items:center}
-.section-header .filter-group select{padding:4px 20px 4px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer}
-.section-header .btn-reset{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer}
 
 /* Panel (Right Drawer) */
 .panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}

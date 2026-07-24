@@ -6,11 +6,17 @@
 .main > h1{font-size:22px;font-weight:700;color:var(--gray-900);margin:0 0 4px 0;line-height:1.3;letter-spacing:-0.2px}
 .main > .sub{font-size:14px;color:var(--gray-400);margin:0 0 0 0;line-height:1.5}
 
-/* Spacing between major sections inside .main */
+/* ── Toolbar ── */
 .main > .toolbar{margin-top:20px}
-.main > .card{margin-top:20px}
-
-/* Gap between toolbar and data list (table / feed) */
 .main > .toolbar + .table-wrapper,
 .main > .toolbar + .notif-list,
 .main > .toolbar + .feed{margin-top:16px}
+
+/* ── Section Header ── */
+.main > .section-header{margin-top:20px}
+
+/* ── Page Title ── */
+.main > .page-title{margin-top:20px}
+
+/* ── Card ── */
+.main > .card{margin-top:20px}

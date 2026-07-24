@@ -16,7 +16,6 @@
 <script src="js/init.js"></script>
 <script src="js/tabs.js"></script>
 <style>
-.table-wrapper{overflow-x:auto}
 .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .status-dot.on{background:var(--green)}
 .status-dot.off{background:var(--gray-400)}
@@ -51,7 +50,8 @@
       <option value="active">启用</option>
       <option value="inactive">停用</option>
     </select>
-    <button class="btn btn-primary" onclick="showModal()">+ 新增数据源</button>
+    <span class="spacer"></span>
+    <button class="btn btn-primary" onclick="openCreate()">+ 新增数据源</button>
   </div>
   <div class="table-wrapper">
     <table>
@@ -69,19 +69,16 @@
       <tbody id="tableBody"></tbody>
     </table>
   </div>
-  <div class="modal-overlay" id="modalOverlay">
-    <div class="modal">
-      <div class="modal-header">
-        <h2 id="modalTitle">新增数据源</h2>
-        <button class="btn-ghost" onclick="hideModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--gray-500)">&times;</button>
+  <div class="panel" id="createPanel">
+    <div class="panel-head"><h2 id="panelTitle">新增数据源</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="panel-body">
+      <div class="form-group">
+        <label>名称 *</label>
+        <input type="text" id="srcName" placeholder="输入数据源名称">
       </div>
-      <div class="modal-body">
+      <div class="form-row">
         <div class="form-group">
-          <label>名称</label>
-          <input type="text" id="srcName" placeholder="输入数据源名称">
-        </div>
-        <div class="form-group">
-          <label>类型</label>
+          <label>类型 *</label>
           <select id="srcType">
             <option value="website">网站</option>
             <option value="rss">RSS</option>
@@ -89,37 +86,39 @@
           </select>
         </div>
         <div class="form-group">
-          <label>URL / 地址</label>
-          <input type="text" id="srcUrl" placeholder="输入采集目标地址">
+          <label>调度频率</label>
+          <select id="srcSchedule">
+            <option value="daily">每日</option>
+            <option value="weekly">每周</option>
+            <option value="monthly">每月</option>
+          </select>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>调度频率</label>
-            <select id="srcSchedule">
-              <option value="daily">每日</option>
-              <option value="weekly">每周</option>
-              <option value="monthly">每月</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>状态</label>
-            <select id="srcStatus">
-              <option value="active">启用</option>
-              <option value="inactive">停用</option>
-            </select>
-          </div>
-        </div>
+      </div>
+      <div class="form-group">
+        <label>URL / 地址 *</label>
+        <input type="text" id="srcUrl" placeholder="输入采集目标地址">
+      </div>
+      <div class="form-row">
         <div class="form-group">
-          <label>指标 (可选，逗号分隔)</label>
-          <input type="text" id="srcIndicators" placeholder="如: price, volume, sentiment">
+          <label>状态</label>
+          <select id="srcStatus">
+            <option value="active">启用</option>
+            <option value="inactive">停用</option>
+          </select>
         </div>
       </div>
-      <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
-        <button class="btn btn-ghost" onclick="hideModal()">取消</button>
-        <button class="btn btn-primary" onclick="saveSource()">保存</button>
+      <div class="form-group">
+        <label>指标（可选，逗号分隔）</label>
+        <input type="text" id="srcIndicators" placeholder="如: price, volume, sentiment">
       </div>
+      <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
+    </div>
+    <div class="panel-foot">
+      <button class="btn btn-primary" onclick="saveSource()">保存</button>
+      <button class="btn btn-ghost" onclick="closePanel()">取消</button>
     </div>
   </div>
+  <div class="panel-overlay" id="panelOverlay" onclick="closePanel()"></div>
 </main>
 <script>
 var sources = [];
@@ -179,20 +178,37 @@ function truncate(s, len) {
   return s.length > len ? s.substring(0, len) + '...' : s;
 }
 
-function showModal() {
+function openCreate() {
   editingId = null;
-  document.getElementById('modalTitle').textContent = '新增数据源';
+  document.getElementById('panelTitle').textContent = '新增数据源';
   document.getElementById('srcName').value = '';
   document.getElementById('srcType').value = 'website';
   document.getElementById('srcUrl').value = '';
   document.getElementById('srcSchedule').value = 'daily';
   document.getElementById('srcStatus').value = 'active';
   document.getElementById('srcIndicators').value = '';
-  document.getElementById('modalOverlay').classList.add('open');
+  document.getElementById('panelFeedback').style.display = 'none';
+  document.getElementById('createPanel').classList.add('open');
+  document.getElementById('srcName').focus();
 }
 
-function hideModal() {
-  document.getElementById('modalOverlay').classList.remove('open');
+function editSource(id) {
+  var src = sources.find(function(s) { return s.id === id; });
+  if (!src) return;
+  editingId = id;
+  document.getElementById('panelTitle').textContent = '编辑数据源';
+  document.getElementById('srcName').value = src.name;
+  document.getElementById('srcType').value = src.type;
+  document.getElementById('srcUrl').value = src.url;
+  document.getElementById('srcSchedule').value = src.schedule || 'daily';
+  document.getElementById('srcStatus').value = src.status || 'active';
+  document.getElementById('srcIndicators').value = Array.isArray(src.indicators) ? src.indicators.join(', ') : (src.indicators || '');
+  document.getElementById('panelFeedback').style.display = 'none';
+  document.getElementById('createPanel').classList.add('open');
+}
+
+function closePanel() {
+  document.getElementById('createPanel').classList.remove('open');
 }
 
 async function saveSource() {
@@ -202,8 +218,15 @@ async function saveSource() {
   var schedule = document.getElementById('srcSchedule').value;
   var status = document.getElementById('srcStatus').value;
   var indicators = document.getElementById('srcIndicators').value.trim();
+  var fb = document.getElementById('panelFeedback');
 
-  if (!name || !url) { alert('名称和地址为必填项'); return; }
+  if (!name || !url) {
+    fb.style.display = 'block';
+    fb.style.background = '#fceef0';
+    fb.style.color = 'var(--red)';
+    fb.textContent = '名称和地址为必填项';
+    return;
+  }
 
   var payload = { name: name, type: type, url: url, schedule: schedule, status: status };
   if (indicators) payload.indicators = indicators;
@@ -217,13 +240,21 @@ async function saveSource() {
       body: JSON.stringify(payload)
     });
     if (r.ok) {
-      hideModal();
+      closePanel();
       init();
     } else {
       var data = await r.json();
-      alert(data.error || '保存失败');
+      fb.style.display = 'block';
+      fb.style.background = '#fceef0';
+      fb.style.color = 'var(--red)';
+      fb.textContent = data.error || '保存失败';
     }
-  } catch(e) { alert('保存失败'); }
+  } catch(e) {
+    fb.style.display = 'block';
+    fb.style.background = '#fceef0';
+    fb.style.color = 'var(--red)';
+    fb.textContent = '请求失败：' + (e.message || '保存失败');
+  }
 }
 
 async function toggleStatus(id, status) {
