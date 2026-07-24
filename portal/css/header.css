@@ -8,7 +8,11 @@
 .header-search:focus-within{border-color:var(--accent)}
 .header-search input{border:none;background:transparent;padding:7px 0;font-size:13px;color:var(--gray-800);outline:none;width:100%}
 .header-search input::placeholder{color:var(--gray-400)}
+.header-avatar-wrapper{position:relative;display:flex;align-items:center}
 .header-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-light);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;cursor:pointer}
+.user-dropdown{position:absolute;right:0;top:44px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.08);min-width:140px;padding:4px 0;z-index:1000}
+.user-dropdown-item{padding:8px 16px;font-size:13px;color:var(--gray-700);cursor:pointer;transition:background 0.12s}
+.user-dropdown-item:hover{background:var(--gray-50);color:var(--accent)}
 .header-nav{display:flex;gap:12px;align-items:center}
 .header-nav a{font-size:13px;color:var(--gray-600);text-decoration:none}
 .header-nav a:hover{color:var(--accent)}

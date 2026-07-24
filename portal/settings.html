@@ -68,6 +68,19 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
 .service-card .svc-detail{font-size:11px;color:var(--gray-400);margin-top:2px}
 .service-card .svc-port{font-size:11px;color:var(--gray-500);background:var(--gray-100);padding:2px 6px;border-radius:3px}
 
+/* Domain controller */
+.domain-card{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:10px;transition:border-color 0.15s}
+.domain-card:hover{border-color:var(--accent)}
+.domain-color{width:6px;height:40px;border-radius:3px;flex-shrink:0}
+.domain-body{flex:1;min-width:0}
+.domain-name{font-size:14px;font-weight:600;color:var(--gray-800)}
+.domain-meta{display:flex;gap:12px;font-size:12px;color:var(--gray-500);margin-top:2px}
+.domain-meta span:first-child{color:var(--gray-400)}
+.domain-toggle{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.domain-status{font-size:12px;font-weight:500;padding:2px 8px;border-radius:10px}
+.domain-status.status-on{color:var(--green);background:rgba(16,185,129,0.08)}
+.domain-status.status-off{color:var(--red);background:rgba(239,68,68,0.08)}
+
 /* MCP tools table */
 .mcp-tools-table{width:100%;border-collapse:collapse}
 .mcp-tools-table th{text-align:left;padding:8px 10px;font-size:11px;font-weight:600;color:var(--gray-500);background:var(--gray-50);border-bottom:1px solid var(--gray-200)}
@@ -92,7 +105,10 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
   <!-- Settings Tabs -->
   <div class="settings-tabs">
     <div class="settings-tab active" data-tab="personal" onclick="switchSettingsTab('personal')">个人设置</div>
-    <div class="settings-tab" data-tab="system" onclick="switchSettingsTab('system')">系统设置</div>
+    <div class="settings-tab" data-tab="system" onclick="switchSettingsTab('system')">模型设置</div>
+    <div class="settings-tab" data-tab="mcp" onclick="switchSettingsTab('mcp')">MCP 服务</div>
+    <div class="settings-tab" data-tab="infra" onclick="switchSettingsTab('infra')">基础设施</div>
+    <div class="settings-tab" data-tab="domains" onclick="switchSettingsTab('domains')">域控制器</div>
   </div>
 
   <!-- ===== Personal Settings ===== -->
@@ -212,6 +228,10 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
         <button class="btn btn-primary" onclick="saveModelSettings()">保存模型配置</button>
       </div>
     </div>
+  </div>
+
+  <!-- ===== MCP Server & Tools ===== -->
+  <div class="settings-pane" id="pane-mcp">
 
     <!-- MCP Server Configuration -->
     <div class="settings-section">
@@ -250,6 +270,10 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
         </table>
       </div>
     </div>
+  </div>
+
+  <!-- ===== Infrastructure ===== -->
+  <div class="settings-pane" id="pane-infra">
 
     <!-- Service Health -->
     <div class="settings-section">
@@ -279,6 +303,19 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
       </div>
     </div>
   </div>
+
+  <!-- ===== Domain Controller ===== -->
+  <div class="settings-pane" id="pane-domains">
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>情报域管理</h2>
+      <div class="section-body">
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">启用/停用情报域。被停用的域不会在顶部导航栏的域切换器中显示。</p>
+        <div id="domainList">
+          <div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">加载中...</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -289,18 +326,38 @@ var currentUser = null;
 
 // ── Tab switching ──
 function switchSettingsTab(tab) {
+  console.log('[Tab Switch] 切换到:', tab);
+  
   document.querySelectorAll('.settings-tab').forEach(function(el) {
-    el.classList.toggle('active', el.dataset.tab === tab);
+    var isActive = el.dataset.tab === tab;
+    el.classList.toggle('active', isActive);
   });
-  document.getElementById('pane-personal').classList.toggle('active', tab === 'personal');
-  document.getElementById('pane-system').classList.toggle('active', tab === 'system');
-
-  // Load system data only when switching to system tab
-  if (tab === 'system') {
+  
+  // 所有 pane 先移除 active
+  document.getElementById('pane-personal').classList.remove('active');
+  document.getElementById('pane-system').classList.remove('active');
+  document.getElementById('pane-mcp').classList.remove('active');
+  document.getElementById('pane-infra').classList.remove('active');
+  document.getElementById('pane-domains').classList.remove('active');
+  
+  // 根据 tab 激活对应的 pane
+  if (tab === 'personal') {
+    document.getElementById('pane-personal').classList.add('active');
+    loadUser();
+  } else if (tab === 'system') {
+    document.getElementById('pane-system').classList.add('active');
     loadSystemSettings();
-    loadServiceHealth();
+  } else if (tab === 'mcp') {
+    document.getElementById('pane-mcp').classList.add('active');
+    loadSystemSettings();
     loadMcpTools();
+  } else if (tab === 'infra') {
+    document.getElementById('pane-infra').classList.add('active');
+    loadServiceHealth();
     loadSystemInfo();
+  } else if (tab === 'domains') {
+    document.getElementById('pane-domains').classList.add('active');
+    loadDomainController();
   }
 }
 
@@ -465,6 +522,87 @@ async function saveMcpSettings() {
     }
   } catch(e) {
     showToast('网络错误', 'error');
+  }
+}
+
+// ── Domain Controller ──
+async function loadDomainController() {
+  console.log('[Domain Controller] 开始加载...');
+  console.log('[Domain Controller] token:', token ? '存在' : '不存在');
+  console.log('[Domain Controller] apiBase():', apiBase());
+  
+  try {
+    var r = await fetch(apiBase() + '/api/system/domains', {
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    console.log('[Domain Controller] 响应状态:', r.status);
+    
+    if (!r.ok) {
+      throw new Error('HTTP ' + r.status + ': ' + await r.text());
+    }
+    
+    var data = await r.json();
+    console.log('[Domain Controller] 响应数据:', data);
+    
+    var list = document.getElementById('domainList');
+    var domains = data.domains || [];
+    console.log('[Domain Controller] 域数量:', domains.length);
+    
+    if (domains.length === 0) {
+      list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">暂无情报域</div>';
+      return;
+    }
+    
+    var html = '';
+    domains.forEach(function(d) {
+      var color = d.theme_color || '#999';
+      var enabled = d.enabled !== false;
+      var statusClass = enabled ? 'status-on' : 'status-off';
+      var statusText = enabled ? '已启用' : '已停用';
+      html += '<div class="domain-card">'
+        + '<div class="domain-color" style="background:' + color + '"></div>'
+        + '<div class="domain-body">'
+          + '<div class="domain-name">' + escapeHtml(d.name) + '</div>'
+          + '<div class="domain-meta">'
+            + '<span>端口 ' + d.port + '</span>'
+            + '<span>' + escapeHtml(d.description || '') + '</span>'
+          + '</div>'
+          + '<div class="domain-slug" style="color:var(--gray-400);font-size:11px">' + escapeHtml(d.slug || '') + '</div>'
+        + '</div>'
+        + '<div class="domain-toggle">'
+          + '<label class="toggle">'
+            + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' onchange="toggleDomain(' + d.port + ', this.checked)">'
+            + '<span class="slider"></span>'
+          + '</label>'
+          + '<span class="domain-status ' + statusClass + '">' + statusText + '</span>'
+        + '</div>'
+      + '</div>';
+    });
+    list.innerHTML = html;
+    console.log('[Domain Controller] 渲染完成，HTML 长度:', html.length);
+  } catch(e) {
+    console.error('[Domain Controller] 错误:', e);
+    document.getElementById('domainList').innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">加载失败: ' + e.message + '</div>';
+  }
+}
+
+async function toggleDomain(port, enabled) {
+  try {
+    var r = await fetch(apiBase() + '/api/system/domains/' + port + '/toggle', {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled }),
+    });
+    var res = await r.json();
+    if (r.ok) {
+      showToast('域状态已更新', 'success');
+    } else {
+      showToast(res.error || '操作失败', 'error');
+      loadDomainController();
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+    loadDomainController();
   }
 }
 

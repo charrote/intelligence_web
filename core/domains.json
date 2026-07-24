@@ -1,0 +1,22 @@
+{
+  "domains": [
+    {
+      "port": 8766,
+      "slug": "intelligence_web",
+      "name": "制造情报",
+      "title_prefix": "情报管理系统",
+      "theme_color": "#722ed1",
+      "enabled": true,
+      "description": "智能制造产业情报采集与分析"
+    },
+    {
+      "port": 8767,
+      "slug": "intelligence_sales",
+      "name": "销售情报",
+      "title_prefix": "销售情报",
+      "theme_color": "#1890ff",
+      "enabled": true,
+      "description": "销售商机与客户情报管理"
+    }
+  ]
+}

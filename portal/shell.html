@@ -33,16 +33,20 @@
   <div class="header-grow"></div>
   <div class="tab-bar" id="tabBar"></div>
   <div class="header-domain">
-    <select id="domainSwitcher" onchange="switchDomain(this.value)">
-      <option value="8766">制造情报</option>
-      <option value="8767">销售情报</option>
+    <select id="domainSwitcher" onchange="onDomainSwitch(this.value)">
+      <option value="">加载中...</option>
     </select>
   </div>
   <div class="header-search">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gray-400)" stroke-width="1.5" style="margin-right:5px;flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     <input type="text" id="searchInput" placeholder="搜索情报...">
   </div>
-  <div class="header-avatar" id="userAvatar" title="用户" onclick="doLogout()" style="cursor:pointer">管</div>
+  <div class="header-avatar-wrapper">
+    <div class="header-avatar" id="userAvatar" title="用户" onclick="toggleUserMenu()" style="cursor:pointer">管</div>
+    <div class="user-dropdown" id="userDropdown" style="display:none">
+      <div class="user-dropdown-item" onclick="showSwitchAccountConfirm()">切换帐号</div>
+    </div>
+  </div>
 </header>
 <div class="layout">
   <aside class="sidebar">
@@ -62,7 +66,6 @@
     <div class="sidebar-item" data-route="notifications" onclick="openTab('notifications')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>通知中心</div>
     <div class="sidebar-divider"></div>
     <div class="sidebar-label">其他</div>
-    <div class="sidebar-item" data-route="settings" onclick="openTab('settings')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>个人设置</div>
     <div class="sidebar-item" data-route="sys-settings" onclick="openTab('sys-settings')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/><circle cx="12" cy="12" r="4"/></svg></span>系统设置</div>
     <div id="sidebarCats"></div>
   </aside>
@@ -90,6 +93,40 @@ function switchDomain(port){
   window.location.reload();
 }
 
+function onDomainSwitch(port) {
+  localStorage.setItem('domainPort', port);
+  APP_API_BASE = (window.location.protocol + '//' + window.location.hostname + ':' + port);
+  window.location.reload();
+}
+
+function loadEnabledDomains() {
+  fetch(apiBase() + '/api/system/domains/enabled')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var sel = document.getElementById('domainSwitcher');
+      if (!sel) return;
+      var domains = data.domains || [];
+      var currentPort = parseInt(sel.value);
+      sel.innerHTML = '';
+      domains.forEach(function(d) {
+        var opt = document.createElement('option');
+        opt.value = d.port;
+        opt.textContent = d.name;
+        sel.appendChild(opt);
+      });
+      // Only reload if current port is valid AND differs from first available
+      if (domains.length === 0) return;
+      if (currentPort && domains.some(function(d) { return d.port === currentPort; })) {
+        sel.value = currentPort;
+      } else if (currentPort && !domains.some(function(d) { return d.port === currentPort; })) {
+        // Current port disabled by admin — just set to first available, don't reload
+        sel.value = domains[0].port;
+        localStorage.setItem('domainPort', domains[0].port);
+      }
+    })
+    .catch(function() {});
+}
+
 var currentIntel = null;
 function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;}
 function openPanel(){document.getElementById('detailPanel').classList.add('open');}
@@ -100,6 +137,7 @@ window.addEventListener('load', function() {
   var port = getDomainPort ? getDomainPort() : 8766;
   var sel = document.getElementById('domainSwitcher');
   if (sel) sel.value = port;
+  loadEnabledDomains();
   loadDomainConfig().then(function() {
     initTabs();
   });

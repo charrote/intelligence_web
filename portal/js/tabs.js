@@ -13,7 +13,7 @@ var ROUTES = {
   'import': { page: 'import.html', label: '批量导入' },
   'audit': { page: 'audit.html', label: '操作日志' },
   'settings': { page: 'settings.html', label: '个人设置' },
-  'sys-settings': { page: 'settings.html?tab=system', label: '系统设置' },
+  'sys-settings': { page: 'settings.html', label: '系统设置' },
   'notifications': { page: 'notifications.html', label: '通知中心' }
 };
 

@@ -26,6 +26,12 @@
 .btn-filter:hover{border-color:var(--accent);color:var(--accent)}
 .btn-filter.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 
+/* 全部已读按钮 */
+.btn-all-read{padding:6px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer;transition:all 0.12s}
+.btn-all-read:hover{border-color:var(--accent);color:var(--accent)}
+
+.notif-list{display:flex;flex-direction:column;gap:6px;margin-top:16px}
+
 .notif-list{display:flex;flex-direction:column;gap:6px}
 .notif{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 18px;transition:all 0.15s;cursor:pointer}
 .notif:hover{border-color:var(--accent);background:var(--gray-50)}
@@ -47,7 +53,7 @@
     <div class="toolbar">
       <button class="btn-ghost btn-filter active" id="btnAll" onclick="setFilter('all')">全部</button>
       <button class="btn-ghost btn-filter" id="btnUnread" onclick="setFilter('unread')">未读</button>
-      <button class="btn-ghost" id="btnAllRead" onclick="markAllRead()">全部已读</button>
+      <button class="btn-all-read" id="btnAllRead" onclick="markAllRead()">全部已读</button>
     </div>
   </div>
   <div class="notif-list" id="notifList">

@@ -791,10 +791,15 @@ def create_app(project_root, spec):
         import urllib.request as _urlopen
         import json as _json
         services = []
-        ports = [(8766, '制造情报 API'), (8767, '销售情报 API'), (8768, '爬虫服务'), (7700, 'Meilisearch')]
-        for port, name in ports:
+        # Use Docker service names instead of localhost since each container has its own network namespace
+        service_specs = [
+            ('research', 8766, '制造情报 API'),
+            ('sales', 8767, '销售情报 API'),
+            ('meilisearch', 7700, 'Meilisearch'),
+        ]
+        for hostname, port, name in service_specs:
             try:
-                url = f'http://localhost:{port}/api/health' if port != 7700 else f'http://localhost:{port}/health'
+                url = f'http://{hostname}:{port}/api/health' if port != 7700 else f'http://{hostname}:{port}/health'
                 with _urlopen.urlopen(url, timeout=3) as resp:
                     data = _json.loads(resp.read().decode())
                     is_up = data.get('status') in ('ok', 'available')
@@ -802,6 +807,237 @@ def create_app(project_root, spec):
             except Exception as e:
                 services.append({'name': name, 'port': port, 'status': 'down', 'details': str(e)[:100]})
         return jsonify({'services': services})
+
+    # ========================================================================
+    # Domain Controller (admin)
+    # ========================================================================
+
+    _DOMAINS_FILE = os.path.join(os.path.dirname(__file__), 'domains.json')
+
+    def _load_domains():
+        """Load domain registry from shared JSON file."""
+        try:
+            with open(_DOMAINS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {'domains': []}
+
+    def _save_domains(data):
+        """Persist domain registry to shared JSON file."""
+        with open(_DOMAINS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    @app.route('/api/system/domains')
+    def list_domains():
+        """List all registered domains (admin endpoint)."""
+        data = _load_domains()
+        return jsonify(data)
+
+    @app.route('/api/system/domains/enabled')
+    def enabled_domains():
+        """Return only enabled domains (for frontend domain switcher)."""
+        data = _load_domains()
+        enabled = [d for d in data.get('domains', []) if d.get('enabled', True)]
+        return jsonify({'domains': enabled})
+
+    @app.route('/api/system/domains/<int:port>/toggle', methods=['PUT'])
+    def toggle_domain(port):
+        """Enable or disable a domain by port (admin endpoint)."""
+        body = request.json or {}
+        new_enabled = body.get('enabled', True)
+        data = _load_domains()
+        for d in data.get('domains', []):
+            if d['port'] == port:
+                d['enabled'] = new_enabled
+                _save_domains(data)
+                return jsonify({'success': True, 'port': port, 'enabled': new_enabled})
+        return jsonify({'error': '域不存在'}), 404
+
+    # ========================================================================
+    # Notifications (admin)
+    # ========================================================================
+
+    @app.route('/api/notifications')
+    def list_notifications():
+        """List user notifications."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        user_id = user['user_id']
+        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+        limit = int(request.args.get('limit', 100))
+        
+        # Get notifications from settings table (notifications are stored as key-value)
+        notifs = []
+        try:
+            with get_db(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                # Notifications are stored with key prefix 'notif_'
+                query = "SELECT key, value FROM settings WHERE key LIKE 'notif_%' ORDER BY rowid DESC LIMIT ?"
+                if unread_only:
+                    query = "SELECT key, value FROM settings WHERE key LIKE 'notif_%' AND value NOT LIKE '%read_at:%' ORDER BY rowid DESC LIMIT ?"
+                rows = conn.execute(query, (limit,)).fetchall()
+                for row in rows:
+                    try:
+                        import json as _json
+                        notif = _json.loads(row['value'])
+                        notif['_id'] = row['key']
+                        notifs.append(notif)
+                    except:
+                        pass
+        except Exception as e:
+            print(f'Error loading notifications: {e}')
+        
+        unread = len([n for n in notifs if not n.get('read_at')])
+        return jsonify({'items': notifs, 'unread': unread})
+
+    @app.route('/api/notifications/unread-count')
+    def unread_notification_count():
+        """Get unread notification count."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        user_id = user['user_id']
+        unread = 0
+        try:
+            with get_db(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("SELECT COUNT(*) as cnt FROM settings WHERE key LIKE 'notif_%' AND value NOT LIKE '%read_at:%'").fetchone()
+                unread = rows['cnt'] if rows else 0
+        except:
+            pass
+        
+        return jsonify({'unread': unread})
+
+    @app.route('/api/notifications/read-all', methods=['POST'])
+    def mark_all_notifications_read():
+        """Mark all notifications as read."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        try:
+            with get_db(db_path) as conn:
+                conn.execute("UPDATE settings SET value = value || ',' || 'read_at:' || datetime('now') WHERE key LIKE 'notif_%'")
+                conn.commit()
+        except Exception as e:
+            print(f'Error marking notifications read: {e}')
+        
+        return jsonify({'success': True})
+
+    @app.route('/api/notifications/<int:notification_id>/read', methods=['POST'])
+    def mark_notification_read(notification_id):
+        """Mark a single notification as read."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        try:
+            with get_db(db_path) as conn:
+                conn.execute("UPDATE settings SET value = value || ',' || 'read_at:' || datetime('now') WHERE key = ?", (f'notif_{notification_id}',))
+                conn.commit()
+        except Exception as e:
+            print(f'Error marking notification read: {e}')
+        
+        return jsonify({'success': True})
+
+    # ========================================================================
+    # Audit Logs (admin)
+    # ========================================================================
+
+    @app.route('/api/audit/logs')
+    def list_audit_logs():
+        """List audit logs with filtering and pagination."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        action = request.args.get('action', '')
+        resource = request.args.get('resource', '')
+        start_date = request.args.get('start_date', '')
+        end_date = request.args.get('end_date', '')
+        
+        logs = []
+        try:
+            with get_db(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                query = "SELECT * FROM history WHERE 1=1"
+                params = []
+                
+                if action:
+                    query += " AND method = ?"
+                    params.append(action)
+                if resource:
+                    query += " AND detail LIKE ?"
+                    params.append(f'%{resource}%')
+                if start_date:
+                    query += " AND timestamp >= ?"
+                    params.append(start_date)
+                if end_date:
+                    query += " AND timestamp <= ?"
+                    params.append(end_date)
+                
+                query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+                params.extend([limit, offset])
+                
+                rows = conn.execute(query, params).fetchall()
+                for row in rows:
+                    log = dict(row)
+                    log['id'] = log['id']
+                    logs.append(log)
+        except Exception as e:
+            print(f'Error loading audit logs: {e}')
+        
+        # Count total
+        total = 0
+        try:
+            with get_db(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                query = "SELECT COUNT(*) as cnt FROM history WHERE 1=1"
+                params = []
+                if action:
+                    query += " AND method = ?"
+                    params.append(action)
+                if resource:
+                    query += " AND detail LIKE ?"
+                    params.append(f'%{resource}%')
+                if start_date:
+                    query += " AND timestamp >= ?"
+                    params.append(start_date)
+                if end_date:
+                    query += " AND timestamp <= ?"
+                    params.append(end_date)
+                total = conn.execute(query, params).fetchone()['cnt']
+        except:
+            pass
+        
+        return jsonify({'items': logs, 'total': total})
+
+    @app.route('/api/audit/logs/<int:log_id>')
+    def get_audit_log(log_id):
+        """Get single audit log detail."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        log = None
+        try:
+            with get_db(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute("SELECT * FROM history WHERE id = ?", (log_id,)).fetchone()
+                if row:
+                    log = dict(row)
+        except Exception as e:
+            print(f'Error loading audit log: {e}')
+        
+        if not log:
+            return jsonify({'error': 'Not found'}), 404
+        
+        return jsonify(log)
 
     # --- Health ---
     @app.route('/api/health')

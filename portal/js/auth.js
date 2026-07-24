@@ -51,3 +51,34 @@ function doLogout() {
   localStorage.removeItem('user');
   window.location.href = '/portal/login.html';
 }
+
+function toggleUserMenu() {
+  var dd = document.getElementById('userDropdown');
+  if (!dd) return;
+  if (dd.style.display === 'none') {
+    dd.style.display = 'block';
+    // Close on outside click
+    setTimeout(function() {
+      document.addEventListener('click', closeUserMenuOnce);
+    }, 0);
+  } else {
+    dd.style.display = 'none';
+    document.removeEventListener('click', closeUserMenuOnce);
+  }
+}
+
+function closeUserMenuOnce(e) {
+  var dd = document.getElementById('userDropdown');
+  var av = document.getElementById('userAvatar');
+  if (dd && av && !dd.contains(e.target) && !av.contains(e.target)) {
+    dd.style.display = 'none';
+    document.removeEventListener('click', closeUserMenuOnce);
+  }
+}
+
+function showSwitchAccountConfirm() {
+  closeUserMenuOnce({target: document.body}); // close dropdown
+  if (confirm('切换帐号将退出当前登录，是否继续？')) {
+    doLogout();
+  }
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>域控制器测试</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+    .domain-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px; }
+    .domain-color { width: 6px; height: 40px; border-radius: 3px; }
+    .domain-body { flex: 1; }
+    .domain-name { font-size: 14px; font-weight: 600; }
+    .domain-meta { font-size: 12px; color: #666; margin-top: 2px; }
+    .domain-toggle { display: flex; align-items: center; gap: 10px; }
+    .domain-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+    .status-on { color: green; background: rgba(0,128,0,0.1); }
+    .status-off { color: red; background: rgba(255,0,0,0.1); }
+    .toggle { position: relative; width: 40px; height: 22px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider { position: absolute; cursor: pointer; inset: 0; background: #ccc; border-radius: 22px; transition: 0.2s; }
+    .toggle .slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+    .toggle input:checked + .slider { background: #722ed1; }
+    .toggle input:checked + .slider:before { transform: translateX(18px); }
+    #result { margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h1>域控制器测试</h1>
+  <p>测试 /api/system/domains API 是否正常工作</p>
+  
+  <h2>API 响应:</h2>
+  <div id="apiResponse">加载中...</div>
+  
+  <h2>域列表:</h2>
+  <div id="domainList">加载中...</div>
+  
+  <script>
+    async function test() {
+      try {
+        // 从 localStorage 获取 token
+        var token = localStorage.getItem('token');
+        if (!token) {
+          document.getElementById('apiResponse').innerHTML = '<p style="color:red">未找到 token，请先登录</p>';
+          return;
+        }
+        
+        // 获取当前 API base (直接连接 research 容器)
+        var apiBase = 'http://localhost:8766';
+        
+        // 测试 1: 获取所有域
+        const r1 = await fetch(apiBase + '/api/system/domains', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data1 = await r1.json();
+        document.getElementById('apiResponse').innerHTML = '<pre>' + JSON.stringify(data1, null, 2) + '</pre>';
+        
+        // 测试 2: 显示域列表
+        var list = document.getElementById('domainList');
+        var domains = data1.domains || [];
+        
+        if (domains.length === 0) {
+          list.innerHTML = '<p>暂无域</p>';
+          return;
+        }
+        
+        var html = '';
+        domains.forEach(function(d) {
+          var color = d.theme_color || '#999';
+          var enabled = d.enabled !== false;
+          var statusClass = enabled ? 'status-on' : 'status-off';
+          var statusText = enabled ? '已启用' : '已停用';
+          
+          html += '<div class="domain-card">'
+            + '<div class="domain-color" style="background:' + color + '"></div>'
+            + '<div class="domain-body">'
+              + '<div class="domain-name">' + (d.name || '未知') + '</div>'
+              + '<div class="domain-meta">端口 ' + d.port + ' | ' + (d.description || '') + '</div>'
+              + '<div style="font-size:11px;color:#999">' + (d.slug || '') + '</div>'
+            + '</div>'
+            + '<div class="domain-toggle">'
+              + '<label class="toggle">'
+                + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' onchange="toggleDomain(' + d.port + ', this.checked)">'
+                + '<span class="slider"></span>'
+              + '</label>'
+              + '<span class="domain-status ' + statusClass + '">' + statusText + '</span>'
+            + '</div>'
+          + '</div>';
+        });
+        list.innerHTML = html;
+        
+      } catch(e) {
+        document.getElementById('apiResponse').innerHTML = '<p style="color:red">错误: ' + e.message + '</p>';
+        document.getElementById('domainList').innerHTML = '<p style="color:red">加载失败</p>';
+      }
+    }
+    
+    async function toggleDomain(port, enabled) {
+      try {
+        var token = localStorage.getItem('token');
+        var apiBase = 'http://localhost:8766';
+        
+        const r = await fetch(apiBase + '/api/system/domains/' + port + '/toggle', {
+          method: 'PUT',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled })
+        });
+        var res = await r.json();
+        if (r.ok) {
+          alert('域状态已更新');
+          test(); // 重新加载
+        } else {
+          alert('操作失败: ' + (res.error || '未知错误'));
+        }
+      } catch(e) {
+        alert('网络错误: ' + e.message);
+      }
+    }
+    
+    test();
+  </script>
+</body>
+</html>

@@ -11,7 +11,7 @@ function checkAuth() {
   if (user) {
     var avatar = document.getElementById('userAvatar');
     if (avatar) {
-      avatar.textContent = user.display_name || user.username.charAt(0).toUpperCase();
+      avatar.textContent = (user.display_name || user.username).charAt(0).toUpperCase();
     }
   }
   return true;
@@ -22,7 +22,7 @@ function updateAvatar() {
   if (user) {
     var avatar = document.getElementById('userAvatar');
     if (avatar) {
-      avatar.textContent = user.display_name || user.username.charAt(0).toUpperCase();
+      avatar.textContent = (user.display_name || user.username).charAt(0).toUpperCase();
     }
   }
 }
