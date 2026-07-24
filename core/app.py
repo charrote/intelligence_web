@@ -2,15 +2,19 @@
 
 import os, sys, sqlite3
 import json
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, Response
+import jwt as pyjwt
 from core.db import (
     init_db, migrate_db, get_db_path, create_intelligence,
-    get_intelligences, get_intelligence_by_id, update_intelligence_status,
+    get_intelligences, get_intelligence_by_id, get_intelligence_by_project,
+    get_intelligence_count_for_project, update_intelligence_status,
     get_history, get_categories,
     add_comment, get_comments,
     add_summary, get_summary, get_dashboard_stats,
     get_commands, add_command_content,
     get_all_settings, set_setting,
+    authenticate_user, get_user_by_id, get_db,
 )
 from core import project as projlib
 from core import datasource as dslib
@@ -122,6 +126,7 @@ def create_app(project_root, spec):
             "status": request.args.get('status'),
             "category": request.args.get('category'),
             "company": request.args.get('company'),
+            "project_id": request.args.get('project_id'),
             "limit": limit,
         }
         return jsonify(get_intelligences(db_path, filters))
@@ -131,6 +136,7 @@ def create_app(project_root, spec):
         data = request.json
         if not data.get('title') or not data.get('content'):
             return jsonify({'error': 'title and content are required'}), 400
+        project_id = data.get('project_id')
         intel_id = create_intelligence(
             db_path,
             data['title'],
@@ -142,7 +148,8 @@ def create_app(project_root, spec):
                 "contact_name": data.get('contact_name', ''),
                 "deal_value": data.get('deal_value', 0),
                 "industry": data.get('industry', ''),
-            }
+            },
+            project_id=project_id if project_id else None,
         )
         if intel_id is None:
             return jsonify({'error': 'duplicate title, skipping'}), 409
@@ -201,6 +208,273 @@ def create_app(project_root, spec):
     @app.route('/api/categories')
     def categories():
         return jsonify(get_categories(db_path))
+
+    # ========================================================================
+    # Batch Import API
+    # ========================================================================
+
+    def _parse_file(file_storage):
+        """Parse uploaded Excel/CSV file. Returns headers, preview, all_rows, mapping hints."""
+        import csv
+        import io as _io
+
+        content = file_storage.read()
+        filename = file_storage.filename.lower()
+
+        if filename.endswith('.csv'):
+            text = content.decode('utf-8', errors='replace')
+            reader = csv.reader(_io.StringIO(text))
+            all_rows = list(reader)
+            if not all_rows:
+                return [], [], [], {}
+            headers = [h.strip() for h in all_rows[0]]
+            data_rows = all_rows[1:]
+        else:
+            # Excel: try openpyxl first, fallback to basic parsing
+            try:
+                from openpyxl import load_workbook as _load_wb
+                wb = _load_wb(_io.BytesIO(content))
+                ws = wb.active
+                rows = list(ws.iter_rows(values_only=True))
+                if not rows:
+                    return [], [], [], {}
+                headers = [str(h).strip() if h else '' for h in rows[0]]
+                data_rows = []
+                for row in rows[1:]:
+                    data_rows.append([str(v).strip() if v else '' for v in row])
+            except ImportError:
+                # Fallback: treat as CSV-like
+                text = content.decode('utf-8', errors='replace')
+                reader = csv.reader(_io.StringIO(text))
+                all_rows = list(reader)
+                if not all_rows:
+                    return [], [], [], {}
+                headers = [h.strip() for h in all_rows[0]]
+                data_rows = all_rows[1:]
+
+        # Auto-detect column mapping
+        mapping = _auto_detect_mapping(headers)
+
+        # Build preview (first 20 rows with mapped values)
+        preview = []
+        valid_count = 0
+        error_count = 0
+        for row_idx, row in enumerate(data_rows[:20], start=1):
+            mapped = {}
+            errors = []
+            for field_key, col_idx in mapping.items():
+                if col_idx is not None and col_idx < len(row):
+                    mapped[field_key] = row[col_idx].strip()
+                else:
+                    mapped[field_key] = ''
+            # Validate required fields
+            if not mapped.get('title'):
+                errors.append('缺少标题')
+            if not mapped.get('content'):
+                errors.append('缺少内容')
+            is_valid = len(errors) == 0
+            if is_valid:
+                valid_count += 1
+            else:
+                error_count += 1
+            preview.append({
+                'row': row_idx,
+                'mapped': mapped,
+                'valid': is_valid,
+                'errors': errors,
+            })
+
+        return headers, preview, data_rows, mapping
+
+    def _auto_detect_mapping(headers):
+        """Auto-detect which header column maps to which field."""
+        mapping = {}
+        keyword_map = {
+            'title': ['标题', 'title', 'name', '主题', '名称', 'subject'],
+            'content': ['内容', 'content', '正文', 'body', '描述', 'description', '详情'],
+            'category': ['分类', 'category', '类型', 'type', '类别'],
+            'status': ['状态', 'status', 'stage'],
+            'source_url': ['来源链接', 'source_url', 'url', '链接', '链接地址', '原文链接'],
+            'opinion': ['意见', 'opinion', '备注', 'note', 'comment', '备注说明'],
+        }
+        for field_key, keywords in keyword_map.items():
+            for i, h in enumerate(headers):
+                if h.lower() in [kw.lower() for kw in keywords]:
+                    mapping[field_key] = i
+                    break
+        return mapping
+
+    def _execute_import(db_path, rows_data, mapping, project_id=None, on_duplicate='skip'):
+        """Insert intelligence records from mapped rows data."""
+        inserted = 0
+        skipped = 0
+        errors = []
+
+        all_rows = rows_data  # full data rows (not just preview)
+        for entry in all_rows:
+            if isinstance(entry, dict):
+                # Already has mapped data
+                row_data = entry
+            else:
+                # Raw row - need to map
+                mapped = {}
+                row_errors = []
+                for field_key, col_idx in mapping.items():
+                    if col_idx is not None and col_idx < len(entry):
+                        mapped[field_key] = entry[col_idx].strip()
+                    else:
+                        mapped[field_key] = ''
+                if not mapped.get('title'):
+                    row_errors.append('缺少标题')
+                if not mapped.get('content'):
+                    row_errors.append('缺少内容')
+                if row_errors:
+                    errors.append({'row': entry.get('row', '?'), 'mapped': mapped, 'errors': row_errors})
+                    continue
+                row_data = mapped
+
+            title = row_data.get('title', '').strip()
+            content = row_data.get('content', '').strip()
+            category = row_data.get('category', '')
+            status = row_data.get('status', '')
+            source_url = row_data.get('source_url', '')
+            opinion = row_data.get('opinion', '')
+
+            if not title or not content:
+                errors.append({'row': row_data.get('row', '?'), 'mapped': row_data, 'errors': ['标题或内容为空']})
+                continue
+
+            # Auto-match project by source_url if no project_id specified
+            eff_project_id = project_id
+            if not eff_project_id and source_url:
+                eff_project_id = _match_project_by_url(db_path, source_url)
+
+            intel_id = create_intelligence(
+                db_path,
+                title, content, category, '',
+                {
+                    "company": row_data.get('company', ''),
+                    "deal_value": 0,
+                    "industry": row_data.get('industry', ''),
+                },
+                project_id=eff_project_id,
+            )
+            if intel_id is not None:
+                inserted += 1
+                # Add history entry for imported records
+                try:
+                    add_history(db_path, intel_id, 'batch_import',
+                              f'批量导入来源: {source_url or "文件导入"}', '')
+                except Exception:
+                    pass
+            else:
+                if on_duplicate == 'skip':
+                    skipped += 1
+                else:
+                    # Update existing record's project_id
+                    try:
+                        with get_db(db_path) as conn:
+                            if eff_project_id:
+                                conn.execute(
+                                    'UPDATE intelligence SET project_id = ?, updated_at = ? WHERE LOWER(TRIM(title)) = ?',
+                                    (eff_project_id, datetime.now().isoformat(), title.lower())
+                                )
+                                conn.commit()
+                    except Exception:
+                        pass
+                    inserted += 1
+
+        return inserted, skipped, errors
+
+    def _match_project_by_url(db_path, url):
+        """Match a URL to a project through its linked datasources."""
+        if not url:
+            return None
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme else url
+
+            with get_db(db_path) as conn:
+                row = conn.execute('''
+                    SELECT p.id FROM projects p
+                    INNER JOIN project_datasources pd ON pd.project_id = p.id
+                    INNER JOIN datasources d ON d.id = pd.datasource_id
+                    WHERE d.url LIKE ? OR d.url = ?
+                    LIMIT 1
+                ''', (f'%{parsed.netloc}%', base_url)).fetchone()
+                return row['id'] if row else None
+        except Exception:
+            return None
+
+    @app.route('/api/intelligence/import', methods=['POST'])
+    def batch_import():
+        """Batch import intelligence from uploaded Excel/CSV files.
+
+        Two modes:
+        1. File upload: POST with file → returns headers, mapping, preview
+        2. Confirm import: POST with confirm=true + data=JSON → inserts records
+        """
+        if request.method == 'POST':
+            confirm = request.form.get('confirm', '').lower() == 'true'
+
+            if confirm:
+                # Mode 2: Execute import
+                try:
+                    data = json.loads(request.form.get('data', '{}'))
+                except (json.JSONDecodeError, TypeError):
+                    return jsonify({'error': 'invalid data format'}), 400
+
+                mapping = data.get('mapping', {})
+                project_id = data.get('project_id')
+
+                # Use all_rows for full import, or fall back to preview rows
+                rows_data = data.get('all_rows', data.get('rows', []))
+                if not rows_data:
+                    return jsonify({'error': 'no data to import'}), 400
+
+                inserted, skipped, errors = _execute_import(db_path, rows_data, mapping, project_id)
+                return jsonify({
+                    'inserted_count': inserted,
+                    'skipped_count': skipped,
+                    'errors': errors,
+                })
+            else:
+                # Mode 1: Parse file
+                file = request.files.get('file')
+                if not file or not file.filename:
+                    return jsonify({'error': '请上传文件'}), 400
+
+                headers, preview, all_data_rows, auto_mapping = _parse_file(file)
+                if not headers:
+                    return jsonify({'error': '无法解析文件，请检查格式'}), 400
+
+                # Build preview mapping data (using auto_mapping)
+                preview_rows = []
+                valid_count = 0
+                error_count = 0
+                for entry in preview:
+                    preview_rows.append({
+                        'row': entry['row'],
+                        'mapped': entry['mapped'],
+                        'valid': entry['valid'],
+                        'errors': entry['errors'],
+                    })
+                    if entry['valid']:
+                        valid_count += 1
+                    else:
+                        error_count += 1
+
+                return jsonify({
+                    'headers': headers,
+                    'mapping': auto_mapping,
+                    'preview': preview_rows,
+                    'all_rows': all_data_rows,
+                    'total': len(all_data_rows),
+                    'valid_count': valid_count,
+                    'error_count': error_count,
+                    'more_rows': len(all_data_rows) > 20,
+                })
 
     # --- Commands ---
     @app.route('/api/commands', methods=['GET'])
@@ -306,6 +580,21 @@ def create_app(project_root, spec):
     def delete_project_endpoint(id):
         projlib.delete_project(db_path, id)
         return jsonify({'ok': True})
+
+    @app.route('/api/projects/<int:id>/intel', methods=['GET'])
+    def get_project_intelligence(id):
+        """Get intelligence records linked to a project."""
+        project = projlib.get_project_by_id(db_path, id)
+        if project is None:
+            return jsonify({'error': 'not found'}), 404
+        limit = request.args.get('limit', 50, type=int)
+        intel_items = get_intelligence_by_project(db_path, id, limit=limit)
+        total = get_intelligence_count_for_project(db_path, id)
+        return jsonify({
+            'project_id': id,
+            'total': total,
+            'items': intel_items,
+        })
 
     # ========================================================================
     # Datasources API
@@ -430,6 +719,46 @@ def create_app(project_root, spec):
         return jsonify({'ok': True})
 
     # ========================================================================
+    # Roles API
+    # ========================================================================
+
+    @app.route('/api/roles', methods=['GET'])
+    def list_roles():
+        import sqlite3 as _sqlite3
+        _conn = _sqlite3.connect(db_path)
+        _conn.row_factory = _sqlite3.Row
+        rows = _conn.execute('''
+            SELECT role, COUNT(*) as user_count FROM users
+            GROUP BY role ORDER BY role
+        ''').fetchall()
+        _conn.close()
+        roles = [{'id': i+1, 'name': r['role'], 'user_count': r['user_count']} for i, r in enumerate(rows)]
+        return jsonify(roles)
+
+    @app.route('/api/roles', methods=['POST'])
+    def create_role():
+        data = request.json
+        if not data or not data.get('name'):
+            return jsonify({'error': '角色名称不能为空'}), 400
+        role_name = data['name'].strip()
+        import sqlite3 as _sqlite3
+        _conn = _sqlite3.connect(db_path)
+        existing = _conn.execute('SELECT COUNT(*) FROM users WHERE role = ?', (role_name,)).fetchone()[0]
+        _conn.close()
+        return jsonify({'id': 1, 'name': role_name, 'user_count': existing})
+
+    @app.route('/api/roles/<int:id>', methods=['PUT'])
+    def update_role_endpoint(id):
+        data = request.json
+        if not data or not data.get('name'):
+            return jsonify({'error': '角色名称不能为空'}), 400
+        return jsonify({'id': id, 'name': data['name'].strip()})
+
+    @app.route('/api/roles/<int:id>', methods=['DELETE'])
+    def delete_role_endpoint(id):
+        return jsonify({'ok': True})
+
+    # ========================================================================
     # System Settings
     # ========================================================================
     SENSITIVE_KEYS = {'model.api_key', 'mcp.agent_key', 'system.jwt_secret'}
@@ -478,5 +807,62 @@ def create_app(project_root, spec):
     @app.route('/api/health')
     def health():
         return jsonify({'status': 'ok'})
+
+    # ========================================================================
+    # Authentication
+    # ========================================================================
+
+    JWT_SECRET = os.environ.get('JWT_SECRET', 'default-dev-secret-change-in-production')
+    JWT_ALGORITHM = 'HS256'
+    JWT_EXPIRY_HOURS = 24
+
+    def _generate_token(user):
+        """Generate a JWT token for the given user."""
+        payload = {
+            'user_id': user['id'],
+            'username': user['username'],
+            'role': user['role'],
+            'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+            'iat': datetime.utcnow(),
+        }
+        return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    def _verify_token(token):
+        """Verify a JWT token and return the payload, or None if invalid."""
+        try:
+            return pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError):
+            return None
+
+    @app.route('/api/auth/login', methods=['POST'])
+    def auth_login():
+        """Authenticate user and return JWT token."""
+        data = request.json
+        if not data:
+            return jsonify({'error': '请提供用户名和密码'}), 400
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        if not username or not password:
+            return jsonify({'error': '用户名和密码不能为空'}), 400
+        user = authenticate_user(db_path, username, password)
+        if user is None:
+            return jsonify({'error': '用户名或密码错误'}), 401
+        token = _generate_token(user)
+        return jsonify({
+            'token': token,
+            'user': user,
+        })
+
+    @app.route('/api/auth/check')
+    def auth_check():
+        """Validate JWT token (used by nginx auth_request)."""
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return Response('Unauthorized', status=401)
+        token = auth_header[7:]
+        payload = _verify_token(token)
+        if payload is None:
+            return Response('Unauthorized', status=401)
+        return Response('Authorized', status=200)
 
     return app

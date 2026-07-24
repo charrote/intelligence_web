@@ -46,6 +46,9 @@
     <select id="catFilter" onchange="filterCards()">
       <option value="">全部分类</option>
     </select>
+    <select id="projFilter" onchange="filterCards()">
+      <option value="">全部项目</option>
+    </select>
     <span class="spacer"></span>
     <span style="font-size:12px;color:var(--gray-400)">共 <strong id="feedCount" style="color:var(--gray-700)">0</strong> 条</span>
   </div>
@@ -63,6 +66,7 @@ var currentIntel = null;
 var allItems = [];
 var domainConfig = null, statusMap = {};
 var domainPort = parseInt(window.location.port) || (location.protocol === 'https:' ? 443 : 80);
+var allProjects = [];
 
 function escapeHtml(s) {
   if (!s) return '';
@@ -87,9 +91,27 @@ function closePanel(){document.getElementById('detailPanel').classList.remove('o
 
 async function init() {
   await loadDomainConfig();
+  await loadProjectsList();
   await loadData();
   render();
   buildSidebarCats();
+}
+
+async function loadProjectsList() {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/projects?status=active');
+    var d = await r.json();
+    allProjects = d.items || [];
+    var sel = document.getElementById('projFilter');
+    if (sel) {
+      allProjects.forEach(function(p) {
+        var o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = p.name + (p.target_name ? ' — ' + p.target_name : '');
+        sel.appendChild(o);
+      });
+    }
+  } catch(e) { /* projects loading is non-critical */ }
 }
 
 async function loadDomainConfig() {
@@ -104,7 +126,12 @@ async function loadDomainConfig() {
 }
 
 async function loadData() {
-  try { var r = await apiFetch(APP_API_BASE + '/api/intelligence?limit=100'); var d = await r.json(); allItems = Array.isArray(d) ? d : (d.items || []); console.log('[DATA] loaded', allItems.length, 'items'); } catch(e) { console.log('[DATA] error:', e); allItems = []; }
+  try {
+    var projFilter = document.getElementById('projFilter')?.value || '';
+    var url = APP_API_BASE + '/api/intelligence?limit=200';
+    if (projFilter) url += '&project_id=' + projFilter;
+    var r = await apiFetch(url); var d = await r.json(); allItems = Array.isArray(d) ? d : (d.items || []); console.log('[DATA] loaded', allItems.length, 'items');
+  } catch(e) { console.log('[DATA] error:', e); allItems = []; }
 }
 
 function buildSidebarCats() {
@@ -131,7 +158,9 @@ function render() {
 
 function filterCards() {
   var s=document.getElementById('searchInput').value.toLowerCase();
-  var st=document.getElementById('statusFilter').value, cat=document.getElementById('catFilter').value;
+  var st=document.getElementById('statusFilter').value, cat=document.getElementById('catFilter').value, proj=document.getElementById('projFilter').value;
+  // Project filter requires server-side, others are client-side
+  if(proj){loadData();return;}
   var items=allItems;
   if(s)items=items.filter(function(i){return (i.title||'').toLowerCase().includes(s)||(i.content||'').toLowerCase().includes(s)});
   if(st)items=items.filter(function(i){return i.status===st}); if(cat)items=items.filter(function(i){return i.category===cat});
@@ -144,17 +173,22 @@ function renderFeed(items) {
   feed.innerHTML=items.map(function(item,i){
     var co=escapeHtml(item.company||''), de=item.deal_value?(item.deal_value>10000?'¥'+(item.deal_value/10000).toFixed(0)+'万':'¥'+item.deal_value):'';
     var ents=(item.entities||[]).map(function(e){return '<span class="tag" style="background:#f0e6ff;color:#722ed1">'+escapeHtml(e)+'</span>'}).join('');
+    var projTag='';
+    if(item.project_id){
+      var proj=allProjects.find(function(p){return p.id==item.project_id});
+      if(proj) projTag='<span class="tag" style="background:var(--accent-light);color:var(--accent);font-size:10px">'+escapeHtml(proj.name)+'</span>';
+    }
     return '<div class="row" onclick="openDetail('+item.id+')">'
     +'<div class="row-index">'+(i+1).toString().padStart(2,'0')+'</div>'
     +'<div class="row-body"><div class="row-title">'+escapeHtml(item.title||'')+'</div>'
     +'<div class="row-meta">'+(item.category?'<span class="tag">'+escapeHtml(item.category)+'</span>':'')
     +(statusMap[item.status]?'<span class="tag" style="background:'+statusColor(item.status)+';color:'+statusTextColor(item.status)+'">'+escapeHtml(statusMap[item.status])+'</span>':'')
     +(co?'<span class="tag tag-company">'+co+'</span>':'')+(de?'<span class="deal">'+de+'</span>':'')
-    +ents
+    +projTag+ents
     +'<span>'+formatDate(item.created_at)+'</span>'
     +(item.comment_count>0?'<span style="display:flex;align-items:center;gap:3px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'+item.comment_count+'</span>':'')
     +'</div></div></div>'
-  }).join('');
+    }).join('');
 }
 
 function setFilter(s){document.getElementById('statusFilter').value=s;filterCards()}

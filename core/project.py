@@ -6,6 +6,7 @@ Each domain has its own database, so all functions take a db_path.
 import sqlite3
 from datetime import datetime
 from contextlib import contextmanager
+from core.db import get_intelligence_count_for_project
 
 
 @contextmanager
@@ -51,11 +52,12 @@ def create_project(db_path, name, target_type, target_name, scope='',
 def get_projects(db_path, filters=None):
     """List projects with optional filters.
 
-    Returns dicts with an extra 'datasource_count' field.
+    Returns dicts with extra 'datasource_count' and 'total_intel' fields.
     """
     sql = '''
         SELECT p.*,
-               (SELECT COUNT(*) FROM project_datasources pd WHERE pd.project_id = p.id) AS datasource_count
+               (SELECT COUNT(*) FROM project_datasources pd WHERE pd.project_id = p.id) AS datasource_count,
+               (SELECT COUNT(*) FROM intelligence i WHERE i.project_id = p.id) AS total_intel
         FROM projects p
         WHERE 1=1
     '''
@@ -74,10 +76,11 @@ def get_projects(db_path, filters=None):
 
 
 def get_project_by_id(db_path, project_id):
-    """Get a single project with its linked datasources."""
+    """Get a single project with its linked datasources and intel count."""
     sql = '''
         SELECT p.*,
-               (SELECT COUNT(*) FROM project_datasources pd WHERE pd.project_id = p.id) AS datasource_count
+               (SELECT COUNT(*) FROM project_datasources pd WHERE pd.project_id = p.id) AS datasource_count,
+               (SELECT COUNT(*) FROM intelligence i WHERE i.project_id = p.id) AS total_intel
         FROM projects p WHERE p.id = ?
     '''
     with _get_db(db_path) as conn:

@@ -67,6 +67,25 @@
 .spinner{width:24px;height:24px;border:3px solid var(--gray-200);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;margin:0 auto 8px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .hidden{display:none!important}
+
+/* Project selection styles */
+.project-select-area{border:2px dashed var(--gray-200);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+.project-select-area h3{font-size:14px;font-weight:600;color:var(--gray-700);margin-bottom:12px}
+.project-option{display:flex;align-items:center;padding:10px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;transition:all .15s}
+.project-option:hover{border-color:var(--accent);background:var(--accent-light)}
+.project-option.selected{border-color:var(--accent);background:var(--accent-light);box-shadow:0 0 0 1px var(--accent)}
+.project-option input[type="radio"]{margin-right:10px;accent-color:var(--accent)}
+.project-option .proj-info{flex:1}
+.project-option .proj-name{font-size:13px;font-weight:500;color:var(--gray-800)}
+.project-option .proj-meta{font-size:11px;color:var(--gray-400);margin-top:2px}
+.project-option .proj-badge{font-size:10px;padding:2px 6px;border-radius:3px;background:var(--gray-100);color:var(--gray-500)}
+.empty-project-hint{font-size:12px;color:var(--gray-400);padding:8px 0}
+.no-project-link{font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline}
+.no-project-link:hover{color:var(--gray-800)}
+.project-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:3px;font-size:11px;background:var(--accent-light);color:var(--accent);font-weight:500}
+.import-project-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--accent-light);border-radius:var(--radius);margin-bottom:16px;font-size:13px}
+.import-project-bar .remove-proj{cursor:pointer;color:var(--gray-400);margin-left:4px;font-size:14px}
+.import-project-bar .remove-proj:hover{color:var(--red)}
 </style>
 </head>
 <body>
@@ -93,6 +112,28 @@
       <div class="loading" id="uploadLoading">
         <div class="spinner"></div>
         <div style="font-size:13px;color:var(--gray-400)">解析文件中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 1.5: Project Selection -->
+  <div class="card hidden" id="projectSelectSection">
+    <div class="card-header">
+      <h2>选择归属项目</h2>
+    </div>
+    <div class="card-body">
+      <p style="font-size:13px;color:var(--gray-600);margin-bottom:16px">为导入的情报选择归属的采集项目。未选择的项目将按来源 URL 自动匹配，若无法匹配则归入公共数据池。</p>
+      <div class="project-select-area" id="projectSelectArea">
+        <h3>采集项目列表</h3>
+        <div id="projectOptions"></div>
+        <div class="empty-project-hint" id="noProjectHint" style="display:none">
+          暂无采集项目。导入的数据将作为公共数据，后续可在项目详情页中关联。
+          <br><a class="no-project-link" href="javascript:void(0)" onclick="window.openTab && window.openTab('projects')">去创建项目 →</a>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="btn btn-primary" id="toMappingBtn" onclick="goToMapping()">下一步：列映射</button>
+        <button class="btn btn-ghost" onclick="resetAll()">重新上传</button>
       </div>
     </div>
   </div>
@@ -155,6 +196,8 @@ var previewData = null;
 var fileContent = null;
 var fileName = '';
 var fileType = '';
+var selectedProjectId = null;
+var importProjects = [];
 
 // ========== File Upload ==========
 var dropZone = document.getElementById('dropZone');
@@ -212,8 +255,11 @@ function sendPreview() {
       return;
     }
     parsedData = data;
-    renderMapping(data.headers, data.mapping);
-    document.getElementById('mappingSection').classList.remove('hidden');
+    // Store ALL rows for full import (not just the 20-row preview)
+    parsedData.all_rows = data.all_rows || [];
+    // Load projects for selection
+    loadProjectsForImport();
+    document.getElementById('projectSelectSection').classList.remove('hidden');
   })
   .catch(function(e) {
     showLoading(false);
@@ -273,9 +319,11 @@ function getMapping() {
 }
 
 function goToMapping() {
+  document.getElementById('projectSelectSection').classList.add('hidden');
   document.getElementById('previewSection').classList.add('hidden');
   document.getElementById('resultSection').classList.add('hidden');
   document.getElementById('mappingSection').classList.remove('hidden');
+  renderMapping(parsedData.headers, parsedData.mapping);
 }
 
 // ========== Preview Table ==========
@@ -352,7 +400,13 @@ function executeImport() {
 
   var fd = new FormData();
   fd.append('confirm', 'true');
-  fd.append('data', JSON.stringify(previewData));
+  var importData = JSON.parse(JSON.stringify(previewData));
+  importData.project_id = selectedProjectId;
+  // Send all_rows (full data) for complete import, not just preview
+  if (parsedData && parsedData.all_rows) {
+    importData.all_rows = parsedData.all_rows;
+  }
+  fd.append('data', JSON.stringify(importData));
 
   fetch(apiBase() + '/api/intelligence/import', {
     method: 'POST',
@@ -414,13 +468,66 @@ function resetAll() {
   previewData = null;
   fileContent = null;
   fileName = '';
+  selectedProjectId = null;
   document.getElementById('fileInput').value = '';
+  document.getElementById('projectSelectSection').classList.add('hidden');
   document.getElementById('mappingSection').classList.add('hidden');
   document.getElementById('previewSection').classList.add('hidden');
   document.getElementById('resultSection').classList.add('hidden');
   document.getElementById('uploadSection').classList.remove('hidden');
 }
 
+// ========== Project Selection ==========
+function loadProjectsForImport() {
+  fetch(apiBase() + '/api/projects?status=active', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    importProjects = data.items || [];
+    renderProjectOptions();
+  })
+  .catch(function() {
+    importProjects = [];
+    renderProjectOptions();
+  });
+}
+
+function renderProjectOptions() {
+  var container = document.getElementById('projectOptions');
+  var hint = document.getElementById('noProjectHint');
+
+  if (importProjects.length === 0) {
+    container.innerHTML = '';
+    hint.style.display = 'block';
+    return;
+  }
+
+  hint.style.display = 'none';
+  var html = '';
+  importProjects.forEach(function(p) {
+    var selected = selectedProjectId === p.id ? 'selected' : '';
+    var typeLabel = p.target_type || '';
+    html += '<div class="project-option ' + selected + '" onclick="selectProject(' + p.id + ')">'
+      + '<input type="radio" name="importProject" ' + selected + '>'
+      + '<div class="proj-info">'
+      + '<div class="proj-name">' + escapeHtml(p.name) + '</div>'
+      + '<div class="proj-meta">'
+      + '<span class="proj-badge">' + escapeHtml(typeLabel) + '</span>'
+      + ' 目标: ' + escapeHtml(p.target_name)
+      + ' · 频率: ' + p.frequency
+      + ' · 已有 <strong>' + (p.total_intel || 0) + '</strong> 条情报'
+      + '</div></div></div>';
+  });
+  container.innerHTML = html;
+}
+
+function selectProject(id) {
+  selectedProjectId = (selectedProjectId === id) ? null : id;
+  renderProjectOptions();
+}
+
+// Override doLogout to not interfere
 function doLogout() {
   localStorage.removeItem('token');
   localStorage.removeItem('user');

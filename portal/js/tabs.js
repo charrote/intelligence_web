@@ -105,23 +105,23 @@ function switchToTab(tabId) {
   // Update hash
   window.location.hash = tab.hash;
 
-  // Show/activate iframe
-  if (tab.iframe && tab.iframe.parentNode) {
-    tab.iframe.style.display = 'block';
-  } else {
-    // Create new iframe
-    var mainEl = document.getElementById('tabContent');
-    if (mainEl) {
-      var iframe = document.createElement('iframe');
-      iframe.src = tab.page;
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.border = 'none';
-      iframe.style.display = 'block';
-      mainEl.innerHTML = '';
-      mainEl.appendChild(iframe);
-      tab.iframe = iframe;
+  // Always recreate iframe to avoid stale cache (force fresh load)
+  var mainEl = document.getElementById('tabContent');
+  if (mainEl) {
+    // Remove old iframe if exists
+    if (tab.iframe && tab.iframe.parentNode) {
+      tab.iframe.parentNode.removeChild(tab.iframe);
     }
+    var iframe = document.createElement('iframe');
+    var cacheBust = '?_=' + Date.now();
+    iframe.src = tab.page + cacheBust;
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.border = 'none';
+    iframe.style.display = 'block';
+    mainEl.innerHTML = '';
+    mainEl.appendChild(iframe);
+    tab.iframe = iframe;
   }
 }
 

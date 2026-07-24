@@ -3,7 +3,9 @@
 import sqlite3
 import os
 import base64
-from datetime import datetime
+import hashlib
+import secrets
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 
@@ -37,6 +39,7 @@ def init_db(project_root, spec):
             company TEXT DEFAULT '',
             deal_value REAL DEFAULT 0,
             industry TEXT DEFAULT '',
+            project_id INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -94,6 +97,27 @@ def init_db(project_root, spec):
         )
     ''')
 
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            display_name TEXT DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'user',
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+
+    conn.commit()
+
+    # Seed default admin user if no users exist
+    row = c.execute('SELECT COUNT(*) FROM users').fetchone()
+    if row[0] == 0:
+        _seed_default_users(conn)
+
     conn.commit()
     conn.close()
 
@@ -108,7 +132,7 @@ def get_db(db_path):
         conn.close()
 
 
-def create_intelligence(db_path, title, content, category, contact_name, metadata=None):
+def create_intelligence(db_path, title, content, category, contact_name, metadata=None, project_id=None):
     """Create a new intelligence record. Returns the id or None on duplicate."""
     with get_db(db_path) as conn:
         title_norm = title.strip().lower()
@@ -125,13 +149,70 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
         now = datetime.now().isoformat()
         try:
             cursor = conn.execute(
-                'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (title.strip(), content, category or '', 'pending', '', contact_name or '', company, deal_value, industry, now, now)
+                'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (title.strip(), content, category or '', 'pending', '', contact_name or '', company, deal_value, industry, project_id, now, now)
             )
             conn.commit()
             return cursor.lastrowid
         except Exception:
             return None
+
+
+# =============================================================================
+# Authentication
+# =============================================================================
+
+def _hash_password(password, salt=None):
+    """Hash a password with a salt using SHA-256."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    hash_obj = hashlib.sha256((salt + password).encode('utf-8'))
+    return hash_obj.hexdigest(), salt
+
+
+def _seed_default_users(conn):
+    """Seed default admin user."""
+    now = datetime.now().isoformat()
+    password_hash, salt = _hash_password('admin123')
+    conn.execute(
+        'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ('admin', password_hash, salt, '管理员', 'admin', 1, now, now)
+    )
+    conn.execute(
+        'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ('user', _hash_password('user123')[0], _hash_password('user123')[1], '普通用户', 'user', 1, now, now)
+    )
+
+
+def authenticate_user(db_path, username, password):
+    """Verify username and password. Returns user dict or None."""
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            'SELECT * FROM users WHERE username = ? AND enabled = 1',
+            (username,)
+        ).fetchone()
+        if row is None:
+            return None
+        user = dict(row)
+        hash_obj = hashlib.sha256((user['salt'] + password).encode('utf-8'))
+        if hash_obj.hexdigest() != user['password_hash']:
+            return None
+        return {
+            'id': user['id'],
+            'username': user['username'],
+            'display_name': user['display_name'],
+            'role': user['role'],
+        }
+
+
+def get_user_by_id(db_path, user_id):
+    """Get user by ID. Returns user dict or None."""
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            'SELECT id, username, display_name, role FROM users WHERE id = ? AND enabled = 1',
+            (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
 
 
 # =============================================================================
@@ -181,6 +262,9 @@ def get_intelligences(db_path, filters=None):
             if filters.get('date_to'):
                 sql += ' AND created_at <= ?'
                 params.append(filters['date_to'])
+            if filters.get('project_id'):
+                sql += ' AND project_id = ?'
+                params.append(int(filters['project_id']))
 
         sql += ' ORDER BY created_at DESC'
         if filters and filters.get('limit'):
@@ -194,6 +278,19 @@ def get_intelligence_by_id(db_path, intel_id):
     with get_db(db_path) as conn:
         row = conn.execute('SELECT * FROM intelligence WHERE id = ?', (intel_id,)).fetchone()
         return dict(row) if row else None
+
+
+def get_intelligence_by_project(db_path, project_id, limit=50):
+    """Get intelligence records linked to a specific project."""
+    with get_db(db_path) as conn:
+        cursor = conn.cursor()
+        sql = 'SELECT * FROM intelligence WHERE project_id = ?'
+        params = [project_id]
+        sql += ' ORDER BY created_at DESC'
+        sql += ' LIMIT ?'
+        params.append(int(limit))
+        cursor.execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
 
 
 def update_intelligence_status(db_path, id, status, opinion=''):
@@ -230,6 +327,16 @@ def get_categories(db_path):
     with get_db(db_path) as conn:
         rows = conn.execute('SELECT DISTINCT category FROM intelligence WHERE category != ""').fetchall()
         return [r[0] for r in rows]
+
+
+def get_intelligence_count_for_project(db_path, project_id):
+    """Return the count of intelligence records linked to a project."""
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            'SELECT COUNT(*) AS c FROM intelligence WHERE project_id = ?',
+            (project_id,)
+        ).fetchone()
+        return row['c'] if row else 0
 
 
 def add_comment(db_path, intelligence_id, agent_name, content, agent_id=''):
@@ -411,5 +518,73 @@ def migrate_db(db_path):
                 FOREIGN KEY (datasource_id) REFERENCES datasources(id) ON DELETE CASCADE
             )
         ''')
+
+        # Users table (with migration for existing DBs)
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                display_name TEXT DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'user',
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+        # Migration: add columns if missing (for DBs created before users table had full schema)
+        for col, col_type in [
+            ('display_name', 'TEXT DEFAULT ""'),
+            ('role', 'TEXT DEFAULT "user"'),
+            ('enabled', 'INTEGER DEFAULT 1'),
+            ('salt', 'TEXT DEFAULT ""'),
+            ('updated_at', 'TEXT DEFAULT ""'),
+        ]:
+            try:
+                c.execute(f'ALTER TABLE users ADD COLUMN {col} {col_type}')
+            except Exception:
+                pass  # column already exists
+
+        # Fix existing users that have empty salt (from old schema)
+        rows = c.execute('SELECT id, username, password_hash, salt FROM users').fetchall()
+        for row in rows:
+            user = dict(row)
+            if not user['salt']:
+                # Re-hash the password with a proper salt
+                # Use the existing password_hash as the password (since we can't reverse it)
+                # Set a default password 'admin123' for admin, 'user123' for user
+                default_pw = 'admin123' if user['username'] == 'admin' else 'user123'
+                new_hash, new_salt = _hash_password(default_pw)
+                now = datetime.now().isoformat()
+                c.execute(
+                    'UPDATE users SET password_hash=?, salt=?, updated_at=? WHERE id=?',
+                    (new_hash, new_salt, now, user['id'])
+                )
+
+        # Fix NULL enabled values (from old migration that added column without default)
+        c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
+
+        # Migration: add project_id to intelligence table if missing
+        try:
+            c.execute('ALTER TABLE intelligence ADD COLUMN project_id INTEGER')
+        except Exception:
+            pass  # column already exists
+
+        # Ensure default users exist
+        now = datetime.now().isoformat()
+        existing_users = {r['username'] for r in c.execute('SELECT username FROM users').fetchall()}
+        if 'admin' not in existing_users:
+            h, s = _hash_password('admin123')
+            c.execute(
+                'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                ('admin', h, s, '管理员', 'admin', 1, now, now)
+            )
+        if 'user' not in existing_users:
+            h, s = _hash_password('user123')
+            c.execute(
+                'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                ('user', h, s, '普通用户', 'user', 1, now, now)
+            )
 
         conn.commit()

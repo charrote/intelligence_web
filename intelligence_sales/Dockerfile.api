@@ -3,10 +3,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --no-cache-dir flask flask-cors gunicorn mcp pydantic uvicorn requests beautifulsoup4 lxml html5lib
+    pip install --no-cache-dir flask flask-cors gunicorn mcp pydantic uvicorn requests beautifulsoup4 lxml html5lib openpyxl
 
 COPY api/ /app/api/
-COPY core/ /app/core/
 COPY domain_spec.py /app/domain_spec.py
 COPY wsgi.py /app/wsgi.py
 
