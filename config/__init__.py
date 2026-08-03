@@ -44,12 +44,17 @@ def get_service_port(service_name):
 def get_mcp_config():
     """获取 MCP 服务器配置"""
     config = load_ports_config()
+    mcp_section = config.get('mcp', {})
+    path = mcp_section.get('path') or '/mcp'  # 空字符串时 fallback 到 /mcp
+    # 本地默认 localhost，生产环境通过环境变量覆盖为域名（如 nat.ywapi.com）
+    host = os.environ.get('MCP_HOST', 'localhost')
+    port = get_service_port('mcp_server')
     return {
-        'url': f"http://localhost:{get_service_port('mcp_server')}{config.get('mcp', {}).get('path', '/mcp')}",
-        'port': get_service_port('mcp_server'),
-        'path': config.get('mcp', {}).get('path', '/mcp'),
-        'transport': config.get('mcp', {}).get('transport', 'http'),
-        'enable_auth': config.get('mcp', {}).get('enable_auth', True),
+        'url': f"http://{host}:{port}{path}",
+        'port': port,
+        'path': path,
+        'transport': mcp_section.get('transport', 'http'),
+        'enable_auth': mcp_section.get('enable_auth', True),
     }
 
 def get_all_service_ports():

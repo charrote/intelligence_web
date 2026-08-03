@@ -23,7 +23,7 @@
     }
   },
   "mcp": {
-    "path": "",
+    "path": "/mcp",
     "transport": "http",
     "enable_auth": false,
     "description": "MCP 服务器配置"
