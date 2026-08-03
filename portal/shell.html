@@ -87,26 +87,29 @@
 </div>
 <div class="panel-overlay" onclick="closePanel()"></div>
 <script>
-function switchDomain(port){
-  localStorage.setItem('domainPort', port);
-  APP_API_BASE = (window.location.protocol + '//' + window.location.hostname + ':' + port);
-  window.location.reload();
-}
+// Global state for domain configuration (shared by init.js loadDomainConfig)
+var domainConfig = null;
+var statusMap = {};
+
+// Holds the port the user wants to be on (set before loadEnabledDomains runs)
+var currentDomainPort = 8766;
 
 function onDomainSwitch(port) {
   localStorage.setItem('domainPort', port);
-  APP_API_BASE = (window.location.protocol + '//' + window.location.hostname + ':' + port);
   window.location.reload();
 }
 
 function loadEnabledDomains() {
-  fetch(apiBase() + '/api/system/domains/enabled')
+  // System APIs (domains list) are always on the research container
+  // Use currentDomainPort (set in window.load handler) instead of sel.value,
+  // because sel.innerHTML = '' below clears all options and invalidates sel.value.
+  var targetPort = parseInt(currentDomainPort) || 8766;
+  apiFetch(systemApiBase() + '/api/system/domains/enabled')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var sel = document.getElementById('domainSwitcher');
       if (!sel) return;
       var domains = data.domains || [];
-      var currentPort = parseInt(sel.value);
       sel.innerHTML = '';
       domains.forEach(function(d) {
         var opt = document.createElement('option');
@@ -114,17 +117,17 @@ function loadEnabledDomains() {
         opt.textContent = d.name;
         sel.appendChild(opt);
       });
-      // Only reload if current port is valid AND differs from first available
       if (domains.length === 0) return;
-      if (currentPort && domains.some(function(d) { return d.port === currentPort; })) {
-        sel.value = currentPort;
-      } else if (currentPort && !domains.some(function(d) { return d.port === currentPort; })) {
-        // Current port disabled by admin — just set to first available, don't reload
+      if (targetPort && domains.some(function(d) { return d.port === targetPort; })) {
+        sel.value = targetPort;
+      } else if (targetPort && !domains.some(function(d) { return d.port === targetPort; })) {
         sel.value = domains[0].port;
         localStorage.setItem('domainPort', domains[0].port);
       }
     })
-    .catch(function() {});
+    .catch(function(err) {
+      console.error('[domainSwitcher] Failed to load enabled domains:', err);
+    });
 }
 
 var currentIntel = null;
@@ -133,12 +136,16 @@ function openPanel(){document.getElementById('detailPanel').classList.add('open'
 
 window.addEventListener('load', function() {
   if (!checkAuth()) return;
-  // Set initial domain from localStorage
   var port = getDomainPort ? getDomainPort() : 8766;
+  currentDomainPort = port;  // save before calling loadEnabledDomains
   var sel = document.getElementById('domainSwitcher');
   if (sel) sel.value = port;
   loadEnabledDomains();
   loadDomainConfig().then(function() {
+    updateAvatar();
+    initTabs();
+  }).catch(function(e) {
+    updateAvatar();
     initTabs();
   });
 });

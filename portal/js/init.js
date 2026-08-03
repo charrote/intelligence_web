@@ -35,6 +35,9 @@ function getUserDisplayName() {
 async function loadDomainConfig() {
   try {
     var res = await apiFetch(apiBase() + '/api/domain_config');
+    if (!res.ok) {
+      throw new Error('HTTP ' + res.status + ' loading domain config');
+    }
     domainConfig = await res.json();
     domainConfig.statuses.forEach(function(s) { statusMap[s[0]] = s[1]; });
     var titleEl = document.getElementById('appTitle');
@@ -43,6 +46,12 @@ async function loadDomainConfig() {
       document.title = domainConfig.title_prefix;
     }
   } catch(e) {
+    console.error('[init] Failed to load domain config:', e);
     statusMap = {pending:'待审阅',approved:'可行',rejected:'不可行',active:'激活',completed:'已完结',discarded:'已废弃'};
+    var titleEl = document.getElementById('appTitle');
+    if (titleEl) {
+      titleEl.textContent = getDomainPort() === 8767 ? '销售情报' : '情报管理系统';
+      document.title = titleEl.textContent;
+    }
   }
 }
