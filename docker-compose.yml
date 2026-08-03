@@ -66,6 +66,8 @@ services:
     ports:
       - "8768:8768"  # 端口配置在 config/ports.json
     environment:
+      - MCP_BIND_HOST=0.0.0.0  # Docker 容器内监听地址
+      - MCP_HOST=nat.ywapi.com  # 对外 URL 中使用的域名
       - MCP_PORT=8768  # 从 config/ports.json 读取
     volumes:
       - ./mcp_server/data:/app/data  # 数据目录（API Key）
