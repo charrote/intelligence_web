@@ -817,7 +817,7 @@ async function loadMcpTools() {
 
   // Also fetch live status from MCP server
   try {
-    var r = await fetch(apiBase() + '/api/system/mcp/status', {
+    var r = await fetch(systemApiBase() + '/api/system/mcp/auth/status', {
       headers: { 'Authorization': 'Bearer ' + token },
     });
     if (r.ok) {
