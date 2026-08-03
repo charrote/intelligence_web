@@ -1,16 +1,22 @@
 FROM python:3.11-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --no-cache-dir flask flask-cors gunicorn mcp pydantic uvicorn
+    pip install --no-cache-dir flask flask-cors gunicorn "mcp>=1.0,<2.0" pydantic uvicorn requests meilisearch
 
 # Copy shared core
 COPY core/ /app/core/
+
+# Copy config
+COPY config/ /app/config/
 
 # Copy MCP server
 COPY mcp_server/ /app/mcp_server/
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 
 CMD ["python", "mcp_server/server.py"]

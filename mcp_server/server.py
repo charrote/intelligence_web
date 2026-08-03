@@ -1,17 +1,29 @@
-"""MCP Server for Intelligence Platform.
-
-Provides AI agents with tools to query, create, and manage intelligence data.
-Supports stdio transport for integration with Claude, OpenClaw, Hermes, etc.
+#!/usr/bin/env python3
+"""
+Intelligence Platform MCP Server
+提供情报管理、数据源管理、实体管理、通知订阅等工具的标准化 MCP 接口
+支持 HTTP 传输 (Streamable HTTP)
 """
 
 import os
-import sys
-import json
 import asyncio
+import sys
 
-# Add project root to path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
+# Ensure /app is in the Python path for module imports
+if '/app' not in sys.path:
+    sys.path.insert(0, '/app')
+
+from mcp.server.fastmcp import FastMCP
+from config import get_mcp_config
+
+# Database path (fixed to correct locations)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(PROJECT_ROOT)
+RESEARCH_DB = os.path.join(ROOT, "intelligence_web", "data", "intelligence")
+SALES_DB = os.path.join(ROOT, "intelligence_sales", "data", "intelligence_sales")
+
+def get_db(domain):
+    return RESEARCH_DB if domain in ("research", "intelligence_web") else SALES_DB
 
 from core import db as dblib
 from core import datasource as dslib
@@ -19,477 +31,330 @@ from core import entity as entitylib
 from core import notify as notifylib
 from core import search as searchlib
 
-# Crawler MCP tools (placeholder — crawler_service removed, stub for compatibility)
-_CRAWLER_TOOLS = {}
-_CRAWLER_HANDLERS = {}
+# Use FastMCP for proper MCP protocol handling
+server = FastMCP("intelligence-platform-mcp")
 
-RESEARCH_DB = dblib.get_db_path(PROJECT_ROOT, "intelligence")
-SALES_DB = dblib.get_db_path(PROJECT_ROOT, "intelligence_sales")
+# API Key middleware
+API_KEY = None
+AUTH_ENABLED = True
 
+async def check_api_key():
+    global API_KEY, AUTH_ENABLED
+    config = get_mcp_config()
+    api_key_env = os.environ.get("MCP_API_KEY", "").strip()
+    auth_env = os.environ.get("MCP_AUTH_ENABLED", "").strip().lower()
 
-def get_db(domain):
-    return SALES_DB if domain == "sales" else RESEARCH_DB
+    if auth_env == "false" or config.get("enable_auth") is False:
+        AUTH_ENABLED = False
+        return None
 
+    if api_key_env:
+        API_KEY = api_key_env
+        return api_key_env
+    key_file = os.path.join(PROJECT_ROOT, "data", "agent_key.txt")
+    if os.path.exists(key_file):
+        with open(key_file, "r") as f:
+            API_KEY = f.read().strip()
+        return API_KEY
+    key = os.urandom(24).hex()
+    os.makedirs(os.path.join(PROJECT_ROOT, "data"), exist_ok=True)
+    with open(key_file, "w") as f:
+        f.write(key)
+    API_KEY = key
+    return key
 
-# ===========================================================================
-# Tool definitions (simple JSON-RPC style)
-# ===========================================================================
+# ====== Tools ======
 
-TOOLS = {
-    "search_intelligence": {
-        "description": "Search intelligence by keyword across domains",
-        "parameters": {
-            "query": {"type": "string", "description": "Search keyword"},
-            "domain": {"type": "string", "default": "research", "enum": ["research", "sales"]},
-            "limit": {"type": "integer", "default": 20, "maximum": 50},
-            "status": {"type": "string", "description": "Filter by status"},
-        },
-        "handler": "search_intelligence",
-    },
-    "list_intelligence": {
-        "description": "List intelligence items from a domain",
-        "parameters": {
-            "domain": {"type": "string", "default": "research", "enum": ["research", "sales"]},
-            "status": {"type": "string", "description": "Filter by status"},
-            "limit": {"type": "integer", "default": 50, "maximum": 100},
-            "offset": {"type": "integer", "default": 0},
-        },
-        "handler": "list_intelligence",
-    },
-    "get_intelligence": {
-        "description": "Get a specific intelligence item by ID",
-        "parameters": {
-            "id": {"type": "integer", "description": "Intelligence item ID"},
-            "domain": {"type": "string", "default": "research", "enum": ["research", "sales"]},
-        },
-        "handler": "get_intelligence",
-    },
-    "create_intelligence": {
-        "description": "Create a new intelligence item",
-        "parameters": {
-            "title": {"type": "string", "description": "Title"},
-            "content": {"type": "string", "description": "Content (Markdown)"},
-            "category": {"type": "string", "default": ""},
-            "company": {"type": "string", "default": ""},
-            "deal_value": {"type": "number", "default": 0},
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-            "source_url": {"type": "string", "default": ""},
-            "entity_ids": {"type": "string", "default": "", "description": "Comma-separated entity IDs"},
-        },
-        "handler": "create_intelligence",
-    },
-    "update_intelligence_status": {
-        "description": "Update intelligence status",
-        "parameters": {
-            "id": {"type": "integer", "description": "ID"},
-            "status": {"type": "string", "description": "New status"},
-            "opinion": {"type": "string", "default": ""},
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-        },
-        "handler": "update_intelligence_status",
-    },
-    "list_data_sources": {
-        "description": "List data sources for a domain",
-        "parameters": {
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-        },
-        "handler": "list_data_sources",
-    },
-    "create_data_source": {
-        "description": "Create a data source",
-        "parameters": {
-            "name": {"type": "string"},
-            "type_": {"type": "string", "default": "website"},
-            "url": {"type": "string"},
-            "indicators": {"type": "string", "default": ""},
-            "schedule": {"type": "string", "default": "daily"},
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-            "description": {"type": "string", "default": ""},
-        },
-        "handler": "create_data_source",
-    },
-    "get_crawl_logs": {
-        "description": "Get crawl logs",
-        "parameters": {
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-            "source_id": {"type": "integer"},
-            "limit": {"type": "integer", "default": 20},
-        },
-        "handler": "get_crawl_logs",
-    },
-    "list_entities": {
-        "description": "List entities for a domain",
-        "parameters": {
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-            "type_": {"type": "string"},
-        },
-        "handler": "list_entities",
-    },
-    "get_entity_by_name": {
-        "description": "Find entity by name or alias",
-        "parameters": {
-            "name": {"type": "string"},
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-        },
-        "handler": "get_entity_by_name",
-    },
-    "link_intelligence_to_entity": {
-        "description": "Link intelligence to entity",
-        "parameters": {
-            "intel_id": {"type": "integer"},
-            "entity_id": {"type": "integer"},
-            "relevance": {"type": "string", "default": "primary"},
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-        },
-        "handler": "link_intelligence_to_entity",
-    },
-    "get_intel_for_entity": {
-        "description": "Get intelligence linked to an entity",
-        "parameters": {
-            "entity_id": {"type": "integer"},
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-            "limit": {"type": "integer", "default": 20},
-        },
-        "handler": "get_intel_for_entity",
-    },
-    "list_subscriptions": {
-        "description": "List subscriptions for a user",
-        "parameters": {
-            "user_id": {"type": "integer", "default": 1},
-        },
-        "handler": "list_subscriptions",
-    },
-    "create_subscription": {
-        "description": "Create a subscription",
-        "parameters": {
-            "value": {"type": "string"},
-            "type_": {"type": "string", "default": "keyword"},
-            "domain": {"type": "string", "default": "sales", "enum": ["research", "sales"]},
-            "channel": {"type": "string", "default": "in_app"},
-        },
-        "handler": "create_subscription",
-    },
-    "get_notifications": {
-        "description": "Get notifications for a user",
-        "parameters": {
-            "user_id": {"type": "integer", "default": 1},
-            "unread_only": {"type": "boolean", "default": False},
-            "limit": {"type": "integer", "default": 20},
-        },
-        "handler": "get_notifications",
-    },
-    "system_status": {
-        "description": "Get system status and available tools",
-        "parameters": {},
-        "handler": "system_status",
-    },
-}
-
-# Merge crawler MCP tools
-TOOLS.update(_CRAWLER_TOOLS)
-
-
-# ===========================================================================
-# Handlers
-# ===========================================================================
-
-def search_intelligence(query, domain="research", limit=20, status=None):
+@server.tool(description="Search intelligence across domains using Meilisearch")
+def search_intelligence(query: str, domain: str = "research", limit: int = 10, status: str = None):
     db = get_db(domain)
-    engine = searchlib.create_search_engine(db, {"engine": "meilisearch"})
-    results = engine.search(query, limit=min(limit, 50))
+    engine = searchlib.create_search_engine(db, {})
+    if engine is None:
+        engine = searchlib.NoopEngine(db, {})
+    result = engine.search(query, limit=limit)
     items = []
-    for r in results.get("items", [])[:limit]:
-        item = {
-            "id": r["id"],
-            "title": r["title"],
-            "status": r.get("status", ""),
-            "category": r.get("category", ""),
-            "created_at": r.get("created_at", ""),
-            "content_preview": (r.get("content") or "")[:200],
-            "entity_ids": r.get("entity_ids", []),
-        }
-        # Enrich with entity names from db
-        try:
-            entity_rows = entitylib.get_entities_for_intel(db, r["id"])
-            if entity_rows:
-                item["entities"] = [e["name"] for e in entity_rows]
-        except Exception:
-            pass
+    for item in result.get("items", []):
+        # Enhance with entity names
+        with dblib.get_db(db) as conn:
+            intel_entities = conn.execute(
+                "SELECT e.name FROM intel_entity ie JOIN entities e ON ie.entity_id = e.id WHERE ie.intelligence_id = ?",
+                (item["id"],)
+            ).fetchall()
+            item["entity_names"] = [e["name"] for e in intel_entities]
         items.append(item)
-    return {"query": query, "count": len(items), "items": items}
+    return {"query": query, "total": result.get("total", 0), "limit": limit, "items": items}
 
-
-def list_intelligence(domain="research", status=None, limit=50, offset=0):
+@server.tool(description="List intelligence with pagination and status filter")
+def list_intelligence(domain: str = "research", status: str = None, limit: int = 50, offset: int = 0):
     db = get_db(domain)
-    filters = {"limit": min(limit, 100), "offset": offset}
+    filters = {"limit": limit, "offset": offset}
     if status:
         filters["status"] = status
-    result = dblib.get_intelligences(db, filters)
-    items = []
-    for r in result["items"]:
-        items.append({
-            "id": r["id"],
-            "title": r["title"],
-            "status": r.get("status", ""),
-            "category": r.get("category", ""),
-            "company": r.get("company", ""),
-            "deal_value": r.get("deal_value", 0),
-            "created_at": r.get("created_at", ""),
-            "source_url": r.get("source_url", ""),
-        })
-    return {"total": result["total"], "limit": limit, "offset": offset, "items": items}
+    # Fetch total count first (without limit/offset) for accurate pagination
+    total_filters = {k: v for k, v in filters.items() if k not in ("limit", "offset")}
+    if total_filters:
+        total_items = dblib.get_intelligences(db, total_filters)
+        total = len(total_items)
+    else:
+        total = len(dblib.get_intelligences(db, {"limit": 10000}))
+    items = dblib.get_intelligences(db, filters)
+    return {"total": total, "limit": limit, "offset": offset, "items": items}
 
-
-def get_intelligence(id, domain="research"):
+@server.tool(description="Get single intelligence by ID with comments")
+def get_intelligence(id: int, domain: str = "research"):
     db = get_db(domain)
     intel = dblib.get_intelligence_by_id(db, id)
     if not intel:
-        return {"error": "Not found", "id": id}
-    comments = dblib.get_comments(db, id, limit=10)
-    intel["comments"] = [{"agent_name": c["agent_name"], "content": c["content"], "created_at": c["created_at"]} for c in comments]
-    intel["entities"] = entitylib.get_entities_for_intel(db, id)
+        return {"error": f"Intelligence ID {id} not found"}
+    comments = dblib.get_comments(db, id, limit=5)
+    intel["comments"] = comments
     return intel
 
-
-def create_intelligence(title, content, category="", company="", deal_value=0, domain="sales", source_url="", entity_ids=""):
+@server.tool(description="Create new intelligence record")
+def create_intelligence(title: str, content: str, category: str, domain: str = "research",
+                        company: str = None, contact: str = None, deal_value: float = None,
+                        source_url: str = None, entity_ids: list = None):
     db = get_db(domain)
-    extra = {}
-    if domain == "sales" and company:
-        extra = {"company": company, "deal_value": deal_value}
-    intel_id = dblib.create_intelligence(db, title, content, category, source_url, extra if extra else None)
-    if intel_id is None:
-        return {"error": "Duplicate title, skipping", "title": title}
-    if entity_ids:
-        for eid in entity_ids.split(","):
-            eid = eid.strip()
-            if eid:
-                try:
-                    entitylib.link_entity(db, intel_id, int(eid), "primary")
-                except:
-                    pass
-    return {"id": intel_id, "status": "pending", "title": title}
+    # Build metadata dict for the core db layer
+    metadata = {}
+    if company:
+        metadata["company"] = company
+    if deal_value:
+        metadata["deal_value"] = deal_value
+    if source_url:
+        metadata["source_url"] = source_url
 
+    intel_id = dblib.create_intelligence(
+        db, title=title, content=content, category=category,
+        contact_name=contact or "",
+        metadata=metadata if metadata else None,
+    )
+    if entity_ids and intel_id:
+        with dblib.get_db(db) as conn:
+            for eid in entity_ids:
+                conn.execute(
+                    "INSERT INTO intel_entity (intelligence_id, entity_id, relevance) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+                    (intel_id, eid, "primary")
+                )
+    return {"id": intel_id, "title": title, "domain": domain}
 
-def update_intelligence_status(id, status, opinion="", domain="sales"):
+@server.tool(description="Update intelligence status")
+def update_intelligence_status(id: int, status: str, opinion: str = None, domain: str = "research"):
     db = get_db(domain)
-    if dblib.update_intelligence_status(db, id, status, opinion):
-        return {"success": True, "id": id, "status": status}
-    return {"error": "Not found", "id": id}
+    old_status = None
+    with dblib.get_db(db) as conn:
+        old_status = conn.execute("SELECT status FROM intelligence WHERE id = ?", (id,)).fetchone()
+        old_status = old_status["status"] if old_status else None
+    success = dblib.update_intelligence_status(db, id, status)
+    if success and opinion:
+        dblib.add_comment(db, id, opinion, "admin")
+    return {"id": id, "old_status": old_status, "new_status": status, "success": success}
 
+# ---- Data Sources ----
 
-def list_data_sources(domain="sales"):
+@server.tool(description="List data sources")
+def list_data_sources(domain: str = "research"):
     db = get_db(domain)
-    sources = dslib.list_sources(db, domain)
-    return {"count": len(sources), "sources": sources}
+    return dslib.list_sources(db)
 
-
-def create_data_source(name, type_="website", url="", indicators="", schedule="daily", domain="sales", description=""):
+@server.tool(description="Create a data source")
+def create_data_source(name: str, type_: str, url: str, indicators: list, schedule: str,
+                       domain: str = "research", description: str = None):
     db = get_db(domain)
-    inds = [i.strip() for i in indicators.split(",") if i.strip()] if indicators else []
-    sid = dslib.create_source(db, domain, name, type_, url, inds, schedule, description)
-    return {"id": sid, "name": name, "success": True}
+    dsid = dslib.add_source(db, name, type_, url, indicators=indicators, schedule=schedule, description=description)
+    return {"id": dsid, "name": name, "type": type_, "url": url, "domain": domain}
 
+@server.tool(description="Get crawl logs for a data source (placeholder)")
+def get_crawl_logs(source_id: int, limit: int = 50):
+    return {"source_id": source_id, "logs": [], "message": "Crawl log feature not yet implemented"}
 
-def get_crawl_logs(domain="sales", source_id=None, limit=20):
+# ---- Entities ----
+
+@server.tool(description="List entities")
+def list_entities(domain: str = "research", type_: str = None):
     db = get_db(domain)
-    logs = dslib.get_crawl_logs(db, source_id, limit=min(limit, 50))
-    return {"count": len(logs), "logs": logs}
+    entitylib.init_entities_table(db)
+    return entitylib.list_entities(db, type_=type_)
 
-
-def list_entities(domain="sales", type_=None):
+@server.tool(description="Get entity by name or alias")
+def get_entity_by_name(name: str, domain: str = "research"):
     db = get_db(domain)
-    entities = entitylib.list_entities(db, domain, type_)
-    return {"count": len(entities), "entities": entities}
+    entitylib.init_entities_table(db)
+    return entitylib.get_entity_by_name(db, name)
 
-
-def get_entity_by_name(name, domain="sales"):
+@server.tool(description="Link intelligence to entity with relevance level")
+def link_intelligence_to_entity(intel_id: int, entity_id: int, relevance: str = "primary", domain: str = "research"):
     db = get_db(domain)
-    entities = entitylib.list_entities(db, domain)
-    for e in entities:
-        if e["name"].lower() == name.lower() or any(a.lower() == name.lower() for a in e.get("aliases", [])):
-            return e
-    return {"error": f"Entity '{name}' not found", "domain": domain}
+    entitylib.init_entities_table(db)
+    return entitylib.link_intel_to_entity(db, intel_id, entity_id, relevance)
 
-
-def link_intelligence_to_entity(intel_id, entity_id, relevance="primary", domain="sales"):
+@server.tool(description="Get all intelligence linked to an entity")
+def get_intel_for_entity(entity_id: int, domain: str = "research", limit: int = 50):
     db = get_db(domain)
-    entitylib.link_entity(db, intel_id, entity_id, relevance)
-    return {"success": True, "intelligence_id": intel_id, "entity_id": entity_id}
+    entitylib.init_entities_table(db)
+    return entitylib.get_intel_for_entity(db, entity_id, limit=limit)
 
+# ---- Notifications & Subscriptions ----
 
-def get_intel_for_entity(entity_id, domain="sales", limit=20):
+@server.tool(description="List user subscriptions")
+def list_subscriptions(user_id: int, domain: str = "research"):
     db = get_db(domain)
-    items = entitylib.get_intel_for_entity(db, entity_id, limit=min(limit, 50))
-    return {"count": len(items), "items": [{"id": i["id"], "title": i["title"], "status": i["status"], "relevance": i.get("relevance", "")} for i in items]}
+    notifylib.init_notifications_table(db)
+    return notifylib.list_subscriptions(db, user_id)
 
+@server.tool(description="Create a subscription")
+def create_subscription(value: str, type_: str, domain: str = "research", channel: str = "in_app", user_id: int = None):
+    db = get_db(domain)
+    notifylib.init_notifications_table(db)
+    sub_id = notifylib.add_subscription(db, user_id, type_, value, channel)
+    return {"id": sub_id, "value": value, "type": type_, "domain": domain}
 
-def list_subscriptions(user_id=1):
-    db = SALES_DB
-    subs = notifylib.list_subscriptions(db, user_id)
-    return {"count": len(subs), "subscriptions": subs}
+@server.tool(description="Get notifications for user")
+def get_notifications(user_id: int, domain: str = "research", unread_only: bool = False, limit: int = 50):
+    db = get_db(domain)
+    notifylib.init_notifications_table(db)
+    return notifylib.list_notifications(db, user_id, limit=limit, unread_only=unread_only)
 
+# ---- System ----
 
-def create_subscription(value, type_="keyword", domain="sales", channel="in_app"):
-    db = SALES_DB
-    sid = notifylib.create_subscription(db, 1, domain, type_, value, channel)
-    return {"id": sid, "value": value, "type": type_, "success": True}
-
-
-def get_notifications(user_id=1, unread_only=False, limit=20):
-    db = SALES_DB
-    notifs = notifylib.list_notifications(db, user_id, limit=min(limit, 50), unread_only=unread_only)
-    unread = notifylib.count_unread(db, user_id)
-    return {"unread": unread, "count": len(notifs), "notifications": notifs}
-
-
+@server.tool(description="Get system status and available tools")
 def system_status():
-    research_count = dblib.get_intelligences(RESEARCH_DB, {"limit": 1})["total"]
-    sales_count = dblib.get_intelligences(SALES_DB, {"limit": 1})["total"]
-    research_sources = len(dslib.list_sources(RESEARCH_DB, "intelligence_web"))
-    sales_sources = len(dslib.list_sources(SALES_DB, "intelligence_sales"))
-    research_entities = len(entitylib.list_entities(RESEARCH_DB, "intelligence_web"))
-    sales_entities = len(entitylib.list_entities(SALES_DB, "intelligence_sales"))
+    research_rows = dblib.get_intelligences(RESEARCH_DB, {"limit": 100})
+    sales_rows = dblib.get_intelligences(SALES_DB, {"limit": 100})
+    research_sources = dslib.list_sources(RESEARCH_DB)
+    sales_sources = dslib.list_sources(SALES_DB)
+    entitylib.init_entities_table(RESEARCH_DB)
+    research_entities = entitylib.list_entities(RESEARCH_DB)
+    entitylib.init_entities_table(SALES_DB)
+    sales_entities = entitylib.list_entities(SALES_DB)
     return {
         "platform": "Intelligence Platform MCP Server",
         "version": "1.0.0",
         "domains": {
-            "research": {"intelligence": research_count, "data_sources": research_sources, "entities": research_entities},
-            "sales": {"intelligence": sales_count, "data_sources": sales_sources, "entities": sales_entities},
+            "research": {"intelligence": len(research_rows), "data_sources": len(research_sources), "entities": len(research_entities)},
+            "sales": {"intelligence": len(sales_rows), "data_sources": len(sales_sources), "entities": len(sales_entities)},
         },
-        "available_tools": list(TOOLS.keys()),
-        "total_tools": len(TOOLS),
+        "available_tools": [t.name for t in server.list_tools()],
+        "total_tools": len(server.list_tools()),
     }
 
 
-HANDLERS = {
-    "search_intelligence": search_intelligence,
-    "list_intelligence": list_intelligence,
-    "get_intelligence": get_intelligence,
-    "create_intelligence": create_intelligence,
-    "update_intelligence_status": update_intelligence_status,
-    "list_data_sources": list_data_sources,
-    "create_data_source": create_data_source,
-    "get_crawl_logs": get_crawl_logs,
-    "list_entities": list_entities,
-    "get_entity_by_name": get_entity_by_name,
-    "link_intelligence_to_entity": link_intelligence_to_entity,
-    "get_intel_for_entity": get_intel_for_entity,
-    "list_subscriptions": list_subscriptions,
-    "create_subscription": create_subscription,
-    "get_notifications": get_notifications,
-    "system_status": system_status,
-    # Crawler tools (Phase 15.3)
-    **_CRAWLER_HANDLERS,
-}
+# ====== HTTP Serving ======
+
+import uvicorn
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from starlette.responses import JSONResponse
+
+mcp_app = server.streamable_http_app()
 
 
-# ===========================================================================
-# MCP Protocol (JSON-RPC over stdio)
-# ===========================================================================
+class GatewayHandler:
+    """Unified ASGI middleware that handles auth, health, root info,
+    and forwards MCP requests to the FastMCP app (which serves at /mcp).
 
-def handle_message(message):
-    """Handle a single MCP message."""
-    method = message.get("method", "")
-    params = message.get("params", {})
+    This ensures:
+      - GET  /        → platform info (no auth needed)
+      - POST /        → rewritten to /mcp, handled by MCP (auth required)
+      - GET  /mcp     → forwarded to MCP app (auth required)
+      - POST /mcp     → MCP JSON-RPC (auth required)
+      - GET  /health  → health check (no auth needed)
+    """
 
-    if method == "initialize":
-        return {
-            "jsonrpc": "2.0",
-            "id": message.get("id"),
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {"listChanged": False},
-                    "resources": {"listChanged": False},
-                },
-                "serverInfo": {
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+
+        # --- Public endpoints (no auth) ---
+
+        # Health check
+        if path == "/health":
+            response = JSONResponse({
+                "status": "healthy",
+                "server": "intelligence-platform-mcp",
+                "version": "1.0.0",
+                "auth_required": AUTH_ENABLED and bool(API_KEY),
+            })
+            await response(scope, receive, send)
+            return
+
+        # Root info — GET returns platform info, POST rewrites to /mcp for MCP
+        if path == "/":
+            if method == "POST":
+                # Rewrite path to /mcp so FastMCP's internal routing works
+                scope = dict(scope)
+                scope["path"] = "/mcp"
+                # Auth check applies, fall through to auth check below
+            else:
+                response = JSONResponse({
                     "name": "intelligence-platform-mcp",
                     "version": "1.0.0",
-                },
-            },
-        }
+                    "status": "running",
+                    "transport": "streamable-http",
+                    "endpoint": "/mcp",
+                    "auth_required": AUTH_ENABLED and bool(API_KEY),
+                })
+                await response(scope, receive, send)
+                return
 
-    elif method == "initialized":
-        return None  # No response needed
-
-    elif method == "tools/list":
-        tools = []
-        for name, spec in TOOLS.items():
-            tools.append({
-                "name": name,
-                "description": spec["description"],
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {k: v for k, v in spec["parameters"].items()},
-                    "required": [k for k, v in spec["parameters"].items() if "default" not in v],
-                },
-            })
-        return {
-            "jsonrpc": "2.0",
-            "id": message.get("id"),
-            "result": {"tools": tools},
-        }
-
-    elif method == "tools/call":
-        tool_name = params.get("name", "")
-        arguments = params.get("arguments", {})
-        handler = HANDLERS.get(tool_name)
-        if not handler:
-            return {
-                "jsonrpc": "2.0",
-                "id": message.get("id"),
-                "result": {"error": f"Tool '{tool_name}' not found", "content": []},
-            }
-        try:
-            result = handler(**arguments)
-            return {
-                "jsonrpc": "2.0",
-                "id": message.get("id"),
-                "result": {
-                    "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
-                },
-            }
-        except Exception as e:
-            return {
-                "jsonrpc": "2.0",
-                "id": message.get("id"),
-                "result": {"error": str(e), "content": []},
-            }
-
-    elif method == "ping":
-        return {
-            "jsonrpc": "2.0",
-            "id": message.get("id"),
-            "result": {"content": [{"type": "text", "text": "pong"}]},
-        }
-
-    return None
-
-
-async def run_stdio():
-    """Run MCP server with stdio transport."""
-    import asyncio
-    import json
-
-    async def read_line():
-        line = await asyncio.get_event_loop().run_in_executor(None, sys.stdin.readline)
-        return line
-
-    while True:
-        try:
-            line = await read_line()
-            if not line:
+        # --- Auth check ---
+        auth = None
+        headers = scope.get("headers", [])
+        for key, value in headers:
+            if key.decode() == "authorization":
+                auth = value.decode()
                 break
-            message = json.loads(line.strip())
-            response = handle_message(message)
-            if response:
-                print(json.dumps(response, ensure_ascii=False))
-                sys.stdout.flush()
-        except json.JSONDecodeError:
-            continue
-        except Exception as e:
-            print(json.dumps({"error": str(e)}), flush=True)
 
+        if AUTH_ENABLED and API_KEY and not auth:
+            response = JSONResponse(
+                {"error": "Unauthorized: Authorization header required"},
+                status_code=401,
+            )
+            await response(scope, receive, send)
+            return
+
+        if AUTH_ENABLED and API_KEY and auth != f"Bearer {API_KEY}":
+            response = JSONResponse(
+                {"error": "Unauthorized: Invalid API key"},
+                status_code=401,
+            )
+            await response(scope, receive, send)
+            return
+
+        # Forward to MCP app
+        await self.app(scope, receive, send)
+
+
+# ====== Main ======
+
+async def main():
+    # Initialize API key on startup
+    await check_api_key()
+
+    # Mount the MCP app at / and wrap with GatewayHandler.
+    # GatewayHandler handles /health, GET /, POST / rewriting to /mcp.
+    # The FastMCP app internally routes /mcp to the MCP JSON-RPC handler.
+    # Use the inner app's lifespan to initialize the session manager.
+    final_app = Starlette(
+        routes=[
+            Mount("/", app=GatewayHandler(mcp_app)),
+        ],
+        lifespan=mcp_app.router.lifespan_context,
+    )
+    host = os.environ.get("MCP_HOST", "0.0.0.0")
+    port = int(os.environ.get("MCP_PORT", "8768"))
+    auth_status = "enabled" if (AUTH_ENABLED and API_KEY) else "disabled"
+    print(f"[MCP Server] Starting on {host}:{port} (auth={auth_status})")
+    config = uvicorn.Config(final_app, host=host, port=port, lifespan="on")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 if __name__ == "__main__":
-    asyncio.run(run_stdio())
+    asyncio.run(main())

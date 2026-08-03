@@ -270,6 +270,9 @@ def get_intelligences(db_path, filters=None):
         if filters and filters.get('limit'):
             sql += ' LIMIT ?'
             params.append(int(filters['limit']))
+            if filters.get('offset'):
+                sql += ' OFFSET ?'
+                params.append(int(filters['offset']))
         cursor.execute(sql, params)
         return [dict(row) for row in cursor.fetchall()]
 
@@ -561,6 +564,62 @@ def migrate_db(db_path):
                     'UPDATE users SET password_hash=?, salt=?, updated_at=? WHERE id=?',
                     (new_hash, new_salt, now, user['id'])
                 )
+
+        # Migration: add entities table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS entities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                domain TEXT NOT NULL DEFAULT '',
+                entity_type TEXT DEFAULT 'company',
+                aliases TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(name, domain)
+            )
+        ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS intel_entity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intelligence_id INTEGER NOT NULL,
+                entity_id INTEGER NOT NULL,
+                relevance TEXT DEFAULT 'primary',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (intelligence_id) REFERENCES intelligence(id) ON DELETE CASCADE,
+                FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+                UNIQUE(intelligence_id, entity_id)
+            )
+        ''')
+
+        # Migration: add subscriptions table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                domain TEXT NOT NULL DEFAULT '',
+                type TEXT NOT NULL DEFAULT 'keyword',
+                value TEXT NOT NULL,
+                channel TEXT DEFAULT 'in_app',
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
+        # Migration: add notifications table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                domain TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                content TEXT DEFAULT '',
+                is_read INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        ''')
 
         # Fix NULL enabled values (from old migration that added column without default)
         c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")

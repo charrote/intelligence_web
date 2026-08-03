@@ -237,24 +237,58 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
     <div class="settings-section">
       <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>MCP 服务器</h2>
       <div class="section-body">
-        <div class="form-group">
-          <label>MCP Server URL</label>
-          <input type="text" id="mcpServerUrl" placeholder="http://localhost:8769">
-          <div class="hint">Agent 连接 MCP Server 的地址</div>
+        <!-- 状态显示 -->
+        <div style="margin-bottom:16px;padding:10px 14px;background:var(--gray-50);border-radius:var(--radius);display:flex;align-items:center;gap:8px">
+          <span id="mcpStatusDot" style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0"></span>
+          <span id="mcpStatusText" style="font-size:13px;color:var(--gray-700);font-weight:500">运行中（自动检测）</span>
         </div>
+        
+        <!-- 连接地址 -->
+        <div class="form-group">
+          <label>连接地址 <span style="color:var(--gray-400);font-weight:normal;font-size:11px">点击复制</span></label>
+          <input type="text" id="mcpServerUrl" readonly 
+                 style="background:var(--gray-50);cursor:pointer"
+                 onclick="copyToClipboard('mcpServerUrl')">
+          <div class="hint">自动检测，无需手动配置</div>
+        </div>
+        
+        <!-- Agent API Key -->
+        <div class="form-group">
+          <label>Agent API Key <span style="color:var(--gray-400);font-weight:normal;font-size:11px">点击复制</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="password" id="mcpAgentKey" readonly 
+                   style="flex:1;background:var(--gray-50);cursor:pointer"
+                   onclick="copyToClipboard('mcpAgentKey')">
+            <button class="btn btn-ghost btn-sm" onclick="toggleMcpKey()" id="toggleMcpKeyBtn" title="显示/隐藏">👁</button>
+            <button class="btn btn-ghost btn-sm" onclick="resetMcpKey()" id="resetMcpKeyBtn" title="重置密钥">🔄</button>
+          </div>
+          <div class="hint">首次使用时自动生成，可随时重置</div>
+        </div>
+        
+        <!-- 传输方式 -->
         <div class="form-group">
           <label>传输方式</label>
-          <select id="mcpTransport">
-            <option value="stdio">stdio（进程内）</option>
-            <option value="http">HTTP（远程）</option>
-          </select>
+          <input type="text" id="mcpTransport" readonly value="HTTP" 
+                 style="background:var(--gray-50);cursor:not-allowed">
+          <div class="hint">基于 Streamable HTTP 传输协议</div>
         </div>
-        <div class="form-group">
-          <label>Agent API Key</label>
-          <input type="password" id="mcpAgentKey" placeholder="agent-secret-key">
-          <div class="hint">Agent 调用内部 API 时的认证密钥</div>
+        
+        <!-- API Key 验证开关 -->
+        <div class="form-group" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--gray-200)">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <label style="font-size:14px;font-weight:600;color:var(--gray-800)">API Key 验证</label>
+              <div class="hint" style="margin-top:4px">启用后，Agent 必须提供正确的 API Key 才能访问 MCP 服务</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="mcpAuthToggle" checked onchange="toggleMcpAuth()">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="mcpAuthStatus" style="margin-top:8px;font-size:12px;color:var(--gray-500)">
+            ● 当前状态：启用
+          </div>
         </div>
-        <button class="btn btn-primary" onclick="saveMcpSettings()">保存 MCP 配置</button>
       </div>
     </div>
 
@@ -349,7 +383,7 @@ function switchSettingsTab(tab) {
     loadSystemSettings();
   } else if (tab === 'mcp') {
     document.getElementById('pane-mcp').classList.add('active');
-    loadSystemSettings();
+    loadMcpInfo();
     loadMcpTools();
   } else if (tab === 'infra') {
     document.getElementById('pane-infra').classList.add('active');
@@ -459,10 +493,8 @@ async function loadSystemSettings() {
     var maxTok = settings['model.max_tokens'];
     if (maxTok !== undefined) document.getElementById('modelMaxTokens').value = maxTok;
 
-    // MCP
-    document.getElementById('mcpServerUrl').value = settings['mcp.server_url'] || '';
-    document.getElementById('mcpTransport').value = settings['mcp.transport'] || 'stdio';
-    document.getElementById('mcpAgentKey').value = settings['mcp.agent_key'] || '';
+    // MCP - 使用自动检测信息
+    // 注意：MCP 配置不再通过 /api/system/settings 管理，而是通过 /api/system/mcp/info
 
     // Settings updated time
     var updated = settings['system.last_updated'];
@@ -500,28 +532,176 @@ async function saveModelSettings() {
   }
 }
 
-async function saveMcpSettings() {
-  var data = {
-    'mcp.server_url': document.getElementById('mcpServerUrl').value.trim(),
-    'mcp.transport': document.getElementById('mcpTransport').value,
-    'mcp.agent_key': document.getElementById('mcpAgentKey').value.trim(),
-    'system.last_updated': new Date().toISOString(),
-  };
+async function loadMcpInfo() {
   try {
-    var r = await fetch(apiBase() + '/api/system/settings', {
-      method: 'PUT',
+    var apiUrl = systemApiBase() + '/api/system/mcp/info';
+    console.log('[MCP Info] 请求 URL:', apiUrl);
+    console.log('[MCP Info] token:', token ? '存在' : '不存在');
+    
+    var r = await fetch(apiUrl, {
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    console.log('[MCP Info] 响应状态:', r.status);
+    
+    if (!r.ok) {
+      var errorText = await r.text();
+      throw new Error('HTTP ' + r.status + ': ' + errorText);
+    }
+    
+    var mcpInfo = await r.json();
+    console.log('[MCP Info] 响应数据:', mcpInfo);
+    
+    // 填充表单
+    document.getElementById('mcpServerUrl').value = mcpInfo.url || '';
+    document.getElementById('mcpAgentKey').value = mcpInfo.agent_key || '';
+    document.getElementById('mcpTransport').value = mcpInfo.transport || 'HTTP';
+    
+    // 更新状态显示
+    var statusDot = document.getElementById('mcpStatusDot');
+    var statusText = document.getElementById('mcpStatusText');
+    if (mcpInfo.auto_detected) {
+      statusDot.style.background = 'var(--green)';
+      statusText.textContent = '运行中（自动检测）';
+    } else {
+      statusDot.style.background = 'var(--red)';
+      statusText.textContent = '未运行';
+    }
+    
+    // 加载认证状态
+    loadMcpAuthStatus();
+  } catch(e) {
+    console.error('[MCP Info] 加载失败:', e);
+    showToast('无法加载 MCP 服务器信息：' + e.message, 'error');
+  }
+}
+
+function toggleMcpKey() {
+  var input = document.getElementById('mcpAgentKey');
+  var btn = document.getElementById('toggleMcpKeyBtn');
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = '🔒';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁';
+  }
+}
+
+function copyToClipboard(elementId) {
+  var input = document.getElementById(elementId);
+  var originalValue = input.value;
+  var originalType = input.type;
+  
+  // 临时切换到可见模式以便复制
+  if (input.type === 'password') {
+    input.type = 'text';
+  }
+  
+  input.select();
+  input.setSelectionRange(0, 99999); // 兼容移动端
+  
+  try {
+    navigator.clipboard.writeText(originalValue).then(function() {
+      showToast('已复制到剪贴板', 'success');
+    }).catch(function(err) {
+      // 降级方案
+      document.execCommand('copy');
+      showToast('已复制到剪贴板', 'success');
+    });
+  } catch(e) {
+    document.execCommand('copy');
+    showToast('已复制到剪贴板', 'success');
+  }
+  
+  // 恢复原始类型
+  if (originalType === 'password') {
+    input.type = 'password';
+  }
+}
+
+async function resetMcpKey() {
+  if (!confirm('确定要重置 Agent API Key 吗？现有的 Agent 集成将需要更新密钥。')) {
+    return;
+  }
+  try {
+    var r = await fetch(systemApiBase() + '/api/system/mcp/key/reset', {
+      method: 'POST',
       headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
     });
     var res = await r.json();
     if (r.ok) {
-      showToast('MCP 配置已保存', 'success');
-      loadSystemSettings();
+      document.getElementById('mcpAgentKey').value = res.agent_key;
+      showToast('API Key 已重置', 'success');
     } else {
-      showToast(res.error || '保存失败', 'error');
+      showToast(res.error || '重置失败', 'error');
     }
   } catch(e) {
     showToast('网络错误', 'error');
+  }
+}
+
+async function toggleMcpAuth() {
+  var toggle = document.getElementById('mcpAuthToggle');
+  var statusText = document.getElementById('mcpAuthStatus');
+  var newState = toggle.checked;
+  
+  try {
+    var r = await fetch(systemApiBase() + '/api/system/mcp/auth/toggle', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    });
+    var res = await r.json();
+    if (r.ok) {
+      var status = res.enabled ? '启用' : '禁用';
+      var color = res.enabled ? 'var(--green)' : 'var(--gray-400)';
+      statusText.innerHTML = '<span style="color:' + color + '">● 当前状态：' + status + '</span>';
+      showToast('API Key 验证已' + status, 'success');
+      
+      // 显示/隐藏 API Key 相关控件
+      var keyGroup = document.getElementById('mcpAgentKey').parentElement.parentElement;
+      var keyLabel = keyGroup.querySelector('label');
+      if (newState) {
+        keyGroup.style.display = '';
+        keyLabel.style.display = '';
+      } else {
+        keyGroup.style.display = 'none';
+        keyLabel.style.display = 'none';
+      }
+    } else {
+      // 恢复开关状态
+      toggle.checked = !newState;
+      showToast(res.error || '操作失败', 'error');
+    }
+  } catch(e) {
+    // 恢复开关状态
+    toggle.checked = !newState;
+    showToast('网络错误', 'error');
+  }
+}
+
+async function loadMcpAuthStatus() {
+  try {
+    var r = await fetch(systemApiBase() + '/api/system/mcp/auth/status');
+    var res = await r.json();
+    
+    var toggle = document.getElementById('mcpAuthToggle');
+    var statusText = document.getElementById('mcpAuthStatus');
+    
+    toggle.checked = res.enabled;
+    
+    var status = res.enabled ? '启用' : '禁用';
+    var color = res.enabled ? 'var(--green)' : 'var(--gray-400)';
+    statusText.innerHTML = '<span style="color:' + color + '">● 当前状态：' + status + '</span>';
+    
+    // 显示/隐藏 API Key 相关控件
+    var keyGroup = document.getElementById('mcpAgentKey').parentElement.parentElement;
+    var keyLabel = keyGroup.querySelector('label');
+    if (!res.enabled) {
+      keyGroup.style.display = 'none';
+      keyLabel.style.display = 'none';
+    }
+  } catch(e) {
+    console.error('加载 MCP 认证状态失败:', e);
   }
 }
 
@@ -624,8 +804,6 @@ var MCP_TOOLS = [
   { name: 'create_subscription', desc: '创建订阅' },
   { name: 'get_notifications', desc: '获取通知' },
   { name: 'system_status', desc: '获取系统状态' },
-  { name: 'crawl_url', desc: '采集指定URL内容' },
-  { name: 'crawl_source', desc: '触发数据源采集' },
 ];
 
 async function loadMcpTools() {

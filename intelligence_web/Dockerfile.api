@@ -1,10 +1,17 @@
 FROM python:3.11-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-RUN pip install --no-cache-dir flask flask-cors pyjwt openpyxl
+COPY core/ /app/core/
+COPY config/ /app/config/
+COPY intelligence_web/api/ /app/api/
 
-COPY api/ /app/api/
+# Create shared data directory for API Key
+RUN mkdir -p /app/shared_data
+
+RUN pip install --no-cache-dir flask flask-cors pyjwt openpyxl requests
 
 ENV PYTHONUNBUFFERED=1
 

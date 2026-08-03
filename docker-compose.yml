@@ -3,51 +3,92 @@ services:
   meilisearch:
     image: getmeili/meilisearch:v1.12
     ports:
-      - "7700:7700"
+      - "7700:7700"  # 端口配置在 config/ports.json
     environment:
       MEILI_MASTER_KEY: "intel-search-key"
       MEILI_NO_ANALYTICS: "true"
     volumes:
       - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   # Research domain
   research:
     build:
-      context: intelligence_web
-      dockerfile: Dockerfile.api
-    image: intelligence_web_api:latest
+      context: .
+      dockerfile: intelligence_web/Dockerfile.api
     ports:
-      - "8766:8766"
+      - "8766:8766"  # 端口配置在 config/ports.json
     environment:
       - JWT_SECRET=${JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}
       - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
     volumes:
       - ./intelligence_web/data:/app/data
-      - ./core:/app/core
+      - ./mcp_server/data:/app/shared_data  # 共享数据卷（与 mcp_server 共享 API Key）
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8766/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   # Sales domain
   sales:
     build:
-      context: intelligence_sales
-      dockerfile: Dockerfile.api
-    image: intelligence_sales_api:latest
+      context: .
+      dockerfile: intelligence_sales/Dockerfile.api
     ports:
-      - "8767:8767"
+      - "8767:8767"  # 端口配置在 config/ports.json
     environment:
       - JWT_SECRET=${JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}
       - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
     volumes:
       - ./intelligence_sales/data:/app/data
-      - ./core:/app/core
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8767/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # MCP Server (HTTP transport, streamable HTTP endpoint)
+  mcp_server:
+    build:
+      context: .
+      dockerfile: mcp_server/Dockerfile.api
+    ports:
+      - "8768:8768"  # 端口配置在 config/ports.json
+    environment:
+      - MCP_PORT=8768  # 从 config/ports.json 读取
+    volumes:
+      - ./mcp_server/data:/app/data  # 数据目录（API Key）
+      - ./mcp_server/data:/app/shared_data  # 共享数据卷（与 research 共享 API Key）
+      - ./intelligence_web/data:/app/intelligence_web/data  # 制造情报数据库
+      - ./intelligence_sales/data:/app/intelligence_sales/data  # 销售情报数据库
+      - ./config:/app/config  # 配置文件（可热更新）
+    depends_on:
+      - research
+      - sales
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8768/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   # nginx gateway
   gateway:
     image: nginx:alpine
     ports:
-      - "8765:80"
+      - "8765:80"  # 端口配置在 config/ports.json
     volumes:
       - ./portal:/var/www/portal
       - ./intelligence_sales/web:/var/www/intelligence_sales
@@ -55,6 +96,12 @@ services:
     depends_on:
       - research
       - sales
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
 volumes:

@@ -1,0 +1,31 @@
+{
+  "_comment": "端口配置文件 - 所有服务的端口配置",
+  "services": {
+    "gateway": {
+      "port": 8765,
+      "description": "Nginx 网关（前端访问入口）"
+    },
+    "research": {
+      "port": 8766,
+      "description": "制造情报 API"
+    },
+    "sales": {
+      "port": 8767,
+      "description": "销售情报 API"
+    },
+    "mcp_server": {
+      "port": 8768,
+      "description": "MCP 服务器（AI Agent 集成）"
+    },
+    "meilisearch": {
+      "port": 7700,
+      "description": "Meilisearch 搜索引擎"
+    }
+  },
+  "mcp": {
+    "path": "",
+    "transport": "http",
+    "enable_auth": false,
+    "description": "MCP 服务器配置"
+  }
+}

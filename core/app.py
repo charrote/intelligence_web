@@ -13,7 +13,7 @@ from core.db import (
     add_comment, get_comments,
     add_summary, get_summary, get_dashboard_stats,
     get_commands, add_command_content,
-    get_all_settings, set_setting,
+    get_all_settings, get_setting, set_setting,
     authenticate_user, get_user_by_id, get_db,
 )
 from core import project as projlib
@@ -807,6 +807,129 @@ def create_app(project_root, spec):
             except Exception as e:
                 services.append({'name': name, 'port': port, 'status': 'down', 'details': str(e)[:100]})
         return jsonify({'services': services})
+
+    # ========================================================================
+    # MCP Server Auto-detection
+    # ========================================================================
+
+    @app.route('/api/system/mcp/info')
+    def get_mcp_info():
+        """自动检测 MCP 服务器信息，用于 AI Agent 集成配置"""
+        import secrets
+        import os
+        import logging
+        
+        try:
+            # 使用统一配置模块获取 MCP 服务器信息
+            from config import get_mcp_config
+            
+            mcp_config = get_mcp_config()
+            host = os.environ.get("MCP_HOST", "localhost")
+            
+            # 检测 API Key，优先从共享卷读取，否则从数据库读取
+            shared_key_file = os.path.join('/app', 'shared_data', 'agent_key.txt')
+            mcp_agent_key = None
+            
+            # Try shared volume first
+            try:
+                if os.path.exists(shared_key_file):
+                    with open(shared_key_file, 'r') as f:
+                        mcp_agent_key = f.read().strip()
+            except Exception:
+                pass
+            
+            # Fallback to database
+            if not mcp_agent_key:
+                mcp_agent_key = get_setting(db_path, 'mcp.agent_key')
+            
+            # Generate new key if still empty
+            if not mcp_agent_key:
+                mcp_agent_key = secrets.token_urlsafe(32)
+                set_setting(db_path, 'mcp.agent_key', mcp_agent_key)
+                # Also save to shared volume
+                try:
+                    os.makedirs(os.path.dirname(shared_key_file), exist_ok=True)
+                    with open(shared_key_file, 'w') as f:
+                        f.write(mcp_agent_key)
+                except Exception:
+                    pass
+
+            # 返回 MCP 服务器信息
+            return jsonify({
+                'url': mcp_config['url'],
+                'port': mcp_config['port'],
+                'path': mcp_config['path'],
+                'auto_detected': True,
+                'agent_key': mcp_agent_key,
+                'transport': mcp_config['transport'],
+                'tools_count': 16,  # 已注册的工具数量
+            })
+        except Exception as e:
+            logging.error(f"MCP info API error: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/system/mcp/key/reset', methods=['POST'])
+    def reset_mcp_key():
+        """重置 MCP Server API Key"""
+        import secrets
+        new_key = secrets.token_urlsafe(32)
+        set_setting(db_path, 'mcp.agent_key', new_key)
+        return jsonify({'success': True, 'agent_key': new_key})
+
+    @app.route('/api/system/mcp/auth/toggle', methods=['POST'])
+    def toggle_mcp_auth():
+        """切换 MCP 服务器 API Key 验证开关"""
+        import json
+        from pathlib import Path
+        
+        # 读取当前开关状态
+        config_path = Path(__file__).parent.parent / 'config' / 'ports.json'
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        except Exception as e:
+            return jsonify({'error': f'无法读取配置：{e}'}), 500
+        
+        # 切换开关
+        current_state = config.get('mcp', {}).get('enable_auth', True)
+        new_state = not current_state
+        
+        # 更新配置
+        if 'mcp' not in config:
+            config['mcp'] = {}
+        config['mcp']['enable_auth'] = new_state
+        
+        # 保存配置
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            return jsonify({'error': f'无法保存配置：{e}'}), 500
+        
+        return jsonify({
+            'success': True,
+            'enabled': new_state,
+            'message': f"API Key 验证已 {'启用' if new_state else '禁用'}"
+        })
+
+    @app.route('/api/system/mcp/auth/status')
+    def get_mcp_auth_status():
+        """获取 MCP 服务器 API Key 验证开关状态"""
+        import json
+        from pathlib import Path
+        
+        config_path = Path(__file__).parent.parent / 'config' / 'ports.json'
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            enabled = config.get('mcp', {}).get('enable_auth', True)
+        except Exception:
+            enabled = True
+        
+        return jsonify({
+            'enabled': enabled,
+            'status': '启用' if enabled else '禁用'
+        })
 
     # ========================================================================
     # Domain Controller (admin)
