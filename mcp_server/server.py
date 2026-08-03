@@ -328,6 +328,12 @@ async def main():
     server.settings.stateless_http = True
     server.settings.json_response = True
 
+    # Disable DNS rebinding protection because:
+    # - frp/VPN tunnels modify the Host header (e.g. "nat.ywapi.com:8768")
+    # - The MCP SDK only allows 127.0.0.1 / localhost by default
+    # - This causes HTTP 421 "Invalid Host header" for proxied requests
+    server.settings.transport_security.enable_dns_rebinding_protection = False
+
     host = os.environ.get("MCP_BIND_HOST", "127.0.0.1")
     port = int(os.environ.get("MCP_PORT", "8000"))
     server.settings.host = host
