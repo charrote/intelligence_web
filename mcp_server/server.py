@@ -210,6 +210,17 @@ def update_intelligence_status(id: int, status: str, opinion: str = None, domain
 
 
 @server.tool()
+def add_comment(id: int, content: str, agent_name: str = "agent", domain: str = "research"):
+    """Add a comment to an intelligence record."""
+    db = get_db(domain)
+    intel = dblib.get_intelligence_by_id(db, id)
+    if not intel:
+        return {"error": f"Intelligence ID {id} not found"}
+    comment_id = dblib.add_comment(db, id, agent_name, content)
+    return {"id": comment_id, "intelligence_id": id, "content": content, "success": True}
+
+
+@server.tool()
 def list_data_sources(domain: str = "research"):
     """List data sources."""
     db = get_db(domain)
