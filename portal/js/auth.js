@@ -18,12 +18,16 @@ function apiBase() {
   var p = window.location.protocol;
   var h = window.location.hostname;
   var port = getDomainPort();
-  // When accessed via Nginx gateway, prepend domain path for correct API routing
-  if (window.location.port == 8765) {
+  var locPort = window.location.port;
+  // When accessed via Nginx gateway (port 8765 or default HTTP port with correct host),
+  // prepend domain path prefix for correct API routing through gateway.
+  var isGateway = (locPort === '8765' || locPort === '');
+  if (isGateway) {
+    var gwPort = locPort ? ':' + locPort : '';
     if (port === 8767) {
-      return p + '//' + h + ':8765/sales';
+      return p + '//' + h + gwPort + '/sales';
     }
-    return p + '//' + h + ':8765/research';
+    return p + '//' + h + gwPort + '/research';
   }
   return p + '//' + h + ':' + port;
 }
@@ -32,9 +36,13 @@ function apiBase() {
 function systemApiBase() {
   var p = window.location.protocol;
   var h = window.location.hostname;
-  // When accessed via Nginx gateway, route through gateway for CORS compatibility
-  if (window.location.port == 8765) {
-    return p + '//' + h + ':8765/research';
+  var locPort = window.location.port;
+  // When accessed via Nginx gateway (port 8765 or default HTTP port),
+  // route through gateway for CORS compatibility
+  var isGateway = (locPort === '8765' || locPort === '');
+  if (isGateway) {
+    var gwPort = locPort ? ':' + locPort : '';
+    return p + '//' + h + gwPort + '/research';
   }
   return p + '//' + h + ':8766';
 }
