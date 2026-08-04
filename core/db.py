@@ -240,7 +240,9 @@ def add_command_content(db_path, content):
 def get_intelligences(db_path, filters=None):
     with get_db(db_path) as conn:
         cursor = conn.cursor()
-        sql = 'SELECT * FROM intelligence WHERE 1=1'
+        sql = "SELECT intelligence.*, "
+        sql += "(SELECT COUNT(*) FROM comments WHERE comments.intelligence_id = intelligence.id) AS comment_count "
+        sql += "FROM intelligence WHERE 1=1"
         params = []
 
         if filters:
@@ -287,7 +289,9 @@ def get_intelligence_by_project(db_path, project_id, limit=50):
     """Get intelligence records linked to a specific project."""
     with get_db(db_path) as conn:
         cursor = conn.cursor()
-        sql = 'SELECT * FROM intelligence WHERE project_id = ?'
+        sql = "SELECT intelligence.*, "
+        sql += "(SELECT COUNT(*) FROM comments WHERE comments.intelligence_id = intelligence.id) AS comment_count "
+        sql += "FROM intelligence WHERE project_id = ?"
         params = [project_id]
         sql += ' ORDER BY created_at DESC'
         sql += ' LIMIT ?'
