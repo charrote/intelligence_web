@@ -19,6 +19,9 @@ crawler_cache/
 # Database files
 *.db
 *.db-journal
+data/intelligence
+data/intelligence_web
+data/intelligence_sales
 
 # IDE
 .vscode/
