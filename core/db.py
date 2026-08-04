@@ -2,6 +2,8 @@
 
 import sqlite3
 import os
+import shutil
+import glob
 import base64
 import hashlib
 import secrets
@@ -16,111 +18,143 @@ def get_db_path(project_root, db_filename):
 
 
 def init_db(project_root, spec):
-    """Initialize the domain database with the correct schema."""
+    """Initialize the domain database with the correct schema.
+
+    Backs up the database before schema changes and verifies data integrity after.
+    """
     db_path = get_db_path(project_root, spec.get("db_filename") or spec["slug"])
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-    status_names = [s[1] for s in spec["statuses"]]
-    extra_defs = " ".join(f"{c[0]} {c[1]}" for c in spec["extra_columns"])
+    # Backup before init
+    backup_path = _backup_db(db_path)
 
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
+    # Record pre-init counts
+    pre_counts = _record_counts(db_path)
 
-    default_status = status_names[0] if status_names else "pending"
-    create_table_sql = f'''
-        CREATE TABLE IF NOT EXISTS intelligence (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT UNIQUE NOT NULL,
-            content TEXT NOT NULL,
-            category TEXT DEFAULT '',
-            status TEXT DEFAULT '{default_status}',
-            opinion TEXT DEFAULT '',
-            contact_name TEXT DEFAULT '',
-            company TEXT DEFAULT '',
-            deal_value REAL DEFAULT 0,
-            industry TEXT DEFAULT '',
-            project_id INTEGER,
-            source_url TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    '''
-    c.execute(create_table_sql)
+    try:
+        status_names = [s[1] for s in spec["statuses"]]
+        extra_defs = " ".join(f"{c[0]} {c[1]}" for c in spec["extra_columns"])
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            intelligence_id INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            detail TEXT DEFAULT '',
-            file_location TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
-        )
-    ''')
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS commands (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    ''')
+        default_status = status_names[0] if status_names else "pending"
+        create_table_sql = f'''
+            CREATE TABLE IF NOT EXISTS intelligence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT UNIQUE NOT NULL,
+                content TEXT NOT NULL,
+                category TEXT DEFAULT '',
+                status TEXT DEFAULT '{default_status}',
+                opinion TEXT DEFAULT '',
+                contact_name TEXT DEFAULT '',
+                company TEXT DEFAULT '',
+                deal_value REAL DEFAULT 0,
+                industry TEXT DEFAULT '',
+                project_id INTEGER,
+                source_url TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        '''
+        c.execute(create_table_sql)
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            intelligence_id INTEGER NOT NULL,
-            agent_name TEXT NOT NULL,
-            agent_id TEXT DEFAULT '',
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
-        )
-    ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intelligence_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                detail TEXT DEFAULT '',
+                file_location TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
+            )
+        ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS summaries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            intelligence_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
-        )
-    ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS commands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            category TEXT DEFAULT '',
-            updated_at TEXT NOT NULL
-        )
-    ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intelligence_id INTEGER NOT NULL,
+                agent_name TEXT NOT NULL,
+                agent_id TEXT DEFAULT '',
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
+            )
+        ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            salt TEXT NOT NULL,
-            display_name TEXT DEFAULT '',
-            role TEXT NOT NULL DEFAULT 'user',
-            enabled INTEGER DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intelligence_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
+            )
+        ''')
 
-    conn.commit()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                category TEXT DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+        ''')
 
-    # Seed default admin user if no users exist
-    row = c.execute('SELECT COUNT(*) FROM users').fetchone()
-    if row[0] == 0:
-        _seed_default_users(conn)
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                display_name TEXT DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'user',
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+        # Seed default admin user if no users exist
+        row = c.execute('SELECT COUNT(*) FROM users').fetchone()
+        if row[0] == 0:
+            _seed_default_users(conn)
+
+        conn.commit()
+        conn.close()
+
+        # Verify data integrity after init
+        post_counts = _record_counts(db_path)
+        if pre_counts:
+            lost = {t: pre_counts[t] - post_counts.get(t, 0) for t in pre_counts if pre_counts[t] != post_counts.get(t, -1)}
+            lost_real = {k: v for k, v in lost.items() if v > 0}
+            if lost_real:
+                msg = f"[init_db] DATA LOSS DETECTED! Lost records in: {lost_real}. Attempting restore from backup..."
+                print(msg)
+                if _restore_backup(db_path, backup_path):
+                    print(f"[init_db] Restored from backup: {backup_path}")
+                else:
+                    print(f"[init_db] FAILED to restore backup: {backup_path}")
+                raise RuntimeError(msg)
+            else:
+                print(f"[init_db] data integrity OK")
+
+    except Exception as e:
+        print(f"[init_db] error: {e}")
+        if backup_path and _restore_backup(db_path, backup_path):
+            print(f"[init_db] restored from backup: {backup_path}")
+        raise
 
 
 @contextmanager
@@ -461,202 +495,293 @@ def get_all_settings(db_path, category=None):
 # Database Migration — new tables for projects & datasources
 # =============================================================================
 
+# =============================================================================
+# Database Backup & Safety — backup before migration, verify after
+# =============================================================================
+
+
+def _backup_db(db_path):
+    """Create a timestamped backup of the database. Returns backup path or None."""
+    if not os.path.exists(db_path):
+        return None
+    backup_dir = os.path.join(os.path.dirname(db_path), "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"{os.path.basename(db_path)}_{ts}.bak"
+    backup_path = os.path.join(backup_dir, backup_name)
+    try:
+        shutil.copy2(db_path, backup_path)
+        return backup_path
+    except Exception:
+        return None
+
+
+def _restore_backup(db_path, backup_path):
+    """Restore database from backup. Returns True on success."""
+    if not backup_path or not os.path.exists(backup_path):
+        return False
+    try:
+        shutil.copy2(backup_path, db_path)
+        return True
+    except Exception:
+        return False
+
+
+def _record_counts(db_path):
+    """Get record counts for all tables. Returns dict of {table: count}."""
+    counts = {}
+    try:
+        with get_db(db_path) as conn:
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+            for t in tables:
+                name = t["name"]
+                try:
+                    count = conn.execute(f"SELECT COUNT(*) FROM [{name}]").fetchone()[0]
+                    counts[name] = count
+                except Exception:
+                    counts[name] = -1
+    except Exception:
+        pass
+    return counts
+
+
 def migrate_db(db_path):
     """Create the projects / datasources / project_datasources tables if missing.
 
     Safe to call on every startup — uses CREATE TABLE IF NOT EXISTS.
+    Backs up the database before migration and verifies data integrity after.
     """
-    with get_db(db_path) as conn:
-        c = conn.cursor()
+    # Step 1: Backup before migration
+    backup_path = _backup_db(db_path)
+    if backup_path:
+        print(f"[migrate_db] backup created: {backup_path}")
 
-        # Projects table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                target_type TEXT NOT NULL DEFAULT '',
-                target_name TEXT NOT NULL DEFAULT '',
-                scope TEXT DEFAULT '',
-                frequency TEXT NOT NULL DEFAULT 'weekly',
-                status TEXT NOT NULL DEFAULT 'active',
-                instruction TEXT DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        ''')
+    # Step 2: Record pre-migration counts for verification
+    pre_counts = _record_counts(db_path)
+    if pre_counts:
+        print(f"[migrate_db] pre-migration counts: {pre_counts}")
 
-        # Datasources table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS datasources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL DEFAULT 'website',
-                url TEXT NOT NULL DEFAULT '',
-                schedule TEXT NOT NULL DEFAULT 'daily',
-                status TEXT NOT NULL DEFAULT 'active',
-                indicators TEXT DEFAULT '',
-                last_crawled_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        ''')
+    try:
+        with get_db(db_path) as conn:
+            c = conn.cursor()
 
-        # Target Types table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS target_types (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slug TEXT NOT NULL UNIQUE,
-                label TEXT NOT NULL,
-                description TEXT DEFAULT '',
-                color TEXT DEFAULT '#3b4f8c',
-                icon TEXT DEFAULT '',
-                sort_order INTEGER DEFAULT 0,
-                enabled INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        ''')
+            # Projects table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS projects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    target_type TEXT NOT NULL DEFAULT '',
+                    target_name TEXT NOT NULL DEFAULT '',
+                    scope TEXT DEFAULT '',
+                    frequency TEXT NOT NULL DEFAULT 'weekly',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    instruction TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
 
-        # Project-Datasource junction table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS project_datasources (
-                project_id INTEGER NOT NULL,
-                datasource_id INTEGER NOT NULL,
-                PRIMARY KEY (project_id, datasource_id),
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (datasource_id) REFERENCES datasources(id) ON DELETE CASCADE
-            )
-        ''')
+            # Datasources table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS datasources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL DEFAULT 'website',
+                    url TEXT NOT NULL DEFAULT '',
+                    schedule TEXT NOT NULL DEFAULT 'daily',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    indicators TEXT DEFAULT '',
+                    last_crawled_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
 
-        # Users table (with migration for existing DBs)
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                salt TEXT NOT NULL,
-                display_name TEXT DEFAULT '',
-                role TEXT NOT NULL DEFAULT 'user',
-                enabled INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        ''')
-        # Migration: add columns if missing (for DBs created before users table had full schema)
-        for col, col_type in [
-            ('display_name', 'TEXT DEFAULT ""'),
-            ('role', 'TEXT DEFAULT "user"'),
-            ('enabled', 'INTEGER DEFAULT 1'),
-            ('salt', 'TEXT DEFAULT ""'),
-            ('created_at', 'TEXT DEFAULT ""'),
-            ('updated_at', 'TEXT DEFAULT ""'),
-        ]:
+            # Target Types table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS target_types (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT NOT NULL UNIQUE,
+                    label TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    color TEXT DEFAULT '#3b4f8c',
+                    icon TEXT DEFAULT '',
+                    sort_order INTEGER DEFAULT 0,
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+
+            # Project-Datasource junction table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS project_datasources (
+                    project_id INTEGER NOT NULL,
+                    datasource_id INTEGER NOT NULL,
+                    PRIMARY KEY (project_id, datasource_id),
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    FOREIGN KEY (datasource_id) REFERENCES datasources(id) ON DELETE CASCADE
+                )
+            ''')
+
+            # Users table (with migration for existing DBs)
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    display_name TEXT DEFAULT '',
+                    role TEXT NOT NULL DEFAULT 'user',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+            # Migration: add columns if missing (for DBs created before users table had full schema)
+            for col, col_type in [
+                ('display_name', 'TEXT DEFAULT ""'),
+                ('role', 'TEXT DEFAULT "user"'),
+                ('enabled', 'INTEGER DEFAULT 1'),
+                ('salt', 'TEXT DEFAULT ""'),
+                ('created_at', 'TEXT DEFAULT ""'),
+                ('updated_at', 'TEXT DEFAULT ""'),
+            ]:
+                try:
+                    c.execute(f'ALTER TABLE users ADD COLUMN {col} {col_type}')
+                except Exception:
+                    pass  # column already exists
+
+            # Fix existing users that have empty salt (from old schema)
+            rows = c.execute('SELECT id, username, password_hash, salt FROM users').fetchall()
+            for row in rows:
+                user = dict(row)
+                if not user['salt']:
+                    # Re-hash the password with a proper salt
+                    # Use the existing password_hash as the password (since we can't reverse it)
+                    # Set a default password 'admin123' for admin, 'user123' for user
+                    default_pw = 'admin123' if user['username'] == 'admin' else 'user123'
+                    new_hash, new_salt = _hash_password(default_pw)
+                    now = datetime.now().isoformat()
+                    c.execute(
+                        'UPDATE users SET password_hash=?, salt=?, updated_at=? WHERE id=?',
+                        (new_hash, new_salt, now, user['id'])
+                    )
+
+            # Migration: add entities table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS entities (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    domain TEXT NOT NULL DEFAULT '',
+                    entity_type TEXT DEFAULT 'company',
+                    aliases TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(name, domain)
+                )
+            ''')
+
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS intel_entity (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    intelligence_id INTEGER NOT NULL,
+                    entity_id INTEGER NOT NULL,
+                    relevance TEXT DEFAULT 'primary',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (intelligence_id) REFERENCES intelligence(id) ON DELETE CASCADE,
+                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+                    UNIQUE(intelligence_id, entity_id)
+                )
+            ''')
+
+            # Migration: add subscriptions table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    domain TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT 'keyword',
+                    value TEXT NOT NULL,
+                    channel TEXT DEFAULT 'in_app',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+
+            # Migration: add notifications table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    domain TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    content TEXT DEFAULT '',
+                    is_read INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+            ''')
+
+            # Fix NULL enabled values (from old migration that added column without default)
+            c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
+
+            # Migration: add project_id to intelligence table if missing
             try:
-                c.execute(f'ALTER TABLE users ADD COLUMN {col} {col_type}')
+                c.execute('ALTER TABLE intelligence ADD COLUMN project_id INTEGER')
             except Exception:
                 pass  # column already exists
 
-        # Fix existing users that have empty salt (from old schema)
-        rows = c.execute('SELECT id, username, password_hash, salt FROM users').fetchall()
-        for row in rows:
-            user = dict(row)
-            if not user['salt']:
-                # Re-hash the password with a proper salt
-                # Use the existing password_hash as the password (since we can't reverse it)
-                # Set a default password 'admin123' for admin, 'user123' for user
-                default_pw = 'admin123' if user['username'] == 'admin' else 'user123'
-                new_hash, new_salt = _hash_password(default_pw)
-                now = datetime.now().isoformat()
+            # Migration: add source_url to intelligence table if missing
+            try:
+                c.execute('ALTER TABLE intelligence ADD COLUMN source_url TEXT DEFAULT ""')
+            except Exception:
+                pass  # column already exists
+
+            # Ensure default users exist
+            now = datetime.now().isoformat()
+            existing_users = {r['username'] for r in c.execute('SELECT username FROM users').fetchall()}
+            if 'admin' not in existing_users:
+                h, s = _hash_password('admin123')
                 c.execute(
-                    'UPDATE users SET password_hash=?, salt=?, updated_at=? WHERE id=?',
-                    (new_hash, new_salt, now, user['id'])
+                    'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    ('admin', h, s, '管理员', 'admin', 1, now, now)
+                )
+            if 'user' not in existing_users:
+                h, s = _hash_password('user123')
+                c.execute(
+                    'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    ('user', h, s, '普通用户', 'user', 1, now, now)
                 )
 
-        # Migration: add entities table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS entities (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                domain TEXT NOT NULL DEFAULT '',
-                entity_type TEXT DEFAULT 'company',
-                aliases TEXT DEFAULT '',
-                description TEXT DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(name, domain)
-            )
-        ''')
+            conn.commit()
 
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS intel_entity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                intelligence_id INTEGER NOT NULL,
-                entity_id INTEGER NOT NULL,
-                relevance TEXT DEFAULT 'primary',
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (intelligence_id) REFERENCES intelligence(id) ON DELETE CASCADE,
-                FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
-                UNIQUE(intelligence_id, entity_id)
-            )
-        ''')
+        # Step 3: Verify data integrity after migration
+        post_counts = _record_counts(db_path)
+        if pre_counts:
+            lost = {t: pre_counts[t] - post_counts.get(t, 0) for t in pre_counts if pre_counts[t] != post_counts.get(t, -1)}
+            lost_real = {k: v for k, v in lost.items() if v > 0}
+            if lost_real:
+                msg = f"[migrate_db] DATA LOSS DETECTED! Lost records in: {lost_real}. Attempting restore from backup..."
+                print(msg)
+                if _restore_backup(db_path, backup_path):
+                    print(f"[migrate_db] Restored from backup: {backup_path}")
+                else:
+                    print(f"[migrate_db] FAILED to restore backup: {backup_path}")
+                raise RuntimeError(msg)
+            else:
+                print(f"[migrate_db] post-migration counts: {post_counts}")
+                print("[migrate_db] data integrity OK")
 
-        # Migration: add subscriptions table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS subscriptions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                domain TEXT NOT NULL DEFAULT '',
-                type TEXT NOT NULL DEFAULT 'keyword',
-                value TEXT NOT NULL,
-                channel TEXT DEFAULT 'in_app',
-                enabled INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        ''')
-
-        # Migration: add notifications table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                domain TEXT NOT NULL DEFAULT '',
-                title TEXT NOT NULL DEFAULT '',
-                content TEXT DEFAULT '',
-                is_read INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL
-            )
-        ''')
-
-        # Fix NULL enabled values (from old migration that added column without default)
-        c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
-
-        # Migration: add project_id to intelligence table if missing
-        try:
-            c.execute('ALTER TABLE intelligence ADD COLUMN project_id INTEGER')
-        except Exception:
-            pass  # column already exists
-
-        # Migration: add source_url to intelligence table if missing
-        try:
-            c.execute('ALTER TABLE intelligence ADD COLUMN source_url TEXT DEFAULT ""')
-        except Exception:
-            pass  # column already exists
-
-        # Ensure default users exist
-        now = datetime.now().isoformat()
-        existing_users = {r['username'] for r in c.execute('SELECT username FROM users').fetchall()}
-        if 'admin' not in existing_users:
-            h, s = _hash_password('admin123')
-            c.execute(
-                'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                ('admin', h, s, '管理员', 'admin', 1, now, now)
-            )
-        if 'user' not in existing_users:
-            h, s = _hash_password('user123')
-            c.execute(
-                'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                ('user', h, s, '普通用户', 'user', 1, now, now)
-            )
-
-        conn.commit()
+    except Exception as e:
+        # Step 4: On any error, try to restore backup
+        print(f"[migrate_db] error: {e}")
+        if backup_path:
+            if _restore_backup(db_path, backup_path):
+                print(f"[migrate_db] restored from backup: {backup_path}")
+            else:
+                print(f"[migrate_db] FAILED to restore backup: {backup_path}")
+        raise
