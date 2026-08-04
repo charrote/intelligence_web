@@ -14,6 +14,17 @@ except ImportError:
     requests = None
 
 
+# Local DB context manager (avoids circular import with core.db)
+@contextmanager
+def _get(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Meilisearch HTTP client (no SDK dependency)
 # ---------------------------------------------------------------------------
@@ -94,7 +105,7 @@ class MeiliSearchEngine:
             rows = conn.execute("""
                 SELECT i.id, i.title, i.content, i.category, i.status,
                        i.company, i.contact_name, i.created_at,
-                       i.updated_at, p.name AS project_name
+                       i.updated_at, i.source_url, p.name AS project_name
                 FROM intelligence i
                 LEFT JOIN projects p ON i.project_id = p.id
                 ORDER BY i.id
@@ -118,7 +129,7 @@ class MeiliSearchEngine:
                     "contact_name": row["contact_name"],
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
-                    "source_url": "",  # Not stored per-record in current schema
+                    "source_url": row["source_url"],
                     "entity_ids": entity_ids,
                 })
         return docs
@@ -192,7 +203,7 @@ class NoopEngine:
             with _get(self.db_path) as conn:
                 rows = conn.execute("""
                     SELECT id, title, content, category, status,
-                           company, contact_name, created_at
+                           company, contact_name, source_url, created_at
                     FROM intelligence
                     WHERE title LIKE ? OR content LIKE ? OR category LIKE ?
                     LIMIT ?
@@ -206,6 +217,7 @@ class NoopEngine:
                         "status": row["status"],
                         "company": row["company"],
                         "contact_name": row["contact_name"],
+                        "source_url": row["source_url"] or "",
                         "created_at": row["created_at"],
                         "entity_ids": [],
                         "_score": 0.0,

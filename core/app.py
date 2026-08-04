@@ -356,6 +356,7 @@ def create_app(project_root, spec):
                     "company": row_data.get('company', ''),
                     "deal_value": 0,
                     "industry": row_data.get('industry', ''),
+                    "source_url": source_url,
                 },
                 project_id=eff_project_id,
             )

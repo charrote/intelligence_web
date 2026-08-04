@@ -40,6 +40,7 @@ def init_db(project_root, spec):
             deal_value REAL DEFAULT 0,
             industry TEXT DEFAULT '',
             project_id INTEGER,
+            source_url TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -146,11 +147,12 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
         company = metadata.get("company", "") if metadata else ""
         deal_value = metadata.get("deal_value", 0) if metadata else 0
         industry = metadata.get("industry", "") if metadata else ""
+        source_url = metadata.get("source_url", "") if metadata else ""
         now = datetime.now().isoformat()
         try:
             cursor = conn.execute(
-                'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (title.strip(), content, category or '', 'pending', '', contact_name or '', company, deal_value, industry, project_id, now, now)
+                'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, source_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (title.strip(), content, category or '', 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, now, now)
             )
             conn.commit()
             return cursor.lastrowid
@@ -546,6 +548,7 @@ def migrate_db(db_path):
             ('role', 'TEXT DEFAULT "user"'),
             ('enabled', 'INTEGER DEFAULT 1'),
             ('salt', 'TEXT DEFAULT ""'),
+            ('created_at', 'TEXT DEFAULT ""'),
             ('updated_at', 'TEXT DEFAULT ""'),
         ]:
             try:
@@ -631,6 +634,12 @@ def migrate_db(db_path):
         # Migration: add project_id to intelligence table if missing
         try:
             c.execute('ALTER TABLE intelligence ADD COLUMN project_id INTEGER')
+        except Exception:
+            pass  # column already exists
+
+        # Migration: add source_url to intelligence table if missing
+        try:
+            c.execute('ALTER TABLE intelligence ADD COLUMN source_url TEXT DEFAULT ""')
         except Exception:
             pass  # column already exists
 
