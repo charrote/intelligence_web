@@ -23,15 +23,25 @@ def init_db(project_root, spec):
     Backs up the database before schema changes and verifies data integrity after.
     """
     db_path = get_db_path(project_root, spec.get("db_filename") or spec["slug"])
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    data_dir = os.path.dirname(db_path)
 
-    # Backup before init
+    # Ensure data directory exists and is writable
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+        if not os.access(data_dir, os.W_OK):
+            raise PermissionError(f"Data directory not writable: {data_dir}")
+    except (OSError, PermissionError) as e:
+        raise RuntimeError(f"Cannot initialize database: {e}")
+
+    # Backup before init (skip if DB doesn't exist yet — first run)
     backup_path = _backup_db(db_path)
-
-    # Record pre-init counts
-    pre_counts = _record_counts(db_path)
+    pre_counts = None
 
     try:
+        # Record pre-init counts; if DB doesn't exist yet (brand new), it's empty
+        if os.path.exists(db_path):
+            pre_counts = _record_counts(db_path)
+
         status_names = [s[1] for s in spec["statuses"]]
         extra_defs = " ".join(f"{c[0]} {c[1]}" for c in spec["extra_columns"])
 
@@ -190,7 +200,8 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
             )
             conn.commit()
             return cursor.lastrowid
-        except Exception:
+        except Exception as e:
+            print(f"[create_intelligence] ERROR inserting '{title}': {e}")
             return None
 
 
@@ -505,12 +516,19 @@ def _backup_db(db_path):
     if not os.path.exists(db_path):
         return None
     backup_dir = os.path.join(os.path.dirname(db_path), "backups")
-    os.makedirs(backup_dir, exist_ok=True)
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+    except OSError as e:
+        print(f"[backup] WARNING: cannot create backup dir {backup_dir}: {e}")
+        return None
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"{os.path.basename(db_path)}_{ts}.bak"
     backup_path = os.path.join(backup_dir, backup_name)
     try:
         shutil.copy2(db_path, backup_path)
+        # Verify backup is readable and non-empty
+        if os.path.getsize(backup_path) == 0:
+            raise OSError(f"Backup file is empty: {backup_path}")
         return backup_path
     except Exception:
         return None
@@ -519,16 +537,27 @@ def _backup_db(db_path):
 def _restore_backup(db_path, backup_path):
     """Restore database from backup. Returns True on success."""
     if not backup_path or not os.path.exists(backup_path):
+        print(f"[restore] backup file not found: {backup_path}")
         return False
     try:
         shutil.copy2(backup_path, db_path)
+        if os.path.getsize(db_path) == 0:
+            print(f"[restore] ERROR: restored file is empty: {db_path}")
+            return False
+        print(f"[restore] restored {db_path} from {backup_path}")
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[restore] ERROR: {e}")
         return False
 
 
 def _record_counts(db_path):
-    """Get record counts for all tables. Returns dict of {table: count}."""
+    """Get record counts for all tables. Returns dict of {table: count}.
+
+    Raises FileNotFoundError if db_path does not exist (database was deleted).
+    """
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f"Database file not found at {db_path} (deleted before migration?)")
     counts = {}
     try:
         with get_db(db_path) as conn:
@@ -543,7 +572,7 @@ def _record_counts(db_path):
                 except Exception:
                     counts[name] = -1
     except Exception:
-        pass
+        raise
     return counts
 
 
@@ -555,15 +584,28 @@ def migrate_db(db_path):
     """
     # Step 1: Backup before migration
     backup_path = _backup_db(db_path)
-    if backup_path:
-        print(f"[migrate_db] backup created: {backup_path}")
+    if backup_path and not os.path.exists(backup_path):
+        backup_path = None
 
-    # Step 2: Record pre-migration counts for verification
-    pre_counts = _record_counts(db_path)
-    if pre_counts:
-        print(f"[migrate_db] pre-migration counts: {pre_counts}")
+    # If we couldn't create a backup (DB was deleted), look for existing backup
+    if not backup_path:
+        backup_dir = os.path.join(os.path.dirname(db_path), "backups")
+        if os.path.isdir(backup_dir):
+            bak_files = sorted([f for f in os.listdir(backup_dir)
+                                if f.startswith(os.path.basename(db_path)) and f.endswith('.bak')])
+            if bak_files:
+                backup_path = os.path.join(backup_dir, bak_files[-1])
 
     try:
+        # Check DB still exists (catches deletion between backup and migration)
+        if not os.path.exists(db_path):
+            raise FileNotFoundError(f"Database file was deleted before migration: {db_path}")
+
+        # Record pre-migration counts INSIDE try — catches deletion before migration
+        pre_counts = _record_counts(db_path)
+        if pre_counts:
+            print(f"[migrate_db] pre-migration counts: {pre_counts}")
+
         with get_db(db_path) as conn:
             c = conn.cursor()
 

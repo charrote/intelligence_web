@@ -11,17 +11,13 @@ sys.path.insert(0, _PROJECT_ROOT)
 sys.path.insert(0, _DOMAIN_DIR)
 
 from core.app import create_app
-from core.db import init_db, migrate_db, get_db_path, create_intelligence
+from core.db import create_intelligence, get_db_path
 from domain_spec import SPEC
 
-# Init DB
-init_db(_PROJECT_ROOT, SPEC)
+# Create app — init_db + migrate_db are called inside create_app
+app = create_app(_PROJECT_ROOT, SPEC)
 
-# Migrate (add new columns/tables for existing databases)
-db_path = get_db_path(_PROJECT_ROOT, SPEC["slug"])
-migrate_db(db_path)
-
-# Seed demo data
+# Seed demo data AFTER database is ready
 db_path = get_db_path(_PROJECT_ROOT, SPEC["slug"])
 import sqlite3
 conn = sqlite3.connect(db_path)
