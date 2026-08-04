@@ -208,6 +208,10 @@ function apiFetch(url, options = {}) {
 
 async function init() {
   if (!checkAuth()) return;
+  const user = getUser();
+  if (user && user.role === 'admin') {
+    isAdmin = true;
+  }
   try {
     const res = await apiFetch(apiBase() + '/api/domain_config');
     domainConfig = await res.json();
@@ -450,6 +454,7 @@ function initCapacityChart(suppliers) {
 
 // ========== Detail Panel ==========
 let currentIntel = null;
+let isAdmin = false;
 
 async function openDetail(id) {
   try {
@@ -494,6 +499,7 @@ function renderDetail() {
   else if (d.status === 'proposal') btns = '<button class="btn btn-primary" onclick="updateStatus(\'negotiation\')">进入谈判</button>';
   else if (d.status === 'negotiation') btns = '<button class="btn btn-success" onclick="updateStatus(\'won\')">成交</button><button class="btn btn-danger" onclick="updateStatus(\'lost\')">丢标</button>';
   btns += '<span class="spacer"></span><button class="btn btn-ghost" onclick="updateStatus(\'discarded\')">废止</button>';
+  if (isAdmin) btns += '<button class="btn btn-danger" onclick="deleteIntel('+currentIntel.id+')" style="margin-left:4px;background:#b33a3a;color:#fff">删除</button>';
   foot.innerHTML = btns;
 }
 
@@ -513,6 +519,24 @@ async function updateStatus(status) {
       filterCards();
     }
   } catch(e) {}
+}
+
+async function deleteIntel(id) {
+  if (!confirm('确定删除该情报？此操作不可恢复。')) return;
+  try {
+    const r = await fetch(apiBase() + '/api/intelligence/' + id, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (r.ok) {
+      closePanel();
+      await loadData();
+      filterCards();
+    } else {
+      const data = await r.json();
+      alert(data.error || '删除失败');
+    }
+  } catch(e) { alert('删除失败'); }
 }
 
 async function loadComments(id) {

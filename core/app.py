@@ -9,6 +9,7 @@ from core.db import (
     init_db, migrate_db, get_db_path, create_intelligence,
     get_intelligences, get_intelligence_by_id, get_intelligence_by_project,
     get_intelligence_count_for_project, update_intelligence_status,
+    delete_intelligence,
     get_history, get_categories,
     add_comment, get_comments,
     add_summary, get_summary, get_dashboard_stats,
@@ -161,6 +162,18 @@ def create_app(project_root, spec):
         if intel is None:
             return jsonify({'error': 'not found'}), 404
         return jsonify(intel)
+
+    @app.route('/api/intelligence/<int:id>', methods=['DELETE'])
+    def delete_intelligence_endpoint(id):
+        """Delete an intelligence record. Admin only."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        if delete_intelligence(db_path, id):
+            return jsonify({'ok': True})
+        return jsonify({'error': 'not found'}), 404
 
     @app.route('/api/intelligence/<int:id>/status', methods=['PUT'])
     def update_status(id):

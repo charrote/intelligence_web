@@ -67,6 +67,7 @@ var allItems = [];
 var domainConfig = null, statusMap = {};
 var domainPort = parseInt(window.location.port) || (location.protocol === 'https:' ? 443 : 80);
 var allProjects = [];
+var isAdmin = (getUser() && getUser().role === 'admin');
 
 function escapeHtml(s) {
   if (!s) return '';
@@ -233,6 +234,7 @@ function renderDetail() {
   else if(d.status==='approved')btns+='<button class="btn btn-primary" onclick="updateStatus(\'active\')">激活项目</button>';
   else if(d.status==='active')btns+='<button class="btn btn-primary" onclick="updateStatus(\'completed\')">标记完结</button>';
   btns+='<span class="spacer"></span><button class="btn btn-ghost" onclick="updateStatus(\'discarded\')">废止</button>';
+  if(isAdmin){btns+='<button class="btn btn-danger" onclick="deleteIntel('+currentIntel.id+')" style="margin-left:4px;background:#b33a3a;color:#fff">删除</button>';}
   foot.innerHTML=btns;
 }
 
@@ -245,6 +247,15 @@ async function updateStatus(status) {
     var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+currentIntel.id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status,opinion:opinion})});
     if(r.ok){currentIntel.status=status;if(opinion)currentIntel.opinion=opinion;renderDetail();await loadData();render();}
   }catch(e){}
+}
+
+async function deleteIntel(id) {
+  if(!confirm('确定删除该情报？此操作不可恢复。')) return;
+  try {
+    var r = await apiFetch(APP_API_BASE+'/api/intelligence/'+id, {method:'DELETE'});
+    if(r.ok){ closePanel(); await loadData(); render(); }
+    else { var data = await r.json(); alert(data.error || '删除失败'); }
+  } catch(e) { alert('删除失败'); }
 }
 
 async function loadComments(id) {

@@ -830,7 +830,10 @@ async function loadMcpTools() {
 // ── Service Health ──
 async function loadServiceHealth() {
   try {
-    var r = await fetch(apiBase() + '/api/system/services/health');
+    var r = await fetch(apiBase() + '/api/system/services/health', {
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    if (!r.ok) return;
     var data = await r.json();
     var grid = document.getElementById('serviceGrid');
     var html = '';

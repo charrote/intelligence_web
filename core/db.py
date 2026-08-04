@@ -284,6 +284,26 @@ def add_command_content(db_path, content):
         return cursor.lastrowid
 
 
+def delete_intelligence(db_path, intel_id):
+    """Delete an intelligence record and all its related data.
+    Returns True on success, False if not found.
+    Child tables cleaned up: history, comments, summaries, intel_entity.
+    """
+    with get_db(db_path) as conn:
+        # Verify record exists
+        row = conn.execute('SELECT id FROM intelligence WHERE id = ?', (intel_id,)).fetchone()
+        if not row:
+            return False
+        # Delete related records (no CASCADE on these tables)
+        conn.execute('DELETE FROM history WHERE intelligence_id = ?', (intel_id,))
+        conn.execute('DELETE FROM comments WHERE intelligence_id = ?', (intel_id,))
+        conn.execute('DELETE FROM summaries WHERE intelligence_id = ?', (intel_id,))
+        conn.execute('DELETE FROM intel_entity WHERE intelligence_id = ?', (intel_id,))
+        conn.execute('DELETE FROM intelligence WHERE id = ?', (intel_id,))
+        conn.commit()
+        return True
+
+
 def get_intelligences(db_path, filters=None):
     with get_db(db_path) as conn:
         cursor = conn.cursor()
