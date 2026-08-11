@@ -209,7 +209,7 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
             <input type="password" id="apiKey" placeholder="sk-..." style="flex:1">
             <button class="btn btn-ghost" onclick="toggleApiKey()" id="toggleKeyBtn" title="显示/隐藏">👁</button>
           </div>
-          <div class="hint">用于 AI Agent 调用的 API 密钥，加密存储</div>
+          <div class="hint">用于 AI Agent 调用的 API 密钥，加密存储。加载时显示脱敏值，需重新输入完整 Key 才能更新</div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -225,7 +225,10 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
           <label>最大 Token</label>
           <input type="number" id="modelMaxTokens" placeholder="4096">
         </div>
-        <button class="btn btn-primary" onclick="saveModelSettings()">保存模型配置</button>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <button class="btn btn-primary" onclick="saveModelSettings()">保存模型配置</button>
+          <button class="btn btn-ghost" onclick="testModelConnection()" id="testModelBtn">测试连接</button>
+        </div>
       </div>
     </div>
   </div>
@@ -353,9 +356,6 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
 </main>
 
 <script>
-const token = localStorage.getItem('token');
-if (!token) { window.location.href = '/portal/login.html'; }
-
 var currentUser = null;
 
 // ── Tab switching ──
@@ -435,9 +435,8 @@ async function changePassword() {
   if (!newPw || newPw.length < 6) { alert('新密码至少6位'); return; }
   if (newPw !== confirmPw) { alert('两次输入的新密码不一致'); return; }
   try {
-    var r = await fetch(apiBase() + '/api/users/me/password', {
+    var r = await apiFetch(apiBase() + '/api/users/me/password', {
       method: 'PUT',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ old_password: oldPw, new_password: newPw }),
     });
     var data = await r.json();
@@ -457,9 +456,8 @@ async function changePassword() {
 async function updateSub(type, value) {
   if (!currentUser) return;
   try {
-    await fetch(apiBase() + '/api/subscriptions', {
+    await apiFetch(apiBase() + '/api/subscriptions', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: type, value: value, channel: 'in_app' }),
     });
   } catch(e) {}
@@ -477,9 +475,7 @@ function toggleApiKey() {
 
 async function loadSystemSettings() {
   try {
-    var r = await fetch(apiBase() + '/api/system/settings', {
-      headers: { 'Authorization': 'Bearer ' + token },
-    });
+    var r = await apiFetch(apiBase() + '/api/system/settings');
     if (!r.ok) return;
     var settings = await r.json();
 
@@ -505,19 +501,33 @@ async function loadSystemSettings() {
 }
 
 async function saveModelSettings() {
-  var data = {
-    'model.provider': document.getElementById('modelProvider').value,
-    'model.api_base_url': document.getElementById('apiBaseUrl').value.trim(),
-    'model.api_key': document.getElementById('apiKey').value.trim(),
-    'model.name': document.getElementById('modelName').value.trim(),
-    'model.temperature': parseFloat(document.getElementById('modelTemp').value) || 0.7,
-    'model.max_tokens': parseInt(document.getElementById('modelMaxTokens').value) || 4096,
-    'system.last_updated': new Date().toISOString(),
-  };
+  var apiKeyValue = document.getElementById('apiKey').value.trim();
+  // 如果 API Key 包含脱敏标记 ***，说明是加载时的脱敏值，不保存
+  if (apiKeyValue.includes('***')) {
+    // 只保存其他字段，不更新 API Key
+    var data = {
+      'model.provider': document.getElementById('modelProvider').value,
+      'model.api_base_url': document.getElementById('apiBaseUrl').value.trim(),
+      'model.name': document.getElementById('modelName').value.trim(),
+      'model.temperature': parseFloat(document.getElementById('modelTemp').value) || 0.7,
+      'model.max_tokens': parseInt(document.getElementById('modelMaxTokens').value) || 4096,
+      'system.last_updated': new Date().toISOString(),
+    };
+    showToast('提示：API Key 未更改（显示为脱敏值，需重新输入完整 Key 才能更新）', 'warning');
+  } else {
+    var data = {
+      'model.provider': document.getElementById('modelProvider').value,
+      'model.api_base_url': document.getElementById('apiBaseUrl').value.trim(),
+      'model.api_key': apiKeyValue,
+      'model.name': document.getElementById('modelName').value.trim(),
+      'model.temperature': parseFloat(document.getElementById('modelTemp').value) || 0.7,
+      'model.max_tokens': parseInt(document.getElementById('modelMaxTokens').value) || 4096,
+      'system.last_updated': new Date().toISOString(),
+    };
+  }
   try {
-    var r = await fetch(apiBase() + '/api/system/settings', {
+    var r = await apiFetch(apiBase() + '/api/system/settings', {
       method: 'PUT',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
     var res = await r.json();
@@ -532,15 +542,48 @@ async function saveModelSettings() {
   }
 }
 
+async function testModelConnection() {
+  var btn = document.getElementById('testModelBtn');
+  var origText = btn.textContent;
+  var apiKey = document.getElementById('apiKey').value.trim();
+  var modelName = document.getElementById('modelName').value.trim();
+  if (!apiKey) {
+    showToast('请先填写 API Key', 'warning');
+    document.getElementById('apiKey').focus();
+    return;
+  }
+  if (!modelName) {
+    showToast('请先填写模型名称', 'warning');
+    document.getElementById('modelName').focus();
+    return;
+  }
+  btn.textContent = '测试中...';
+  btn.disabled = true;
+  try {
+    var r = await apiFetch(apiBase() + '/api/system/model/test', {
+      method: 'POST',
+    });
+    var res;
+    try { res = await r.json(); } catch(e) { res = {}; }
+    if (r.ok) {
+      showToast('连接成功！模型: ' + (res.model || '已连通'), 'success');
+    } else {
+      showToast(res.error || ('HTTP ' + r.status + ' 连接失败'), 'error');
+    }
+  } catch(e) {
+    showToast('网络错误: ' + e.message, 'error');
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
+
 async function loadMcpInfo() {
   try {
     var apiUrl = systemApiBase() + '/api/system/mcp/info';
     console.log('[MCP Info] 请求 URL:', apiUrl);
-    console.log('[MCP Info] token:', token ? '存在' : '不存在');
     
-    var r = await fetch(apiUrl, {
-      headers: { 'Authorization': 'Bearer ' + token },
-    });
+    var r = await apiFetch(apiUrl);
     console.log('[MCP Info] 响应状态:', r.status);
     
     if (!r.ok) {
@@ -624,9 +667,8 @@ async function resetMcpKey() {
     return;
   }
   try {
-    var r = await fetch(systemApiBase() + '/api/system/mcp/key/reset', {
+    var r = await apiFetch(systemApiBase() + '/api/system/mcp/key/reset', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
     });
     var res = await r.json();
     if (r.ok) {
@@ -646,9 +688,8 @@ async function toggleMcpAuth() {
   var newState = toggle.checked;
   
   try {
-    var r = await fetch(systemApiBase() + '/api/system/mcp/auth/toggle', {
+    var r = await apiFetch(systemApiBase() + '/api/system/mcp/auth/toggle', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
     });
     var res = await r.json();
     if (r.ok) {
@@ -681,7 +722,7 @@ async function toggleMcpAuth() {
 
 async function loadMcpAuthStatus() {
   try {
-    var r = await fetch(systemApiBase() + '/api/system/mcp/auth/status');
+    var r = await apiFetch(systemApiBase() + '/api/system/mcp/auth/status');
     var res = await r.json();
     
     var toggle = document.getElementById('mcpAuthToggle');
@@ -708,13 +749,9 @@ async function loadMcpAuthStatus() {
 // ── Domain Controller ──
 async function loadDomainController() {
   console.log('[Domain Controller] 开始加载...');
-  console.log('[Domain Controller] token:', token ? '存在' : '不存在');
-  console.log('[Domain Controller] apiBase():', apiBase());
   
   try {
-    var r = await fetch(apiBase() + '/api/system/domains', {
-      headers: { 'Authorization': 'Bearer ' + token },
-    });
+    var r = await apiFetch(apiBase() + '/api/system/domains');
     console.log('[Domain Controller] 响应状态:', r.status);
     
     if (!r.ok) {
@@ -768,9 +805,8 @@ async function loadDomainController() {
 
 async function toggleDomain(port, enabled) {
   try {
-    var r = await fetch(apiBase() + '/api/system/domains/' + port + '/toggle', {
+    var r = await apiFetch(apiBase() + '/api/system/domains/' + port + '/toggle', {
       method: 'PUT',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: enabled }),
     });
     var res = await r.json();
@@ -788,51 +824,64 @@ async function toggleDomain(port, enabled) {
 
 // ── MCP Tools ──
 var MCP_TOOLS = [
+  // ── 采集方向工具（Agent 必读） ──
+  { name: 'list_domains', desc: '动态发现所有可用情报域' },
+  { name: 'get_agent_workflow', desc: '获取指定域的 Agent 工作流配置' },
+  { name: 'list_active_projects', desc: '列出 active 采集项目，供 Agent 确定采集方向' },
+  { name: 'get_project_detail', desc: '获取单个采集项目详情和已关联情报（去重用）' },
+  // ── 情报管理 ──
   { name: 'search_intelligence', desc: '按关键词搜索情报' },
   { name: 'list_intelligence', desc: '列出指定领域的情报' },
   { name: 'get_intelligence', desc: '获取单条情报详情' },
-  { name: 'create_intelligence', desc: '创建新情报' },
+  { name: 'create_intelligence', desc: '创建新情报（支持 project_id 关联项目）' },
   { name: 'update_intelligence_status', desc: '更新情报状态' },
+  { name: 'add_comment', desc: '为情报添加评论' },
+  // ── 数据源 ──
   { name: 'list_data_sources', desc: '列出数据源' },
   { name: 'create_data_source', desc: '创建数据源' },
   { name: 'get_crawl_logs', desc: '获取采集日志' },
+  // ── 实体管理 ──
   { name: 'list_entities', desc: '列出实体（公司/人物）' },
   { name: 'get_entity_by_name', desc: '按名称查找实体' },
   { name: 'link_intelligence_to_entity', desc: '将情报关联到实体' },
   { name: 'get_intel_for_entity', desc: '获取实体相关情报' },
+  // ── 通知 ──
   { name: 'list_subscriptions', desc: '列出用户订阅' },
   { name: 'create_subscription', desc: '创建订阅' },
   { name: 'get_notifications', desc: '获取通知' },
+  // ── 系统 ──
   { name: 'system_status', desc: '获取系统状态' },
 ];
 
 async function loadMcpTools() {
-  // Use hardcoded tool list (matches mcp_server/server.py)
   var body = document.getElementById('mcpToolsBody');
+  var tools = null;
+
+  // 优先从 API 获取动态工具列表（与 mcp_server 实时同步）
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/mcp/info');
+    if (r.ok) {
+      var data = await r.json();
+      tools = data.tools || null;
+    }
+  } catch(e) {}
+
+  // 降级：使用本地硬编码列表
+  if (!tools || tools.length === 0) {
+    tools = MCP_TOOLS;
+  }
+
   var html = '';
-  MCP_TOOLS.forEach(function(t) {
+  tools.forEach(function(t) {
     html += '<tr><td class="tool-name">' + escapeHtml(t.name) + '</td><td>' + escapeHtml(t.desc) + '</td></tr>';
   });
   body.innerHTML = html;
-
-  // Also fetch live status from MCP server
-  try {
-    var r = await fetch(systemApiBase() + '/api/system/mcp/auth/status', {
-      headers: { 'Authorization': 'Bearer ' + token },
-    });
-    if (r.ok) {
-      var status = await r.json();
-      // Could update UI with live status
-    }
-  } catch(e) {}
 }
 
 // ── Service Health ──
 async function loadServiceHealth() {
   try {
-    var r = await fetch(apiBase() + '/api/system/services/health', {
-      headers: { 'Authorization': 'Bearer ' + token },
-    });
+    var r = await apiFetch(apiBase() + '/api/system/services/health');
     if (!r.ok) return;
     var data = await r.json();
     var grid = document.getElementById('serviceGrid');
@@ -859,22 +908,20 @@ async function loadServiceHealth() {
 // ── System Info ──
 async function loadSystemInfo() {
   try {
-    var r = await fetch(apiBase() + '/api/system/settings', {
-      headers: { 'Authorization': 'Bearer ' + token },
-    });
+    var r = await apiFetch(apiBase() + '/api/system/settings');
     if (!r.ok) return;
     var settings = await r.json();
 
     // Load source count from datasources API
     try {
-      var dsR = await fetch(apiBase() + '/api/datasources');
+      var dsR = await apiFetch(apiBase() + '/api/datasources');
       var sources = await dsR.json();
       document.getElementById('sourceCount').textContent = sources.length || '-';
     } catch(e) {}
 
     // Load intel count
     try {
-      var intelR = await fetch(apiBase() + '/api/intelligence?limit=1');
+      var intelR = await apiFetch(apiBase() + '/api/intelligence?limit=1');
       // Headers might not have total, just count what we get
       var intelData = await intelR.json();
       if (Array.isArray(intelData)) {

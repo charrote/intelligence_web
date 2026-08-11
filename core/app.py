@@ -868,6 +868,37 @@ def create_app(project_root, spec):
                 except Exception:
                     pass
 
+            # MCP 已注册工具列表（与 mcp_server/server.py 保持一致）
+            _MCP_TOOLS = [
+                # 采集方向工具
+                {'name': 'list_domains', 'desc': '动态发现所有可用情报域'},
+                {'name': 'get_agent_workflow', 'desc': '获取指定域的 Agent 工作流配置'},
+                {'name': 'list_active_projects', 'desc': '列出 active 采集项目'},
+                {'name': 'get_project_detail', 'desc': '获取单个采集项目详情'},
+                # 情报管理
+                {'name': 'search_intelligence', 'desc': '按关键词搜索情报'},
+                {'name': 'list_intelligence', 'desc': '列出情报'},
+                {'name': 'get_intelligence', 'desc': '获取单条情报详情'},
+                {'name': 'create_intelligence', 'desc': '创建新情报'},
+                {'name': 'update_intelligence_status', 'desc': '更新情报状态'},
+                {'name': 'add_comment', 'desc': '为情报添加评论'},
+                # 数据源
+                {'name': 'list_data_sources', 'desc': '列出数据源'},
+                {'name': 'create_data_source', 'desc': '创建数据源'},
+                {'name': 'get_crawl_logs', 'desc': '获取采集日志'},
+                # 实体管理
+                {'name': 'list_entities', 'desc': '列出实体'},
+                {'name': 'get_entity_by_name', 'desc': '按名称查找实体'},
+                {'name': 'link_intelligence_to_entity', 'desc': '将情报关联到实体'},
+                {'name': 'get_intel_for_entity', 'desc': '获取实体相关情报'},
+                # 通知
+                {'name': 'list_subscriptions', 'desc': '列出用户订阅'},
+                {'name': 'create_subscription', 'desc': '创建订阅'},
+                {'name': 'get_notifications', 'desc': '获取通知'},
+                # 系统
+                {'name': 'system_status', 'desc': '获取系统状态'},
+            ]
+
             # 返回 MCP 服务器信息
             return jsonify({
                 'url': mcp_config['url'],
@@ -876,7 +907,8 @@ def create_app(project_root, spec):
                 'auto_detected': True,
                 'agent_key': mcp_agent_key,
                 'transport': mcp_config['transport'],
-                'tools_count': 16,  # 已注册的工具数量
+                'tools_count': len(_MCP_TOOLS),
+                'tools': _MCP_TOOLS,
             })
         except Exception as e:
             logging.error(f"MCP info API error: {e}")
@@ -1237,5 +1269,348 @@ def create_app(project_root, spec):
         if payload is None:
             return Response('Unauthorized', status=401)
         return Response('Authorized', status=200)
+
+    # ========================================================================
+    # AI Analyst
+    # ========================================================================
+
+    def _parse_reasoning(raw_reasoning):
+        """从 reasoning 字段分离 thinking（推理过程）和 answer（最终回复）。
+
+        支持两种格式：
+        1. 有分隔标记：'...thinking...\\n\\nFinal Output Generation: ...\\nanswer...'
+        2. 无分隔标记：整段都是 thinking（模型习惯性地输出思考过程）
+
+        返回 (thinking, answer) 元组，未分离时 thinking=''。
+        """
+        import re as _re
+
+        # 检测 thinking 标记
+        thinking_pattern = (
+            r'(?:^|\n)\s*(?:Here\'s a thinking process|## Reasoning|'
+            r'让我分析一下|## 分析过程|## 思考过程)'
+        )
+        has_thinking = bool(_re.search(thinking_pattern, raw_reasoning))
+
+        if not has_thinking:
+            return '', raw_reasoning
+
+        # 尝试找分隔标记（放宽匹配：允许前面的编号、markdown 格式等）
+        separator_patterns = [
+            r'(?:^|\\n).*?Final\\s+Output[\\s:]*',
+            r'(?:^|\\n).*?最终答案[\\s:]*',
+            r'(?:^|\\n).*?##\\s+Final\\s+Output',
+            r'(?:^|\\n).*?##\\s+最终答案',
+        ]
+        split_idx = None
+        for sp in separator_patterns:
+            m = _re.search(sp, raw_reasoning, _re.IGNORECASE)
+            if m:
+                split_idx = m.start()
+                break
+
+        if split_idx is not None:
+            thinking = raw_reasoning[:split_idx].strip()
+            answer = raw_reasoning[split_idx:].strip()
+            # 清理分隔标记前的多余内容
+            answer = _re.sub(r'^[ \\t\\n\\r]+', '', answer)
+            return thinking, answer
+        else:
+            # 有 thinking 标记但没有分隔 → 整段是思考过程，无正式回复
+            return raw_reasoning.strip(), ''
+
+    @app.route('/api/analyst/analyze', methods=['POST'])
+    def analyst_analyze():
+        """AI 分析师：基于情报数据回答用户问题。
+
+        流程：搜索相关情报 → 构建上下文 → 调用 AI 模型 → 返回分析结果
+        """
+        import requests as _requests
+        import collections as _collections
+        import json as _json
+        from core.search import create_search_engine, NoopEngine
+
+        data = request.json or {}
+        query = (data.get('query') or '').strip()
+        domain = data.get('domain') or spec['slug']
+        max_results = min(int(data.get('max_results') or 20), 50)
+
+        if not query:
+            return jsonify({'error': '查询内容不能为空'}), 400
+
+        # --- Step 1: 搜索相关情报（限制数量以减少 token） ---
+        search_config = spec.get('search') or {}
+        search_engine = create_search_engine(db_path, search_config)
+        search_result = search_engine.search(query, limit=max(3, max_results))
+        search_items = search_result.get('items', [])
+
+        # Meilisearch 未索引或不可用时，降级到 SQLite 模糊搜索
+        if not search_items:
+            sqlite_engine = NoopEngine(db_path, {})
+            sqlite_result = sqlite_engine.search(query, limit=3)
+            search_items = sqlite_result.get('items', [])
+
+        # 统计摘要（给 AI 直接引用数据用）— 精简格式
+        stats = {}
+        if search_items:
+            if any(item.get('category') for item in search_items):
+                cat_counts = _collections.Counter(item.get('category', '未分类') for item in search_items)
+                stats['category'] = dict(cat_counts)
+            if any(item.get('company') for item in search_items):
+                comp_counts = _collections.Counter(item.get('company', '').strip() for item in search_items if item.get('company', '').strip())
+                if comp_counts:
+                    stats['company'] = dict(comp_counts)
+            if any(item.get('created_at') for item in search_items):
+                month_counts = _collections.Counter((item.get('created_at', '') or '')[:7] for item in search_items if item.get('created_at', '') and len(item['created_at']) >= 7)
+                if month_counts:
+                    sorted_months = sorted(month_counts.keys())
+                    stats['trend'] = {sorted_months[i]: month_counts[sorted_months[i]] for i in range(len(sorted_months))}
+
+        stats_json = _json.dumps(stats, ensure_ascii=False) if stats else '{}'
+
+        # 领域配置
+        domain_info = {
+            'title': spec.get('title_prefix', domain),
+            'statuses': {k: v for k, v in spec.get('statuses', [])},
+            'agent_names': spec.get('agent_names', []),
+        }
+
+        # 将搜索结果格式化为结构化上下文（精简版）
+        context_parts = []
+        for idx, item in enumerate(search_items[:3], start=1):
+            parts = [f"【情报 #{item.get('id', idx)}】标题: {item.get('title', '')}"]
+            if item.get('category'):
+                parts.append(f"分类: {item['category']}")
+            if item.get('company'):
+                parts.append(f"公司: {item['company']}")
+            if item.get('created_at'):
+                parts.append(f"时间: {item['created_at'][:10]}")
+            context_parts.append(' | '.join(parts))
+
+        context_text = '\\n\\n---\\n\\n'.join(context_parts)
+
+        # 如果没搜到结果，也告诉 AI
+        if not context_parts:
+            context_text = '(未搜索到相关情报记录)'
+
+        # 统计摘要（给 AI 直接引用数据用）— 精简 JSON
+        stats_text = '\\n\\n## 数据摘要\\n' + _json.dumps(stats, ensure_ascii=False) if stats else '\\n\\n## 数据摘要\\n无数据'
+
+        system_prompt = """你是一位专业情报分析师。你的每次回复必须包含 **文字分析 + 数据图表** 两部分，缺一不可。
+
+## 回复格式要求（严格遵守）
+
+### 第一部分：文字分析（必须有）
+- 用结构化段落回答用户问题，包含：
+  1. **核心发现**：2-3 句话概括最重要的结论
+  2. **详细分析**：用数字支撑观点，引用具体情报编号（如「情报 #1」）
+  3. **趋势判断**：基于数据给出方向性判断
+  4. **行动建议**：一行总结性建议
+- 文字分析是回复的核心，图表是辅助。文字不能少于 100 字。
+- 用中文回答。
+
+### 第二部分：数据图表（必须有）
+- 在文字分析结束后，必须用以下格式嵌入数据图表代码块（至少 1 个）：
+  
+  ```chart
+  {
+    "type": "pie",
+    "title": "分类分布",
+    "data": [{"name": "AI应用", "value": 8}, {"name": "MES系统", "value": 5}]
+  }
+  ```
+
+- 可选图表类型：
+  - `pie`：分类/占比分布
+  - `bar`：横向/纵向对比
+  - `line`：趋势变化（需包含 `labels` 和 `data` 字段）
+
+- 图表数据必须从「数据摘要」中实际引用，不得编造数据。
+
+## 重要原则
+1. **文字优先**：没有文字分析的回复视为不合格
+2. **图表必须**：每次回复至少生成 1 个图表代码块
+3. **数据真实**：所有图表数据和文字分析必须基于提供的情报数据
+4. **结构清晰**：使用 Markdown 格式，段落之间空一行
+"""
+
+        user_prompt = f"""## 用户问题
+{query}
+
+## 相关情报数据（{len(search_items)} 条）
+{context_text}
+
+{stats_text}"""
+
+        messages = [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': user_prompt},
+        ]
+
+        # --- Step 3: 调用 AI 模型 ---
+        provider = get_setting(db_path, 'model.provider') or 'openai'
+        api_base_url = (get_setting(db_path, 'model.api_base_url') or '').strip()
+        api_key = get_setting(db_path, 'model.api_key') or ''
+        model_name = get_setting(db_path, 'model.name') or ''
+
+        if not api_key:
+            return jsonify({'error': 'AI 模型未配置，请在系统设置中配置 API Key'}), 400
+        if not model_name:
+            return jsonify({'error': 'AI 模型未配置，请在系统设置中配置模型名称'}), 400
+
+        timeout = 90  # 分析师分析超时（模型响应较慢）
+        headers = {'Content-Type': 'application/json'}
+
+        if provider == 'anthropic':
+            if not api_base_url:
+                api_base_url = 'https://api.anthropic.com'
+            url = f'{api_base_url.rstrip("/")}/v1/messages'
+            headers['x-api-key'] = api_key
+            headers['anthropic-version'] = '2023-06-01'
+            payload = {
+                'model': model_name,
+                'max_tokens': 4096,
+                'messages': messages,
+            }
+        else:
+            # OpenAI 兼容格式（openai, custom, zhipu, etc.）
+            if not api_base_url:
+                api_base_url = 'https://api.openai.com/v1'
+            url = f'{api_base_url.rstrip("/")}/chat/completions'
+            headers['Authorization'] = f'Bearer {api_key}'
+            payload = {
+                'model': model_name,
+                'messages': messages,
+                'max_tokens': 500,
+            }
+
+        try:
+            resp = _requests.post(url, headers=headers, json=payload, timeout=timeout)
+
+            if resp.status_code != 200:
+                error_text = resp.text[:500]
+                return jsonify({
+                    'error': f'AI 模型调用失败 (HTTP {resp.status_code}): {error_text}',
+                    'searched': len(search_items),
+                }), 502
+
+            body = resp.json()
+
+            # 安全校验：body 必须是 dict
+            if not isinstance(body, dict):
+                return jsonify({
+                    'error': 'AI 模型返回格式异常',
+                    'detail': f'expected dict, got {type(body).__name__}',
+                    'searched': len(search_items),
+                }), 500
+
+            # Extract response text with thinking separation
+            analysis = ''
+            thinking = ''
+
+            if provider == 'anthropic':
+                content_blocks = body.get('content', [])
+                if isinstance(content_blocks, list):
+                    for block in content_blocks:
+                        if isinstance(block, dict) and block.get('type') == 'text':
+                            text = block.get('text', '')
+                            if text:
+                                analysis += text
+            else:
+                choices = body.get('choices', [])
+                if choices and isinstance(choices[0], dict):
+                    message = choices[0].get('message', {})
+                    if isinstance(message, dict):
+                        content = message.get('content')
+                        analysis = content if content else ''
+                        # 回退：某些模型（如 Ornith）将文本放在 reasoning 字段
+                        raw_reasoning = message.get('reasoning') or ''
+                        if not analysis and raw_reasoning:
+                            analysis = raw_reasoning
+
+                        # 解析 reasoning：分离 thinking 和最终回复
+                        # 情况A：content 有效 + reasoning 有 thinking → 从 reasoning 提取 thinking
+                        # 情况B：content 为空 + reasoning 有全部内容 → 解析 reasoning 分离
+                        if raw_reasoning:
+                            t, a = _parse_reasoning(raw_reasoning)
+                            if t:
+                                thinking = t
+                                if content:
+                                    analysis = content  # 优先用 content 作为正式回复
+                                elif a:
+                                    analysis = a
+                                elif not content:
+                                    # 模型只有思考过程没有正式回复（未完成），
+                                    # 直接返回空 analysis，前端会显示 thinking 提示用户
+                                    analysis = ''
+
+            # 如果是 error 响应（某些提供商在 200 中返回错误）
+            if 'error' in body and body['error']:
+                err_info = body['error']
+                err_msg = err_info.get('message', '') if isinstance(err_info, dict) else str(err_info)
+                return jsonify({
+                    'error': f'AI 模型返回错误: {err_msg[:300]}',
+                    'searched': len(search_items),
+                }), 500
+
+            if not analysis and not thinking:
+                return jsonify({
+                    'error': 'AI 模型未返回有效分析结果',
+                    'detail': f'provider={provider}, model={model_name}, status_code=200, body_keys={list(body.keys()) if isinstance(body, dict) else type(body).__name__}',
+                    'searched': len(search_items),
+                }), 500
+
+            # 构建图表配置
+            charts = []
+            if stats:
+                if 'category' in stats and stats['category']:
+                    charts.append({
+                        'type': 'pie',
+                        'title': '分类分布',
+                        'data': [{'name': k, 'value': v} for k, v in sorted(stats['category'].items(), key=lambda x: -x[1])],
+                    })
+                if 'company' in stats and stats['company']:
+                    charts.append({
+                        'type': 'bar',
+                        'title': '公司分布',
+                        'data': [{'name': k, 'value': v} for k, v in sorted(stats['company'].items(), key=lambda x: -x[1])],
+                    })
+                if 'trend' in stats and stats['trend']:
+                    trend_data = stats['trend']
+                    labels = list(trend_data.keys())
+                    values = list(trend_data.values())
+                    charts.append({
+                        'type': 'line',
+                        'title': '月度情报趋势',
+                        'labels': labels,
+                        'data': values,
+                    })
+
+            return jsonify({
+                'analysis': analysis,
+                'thinking': thinking,
+                'searched': len(search_items),
+                'model': body.get('model', model_name),
+                'usage': body.get('usage', {}),
+                'charts': charts,
+            })
+
+        except _requests.exceptions.Timeout:
+            return jsonify({
+                'error': f'AI 模型请求超时（超过 {timeout} 秒），请稍后重试',
+                'searched': len(search_items),
+            }), 408
+        except _requests.exceptions.ConnectionError as e:
+            return jsonify({
+                'error': f'无法连接 AI 模型服务: {str(e)[:200]}',
+                'searched': len(search_items),
+            }), 502
+        except Exception as e:
+            import logging
+            logging.error(f"Analyst API error: {e}")
+            return jsonify({
+                'error': f'分析失败: {str(e)[:200]}',
+                'searched': len(search_items),
+            }), 500
 
     return app
