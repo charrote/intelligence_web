@@ -36,6 +36,8 @@ from core import datasource as dslib
 from core import entity as entitylib
 from core import notify as notifylib
 from core import search as searchlib
+from core import project as projlib
+import importlib
 
 # Use FastMCP for proper MCP protocol handling
 server = FastMCP("intelligence-platform-mcp")
@@ -115,7 +117,214 @@ async def root_info(request):
     })
 
 
-# ====== MCP Tools ======
+# ====== Project & Workflow Tools (Agent 采集方向指导) ======
+
+@server.tool()
+def list_domains():
+    """List all available intelligence domains.
+
+    Returns each domain's slug, name, port, scout_label, and agent names.
+    Agent should use this to dynamically discover which domains exist,
+    then call get_agent_workflow(domain) and list_active_projects(domain)
+    for each one.
+    """
+    domains = []
+    for domain_key, mod_name in [
+        ("research", "intelligence_web.domain_spec"),
+        ("intelligence_web", "intelligence_web.domain_spec"),
+        ("sales", "intelligence_sales.domain_spec"),
+        ("intelligence_sales", "intelligence_sales.domain_spec"),
+    ]:
+        try:
+            mod = importlib.import_module(mod_name)
+            spec = mod.SPEC
+            domains.append({
+                "domain": spec["slug"],
+                "name": spec.get("title_prefix", ""),
+                "port": spec.get("port", ""),
+                "scout_label": spec.get("scout_label", ""),
+                "agent_names": spec.get("agent_names", []),
+                "target_types": spec.get("target_types", []),
+            })
+        except Exception:
+            pass
+    # Deduplicate by slug
+    seen = set()
+    unique = []
+    for d in domains:
+        if d["domain"] not in seen:
+            seen.add(d["domain"])
+            unique.append(d)
+    return {"domains": unique, "total": len(unique)}
+
+
+@server.tool()
+def get_agent_workflow(domain: str = "research"):
+    """Get the operating workflow for the specified domain.
+
+    Agent MUST call this first to understand:
+    - What statuses are valid in this domain
+    - What target types exist
+    - Pre-defined entities and data sources
+    - The complete collection workflow steps
+
+    domain: "research" (制造情报) or "sales" (销售情报)
+    """
+    spec_module_map = {
+        "research": "intelligence_web.domain_spec",
+        "intelligence_web": "intelligence_web.domain_spec",
+        "sales": "intelligence_sales.domain_spec",
+        "intelligence_sales": "intelligence_sales.domain_spec",
+    }
+    mod_name = spec_module_map.get(domain, "intelligence_web.domain_spec")
+    try:
+        mod = importlib.import_module(mod_name)
+        spec = mod.SPEC
+    except Exception as e:
+        return {"error": f"Cannot load domain spec for '{domain}': {e}"}
+
+    statuses = [{"key": k, "label": v} for k, v in spec["statuses"]]
+
+    workflow_steps = [
+        "1. 调用 list_domains() 动态发现所有可用域",
+        "2. 对每个域调用 get_agent_workflow(domain) 获取本域配置",
+        "3. 对每个域调用 list_active_projects(domain) 获取 active 采集项目",
+        "4. 对每个项目，自主解读 target_name + scope + instruction + datasources.indicators，构造搜索关键词",
+        "5. 调用 web_search 搜索每个关键词（3-5 条结果）",
+        "6. 调用 get_project_detail(domain, project_id) 获取已关联情报，用于去重",
+        "7. 调用 create_intelligence 入库新情报，必须传入 project_id 关联到对应项目",
+        "8. 每个域最多采集 20 条，完成后输出摘要",
+    ]
+
+    return {
+        "domain": domain,
+        "scout_label": spec.get("scout_label", ""),
+        "agent_names": spec.get("agent_names", []),
+        "statuses": statuses,
+        "target_types": spec.get("target_types", []),
+        "default_entities": spec.get("default_entities", []),
+        "default_data_sources": spec.get("default_data_sources", []),
+        "intelligence_ttl_days": spec.get("intelligence_ttl_days", {}),
+        "workflow_steps": workflow_steps,
+        "create_intelligence_fields": {
+            "required": ["title", "content", "category", "domain"],
+            "optional": ["project_id", "company", "contact", "deal_value", "source_url", "entity_ids"],
+            "project_id": "必填：采集时必须传入对应项目的 ID，确保情报归属正确",
+        },
+    }
+
+
+@server.tool()
+def list_active_projects(domain: str = "research", status: str = "active",
+                         target_type: str = None, limit: int = 50):
+    """List all active collection projects for the Agent to guide its collection scope.
+
+    Each project contains: target_name (采集目标), scope (采集范围),
+    instruction (采集指令), and linked datasources with indicators (采集源+指标).
+
+    The Agent should use these fields to autonomously construct search keywords.
+
+    domain: "research" or "sales"
+    status: "active" or "paused" (default "active")
+    target_type: optional filter, e.g. "competitor", "market"
+    """
+    db = get_db(domain)
+    filters = {"status": status} if status else {}
+
+    items = projlib.get_projects(db, filters)
+    result = []
+    for p in items[:limit]:
+        if target_type and p.get("target_type") != target_type:
+            continue
+        datasources = []
+        for ds in p.get("datasources", []):
+            indicators_raw = ds.get("indicators", "") or ""
+            indicators = [i.strip() for i in indicators_raw.split(",") if i.strip()] if indicators_raw else []
+            datasources.append({
+                "id": ds.get("id"),
+                "name": ds.get("name", ""),
+                "url": ds.get("url", ""),
+                "type": ds.get("type", ""),
+                "schedule": ds.get("schedule", ""),
+                "indicators": indicators,
+            })
+        result.append({
+            "id": p.get("id"),
+            "name": p.get("name", ""),
+            "target_type": p.get("target_type", ""),
+            "target_name": p.get("target_name", ""),
+            "scope": p.get("scope", ""),
+            "frequency": p.get("frequency", ""),
+            "instruction": p.get("instruction", ""),
+            "datasources": datasources,
+            "intel_count": p.get("total_intel", 0),
+            "status": p.get("status", ""),
+            "created_at": p.get("created_at", ""),
+        })
+    return {"domain": domain, "total": len(result), "items": result}
+
+
+@server.tool()
+def get_project_detail(domain: str = "research", project_id: int = 0):
+    """Get a single project's full detail including linked intelligence records.
+
+    Use this to:
+    - Understand the project's full context before deep collection
+    - Check recently collected intelligence to avoid duplicates
+
+    domain: "research" or "sales"
+    project_id: the project ID (from list_active_projects)
+    """
+    db = get_db(domain)
+    project = projlib.get_project_by_id(db, project_id)
+    if not project:
+        return {"error": f"Project ID {project_id} not found in domain '{domain}'"}
+
+    # Parse datasources indicators
+    datasources = []
+    for ds in project.get("datasources", []):
+        indicators_raw = ds.get("indicators", "") or ""
+        indicators = [i.strip() for i in indicators_raw.split(",") if i.strip()] if indicators_raw else []
+        datasources.append({
+            "id": ds.get("id"),
+            "name": ds.get("name", ""),
+            "url": ds.get("url", ""),
+            "type": ds.get("type", ""),
+            "schedule": ds.get("schedule", ""),
+            "indicators": indicators,
+        })
+
+    proj_detail = {
+        "id": project.get("id"),
+        "name": project.get("name", ""),
+        "target_type": project.get("target_type", ""),
+        "target_name": project.get("target_name", ""),
+        "scope": project.get("scope", ""),
+        "frequency": project.get("frequency", ""),
+        "instruction": project.get("instruction", ""),
+        "datasources": datasources,
+        "intel_count": project.get("total_intel", 0),
+        "status": project.get("status", ""),
+        "created_at": project.get("created_at", ""),
+    }
+
+    # Recent intelligence records (last 20)
+    recent_intel = dblib.get_intelligence_by_project(db, project_id, limit=20)
+    intel_items = []
+    for item in recent_intel:
+        intel_items.append({
+            "id": item.get("id"),
+            "title": item.get("title", ""),
+            "category": item.get("category", ""),
+            "status": item.get("status", ""),
+            "source_url": item.get("source_url", ""),
+            "created_at": item.get("created_at", ""),
+        })
+
+    return {"domain": domain, "project": proj_detail, "recent_intel": intel_items}
+
+
+# ====== Intelligence Tools ======
 
 @server.tool()
 def search_intelligence(query: str, domain: str = "research", limit: int = 10, status: str = None):
@@ -169,8 +378,13 @@ def get_intelligence(id: int, domain: str = "research"):
 @server.tool()
 def create_intelligence(title: str, content: str, category: str, domain: str = "research",
                         company: str = None, contact: str = None, deal_value: float = None,
-                        source_url: str = None, entity_ids: list = None):
-    """Create new intelligence record."""
+                        source_url: str = None, entity_ids: list = None,
+                        project_id: int = None):
+    """Create new intelligence record.
+
+    IMPORTANT: When collecting intelligence via project, MUST pass project_id
+    to link the intelligence to the correct collection project.
+    """
     db = get_db(domain)
     metadata = {}
     if company:
@@ -184,6 +398,7 @@ def create_intelligence(title: str, content: str, category: str, domain: str = "
         db, title=title, content=content, category=category,
         contact_name=contact or "",
         metadata=metadata if metadata else None,
+        project_id=project_id,
     )
     if entity_ids and intel_id:
         with dblib.get_db(db) as conn:
@@ -192,7 +407,7 @@ def create_intelligence(title: str, content: str, category: str, domain: str = "
                     "INSERT INTO intel_entity (intelligence_id, entity_id, relevance) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
                     (intel_id, eid, "primary")
                 )
-    return {"id": intel_id, "title": title, "domain": domain}
+    return {"id": intel_id, "title": title, "domain": domain, "project_id": project_id}
 
 
 @server.tool()

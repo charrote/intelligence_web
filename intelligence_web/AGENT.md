@@ -115,19 +115,18 @@ GET /api/categories
 
 ### 流程二：情报采集前准备
 
-**重要**: 在开展情报搜索前，必须读取最新的指挥指令文件。
+**重要**: Agent 通过 MCP 工具获取采集项目的完整内容，自主构造搜索关键词。
 
-指挥指令文件路径: `data/scout_directives.md`
+**步骤**:
+1. 调用 MCP 工具 `get_agent_workflow(domain="research")` 获取本域配置（状态值、目标类型、预定义实体等）
+2. 调用 MCP 工具 `list_active_projects(domain="research")` 获取所有 active 采集项目
+3. 对每个项目，自主解读以下字段构造搜索关键词：
+   - `target_name`（采集目标）：如 "Danisco" → 搜索 "Danisco 2026"
+   - `scope`（采集范围）：如 "越南冰淇淋稳定剂市场" → 搜索 "Danisco 越南 冰淇淋 稳定剂"
+   - `instruction`（采集指令）：管理者指定的采集方向
+   - `datasources[].indicators`（采集源指标）：如 ["新产品发布", "财报"] → 搜索 "Danisco 新产品发布"、"Danisco 财报"
 
-该文件由管理者通过"情报指挥板"设置，包含了当前情报搜集的方向和优先级。
-
-获取指令的方式:
-1. 调用 `POST /api/commands/generate` 生成指令文件（或读取已存在的 `scout_directives.md`）
-2. 读取文件内容，根据其中的搜索关键词开展情报搜集
-3. 关键词示例：
-   - "MES 系统与 AI 集成的挑战"
-   - "智能工厂的边缘计算应用"
-   - "工业 4.0 实施中的问题"
+**Agent 必须严格按采集项目的字段采集**，不得偏离项目设置的 target_name/scope/instruction 方向。
 
 ### 流程三：执行可行项目
 
@@ -139,17 +138,36 @@ GET /api/categories
 
 ### 流程四：自动情报采集（OpenClaw Agent）
 
-系统通过 OpenClaw Agent 定时自动采集网络情报，无需手动运行爬虫。
+系统通过 OpenClaw Agent 定时自动采集网络情报，无需手动运行爬虫。所有操作通过 MCP 工具完成。
 
-**工作机制**:
+**支持多域采集**：Agent 先通过 `list_domains` 动态发现所有域，然后逐域执行完整采集流程。
+
+**工作机制（多域）**:
 1. **定时触发**: OpenClaw cron 每小时整点自动执行
-2. **读取指令**: 从 `data/scout_directives.md` 获取搜索关键词
-3. **网络搜索**: 使用 web_search 工具搜索每个关键词（3-5条结果）
-4. **内容提取**: 对相关结果用 web_fetch 提取正文摘要
-5. **去重检查**: 对比 Inbox/ 目录和 API 数据库，避免重复
-6. **保存文件**: 将每条新情报保存为 Markdown 到 `Inbox/` 目录
-7. **录入系统**: 调用 `POST /api/intelligence` 录入数据库（状态 pending）
-8. **分量控制**: 每次最多采集 20 条，达到上限后停止
+2. **发现域**: 调用 MCP `list_domains()` 获取所有可用域
+3. **逐域执行**：对每个域执行以下步骤：
+   a. 调用 MCP `get_agent_workflow(domain=X)` 获取本域工作流配置
+   b. 调用 MCP `list_active_projects(domain=X)` 获取所有 active 采集项目
+   c. 对每个项目：
+      i. 调用 MCP `get_project_detail(domain=X, project_id=N)` 获取项目详情和已关联情报（用于去重）
+      ii. 自主解读 `target_name + scope + instruction + datasources[].indicators` 构造搜索关键词
+      iii. 使用 web_search 搜索每个关键词（3-5 条结果）
+      iv. 对结果使用 web_fetch 提取正文摘要
+      v. 调用 MCP `create_intelligence(...)` 入库，**必须传入 `project_id=N`** 关联到对应项目
+   d. 对每个域，最多搜 3-5 个关键词，不要全搜
+4. **去重检查**: 对比 `get_project_detail` 返回的 recent_intel 列表，避免重复
+5. **分量控制**: 每个域每次最多采集 20 条，达到上限后停止
+
+**单域流程**（如果只采集一个域，直接执行步骤 3a-3c，跳过 2 和 3d）：
+
+**关键字段说明**:
+| 字段 | 含义 | 采集用途 |
+|------|------|---------|
+| target_name | 采集目标名称 | 搜索关键词主体 |
+| scope | 采集范围描述 | 限定搜索领域和地域 |
+| instruction | 管理者指令 | 优先采集方向 |
+| datasources[].indicators | 数据源关注的指标 | 细化搜索维度 |
+| project_id | 项目 ID | 入库时必须传入，确保情报归属 |
 
 **Inbox 文件模板**:
 ```markdown
@@ -157,6 +175,7 @@ GET /api/categories
 
 **来源:** {来源名称} ({URL})
 **发现时间:** {YYYY-MM-DD HH:MM:SS}
+**关联项目:** {project_name} (ID: {project_id})
 **状态:** New
 
 ## 摘要
@@ -169,7 +188,7 @@ GET /api/categories
 **配置**:
 - 执行频率: 每小时一次（cron: `0 * * * *`）
 - 最大采集数: 20条/次（可通过 SCOUT_MAX_ITEMS 调整）
-- 去重策略: 标题精确匹配 + 文件名模糊匹配
+- 去重策略: 标题精确匹配 + 文件名模糊匹配 + project_id 内已有情报对比
 
 ### 履历记录格式
 
