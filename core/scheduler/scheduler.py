@@ -18,9 +18,11 @@ scheduler = None  # Global scheduler instance
 
 
 def _get_db_path():
-    """Get the default database path for the scheduler."""
+    """Get the database path for the scheduler (configurable per domain)."""
+    import os
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return get_db_path(project_root, "intelligence")
+    db_slug = os.environ.get("ANALYZER_DB_SLUG", "intelligence")
+    return get_db_path(project_root, db_slug)
 
 
 def start_scheduler():

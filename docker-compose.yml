@@ -27,6 +27,7 @@ services:
     environment:
       - JWT_SECRET=${JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}
       - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
+      - ANALYZER_DB_SLUG=intelligence
     command: >
       bash -c "
         cd /app && python -m core.scheduler.scheduler &
@@ -53,6 +54,12 @@ services:
     environment:
       - JWT_SECRET=${JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}
       - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
+      - ANALYZER_DB_SLUG=intelligence_sales
+    command: >
+      bash -c "
+        cd /app && python -m core.scheduler.scheduler &
+        cd /app && gunicorn -w 4 -b 0.0.0.0:8767 --timeout 120 wsgi:app
+      "
     volumes:
       - ./intelligence_sales/data:/app/data
     healthcheck:
