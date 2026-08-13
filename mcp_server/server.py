@@ -515,7 +515,7 @@ def get_notifications(user_id: int, domain: str = "research", unread_only: bool 
 
 
 @server.tool()
-def system_status():
+async def system_status():
     """Get system status and available tools."""
     research_rows = dblib.get_intelligences(RESEARCH_DB, {"limit": 100})
     sales_rows = dblib.get_intelligences(SALES_DB, {"limit": 100})
@@ -525,6 +525,7 @@ def system_status():
     research_entities = entitylib.list_entities(RESEARCH_DB)
     entitylib.init_entities_table(SALES_DB)
     sales_entities = entitylib.list_entities(SALES_DB)
+    tools = await server.list_tools()
     return {
         "platform": "Intelligence Platform MCP Server",
         "version": "1.0.0",
@@ -532,8 +533,8 @@ def system_status():
             "research": {"intelligence": len(research_rows), "data_sources": len(research_sources), "entities": len(research_entities)},
             "sales": {"intelligence": len(sales_rows), "data_sources": len(sales_sources), "entities": len(sales_entities)},
         },
-        "available_tools": [t.name for t in server.list_tools()],
-        "total_tools": len(server.list_tools()),
+        "available_tools": [t.name for t in tools],
+        "total_tools": len(tools),
     }
 
 
