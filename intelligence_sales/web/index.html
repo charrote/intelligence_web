@@ -6,6 +6,8 @@
 <title>销售情报</title>
 <!-- Google Fonts 已移除（国内网络不可达），改用系统字体栈 -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{font-size:16px;-webkit-font-smoothing:antialiased}
@@ -169,6 +171,20 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c) {
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c];
   });
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  try {
+    var html = marked.parse(text);
+    if (typeof DOMPurify !== 'undefined') {
+      return DOMPurify.sanitize(html);
+    }
+    return html;
+  } catch(e) {
+    console.warn('[renderMarkdown] parse error:', e);
+    return escapeHtml(text);
+  }
 }
 // Dynamic API base — no hardcoded IP
 const API_PROTOCOL = window.location.protocol;
@@ -490,7 +506,7 @@ function renderDetail() {
     + '</div>'
     + (deal ? '<div class="detail-deal">预估金额：' + deal + '</div>' : '')
     + '<div class="detail-source">' + formatDate(d.created_at) + '</div>'
-    + '<div class="detail-content">' + (d.content || d.summary || '') + '</div>'
+    + '<div class="detail-content">' + renderMarkdown(d.content || d.summary || '') + '</div>'
     + '<div class="comment-section"><h3>Agent 评论</h3><div id="commentsContainer">加载中...</div></div>';
 
   let btns = '';

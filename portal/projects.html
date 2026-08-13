@@ -13,6 +13,8 @@
 <link rel="stylesheet" href="css/responsive.css">
 <script src="js/dom.js"></script>
 <script src="js/auth.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script src="js/init.js"></script>
 <script src="js/tabs.js"></script>
 <style>
@@ -208,6 +210,27 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
 <div class="panel-overlay" id="overlay" onclick="closeCreate();closeDetail()"></div>
 
 <script>
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c];
+  });
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  try {
+    var html = marked.parse(text);
+    if (typeof DOMPurify !== 'undefined') {
+      return DOMPurify.sanitize(html);
+    }
+    return html;
+  } catch(e) {
+    console.warn('[renderMarkdown] parse error:', e);
+    return escapeHtml(text);
+  }
+}
+
 // ── Target type labels ─────────────────────────────────────────────────────
 const TARGET_TYPE_LABELS = {
   competitor: '竞争对手', market: '市场/区域', supplier: '供应商',
@@ -563,7 +586,7 @@ async function openIntelDetail(pid, intelId){
     html+='</div>';
     if(intel.opinion)html+='<div class="detail-opinion">意见：'+escapeHtml(intel.opinion)+'</div>';
     html+='<div class="detail-source">'+formatDate(intel.created_at)+'</div>';
-    html+='<div class="detail-content">'+(intel.content||'')+'</div>';
+    html+='<div class="detail-content">'+renderMarkdown(intel.content)+'</div>';
     if(intel.source_url)html+='<div style="margin-top:12px"><a href="'+escapeHtml(intel.source_url)+'" target="_blank" style="font-size:13px;color:var(--accent);">原文链接</a></div>';
     body.innerHTML=html;
     const foot=document.getElementById('detailFoot');

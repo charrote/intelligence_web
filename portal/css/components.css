@@ -137,9 +137,25 @@ tr:hover td{background:var(--gray-50)}
 .detail-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 .detail-meta .tag{display:inline-flex;padding:2px 8px;border-radius:3px;font-size:12px;font-weight:500;line-height:1.5}
 .detail-source{font-size:12px;color:var(--gray-400);margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--gray-200)}
-.detail-content{font-size:14px;line-height:1.7;color:var(--gray-700)}
-.detail-content ul{padding-left:18px;margin-bottom:10px}
+.detail-content{font-size:14px;line-height:1.7;color:var(--gray-700);word-wrap:break-word;overflow-wrap:break-word}
+.detail-content h1,.detail-content h2,.detail-content h3,.detail-content h4{margin:16px 0 8px;font-weight:600;color:var(--gray-800);line-height:1.4}
+.detail-content h1{font-size:20px}.detail-content h2{font-size:17px}.detail-content h3{font-size:15px}.detail-content h4{font-size:14px}
+.detail-content p{margin-bottom:10px}
+.detail-content ul,.detail-content ol{padding-left:22px;margin-bottom:10px}
 .detail-content li{margin-bottom:4px}
+.detail-content strong,.detail-content b{font-weight:600;color:var(--gray-800)}
+.detail-content em{font-style:italic}
+.detail-content code{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;font-size:13px;background:#f5f5f5;padding:1px 5px;border-radius:3px;color:#c7254e}
+.detail-content pre{background:#f6f8fa;padding:12px 14px;border-radius:var(--radius);overflow-x:auto;margin-bottom:12px;font-size:13px;line-height:1.5}
+.detail-content pre code{background:none;padding:0;color:var(--gray-700)}
+.detail-content blockquote{border-left:3px solid var(--accent-light);padding:6px 14px;margin:10px 0;color:var(--gray-600);background:var(--gray-50);border-radius:0 var(--radius) var(--radius) 0}
+.detail-content a{color:var(--accent);text-decoration:none}
+.detail-content a:hover{text-decoration:underline}
+.detail-content hr{border:none;border-top:1px solid var(--gray-200);margin:16px 0}
+.detail-content img{max-width:100%;height:auto;border-radius:var(--radius)}
+.detail-content table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:13px}
+.detail-content th,.detail-content td{padding:6px 10px;border:1px solid var(--gray-200);text-align:left}
+.detail-content th{background:var(--gray-50);font-weight:600;color:var(--gray-700)}
 .detail-opinion{background:var(--accent-light);padding:10px 14px;border-radius:var(--radius);margin-bottom:14px;font-size:13px;color:var(--accent)}
 
 /* Comments */

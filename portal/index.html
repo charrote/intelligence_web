@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>情报列表</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/reset.css">
 <link rel="stylesheet" href="css/header.css">
@@ -74,6 +75,20 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c) {
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c];
   });
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  try {
+    var html = marked.parse(text);
+    if (typeof DOMPurify !== 'undefined') {
+      return DOMPurify.sanitize(html);
+    }
+    return html;
+  } catch(e) {
+    console.warn('[renderMarkdown] parse error:', e);
+    return escapeHtml(text);
+  }
 }
 
 function statusColor(s) {
@@ -218,7 +233,7 @@ function renderDetail() {
     +(d.opinion?'<div class="detail-opinion">意见：'+escapeHtml(d.opinion)+'</div>':'')
     +(d.source_url?'<div style="margin-bottom:12px;"><a href="'+escapeHtml(d.source_url)+'" target="_blank" style="font-size:13px;color:var(--accent);">原文链接</a></div>':'')
     +('<div class="detail-source">'+formatDate(d.created_at)+'</div>'
-    +'<div class="detail-content">'+(d.content||'')+'</div>')
+    +'<div class="detail-content">'+renderMarkdown(d.content)+'</div>')
     +'<div id="attachmentsSection" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--gray-200)">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
     +'<h3 style="font-size:13px;font-weight:600;color:var(--gray-700)">附件</h3>'
