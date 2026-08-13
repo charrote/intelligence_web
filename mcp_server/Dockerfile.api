@@ -13,6 +13,10 @@ COPY core/ /app/core/
 # Copy config
 COPY config/ /app/config/
 
+# Copy domain packages (required for list_domains tool)
+COPY intelligence_web/ /app/intelligence_web/
+COPY intelligence_sales/ /app/intelligence_sales/
+
 # Copy MCP server
 COPY mcp_server/ /app/mcp_server/
 
