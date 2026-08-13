@@ -27,6 +27,11 @@ services:
     environment:
       - JWT_SECRET=${JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}
       - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
+    command: >
+      bash -c "
+        cd /app && python -m core.scheduler.scheduler &
+        cd /app/intelligence_web && gunicorn -b 0.0.0.0:8766 wsgi:app
+      "
     volumes:
       - ./intelligence_web/data:/app/data
       - ./mcp_server/data:/app/shared_data  # 共享数据卷（与 mcp_server 共享 API Key）

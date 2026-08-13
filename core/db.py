@@ -134,12 +134,231 @@ def init_db(project_root, spec):
             )
         ''')
 
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS intel_extraction_rule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL DEFAULT 'research',
+                name TEXT NOT NULL UNIQUE,
+                description TEXT DEFAULT '',
+                scope TEXT NOT NULL DEFAULT 'full',
+                max_fields INTEGER NOT NULL DEFAULT 15,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                built_in INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS intel_extraction_field (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER NOT NULL,
+                field_key TEXT NOT NULL,
+                field_label TEXT NOT NULL,
+                field_type TEXT NOT NULL,
+                is_required INTEGER NOT NULL DEFAULT 0,
+                default_value TEXT DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                help_text TEXT DEFAULT '',
+                FOREIGN KEY (rule_id) REFERENCES intel_extraction_rule(id) ON DELETE CASCADE
+            )
+        ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS intel_fact (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intel_id INTEGER NOT NULL,
+                rule_id INTEGER NOT NULL,
+                field_key TEXT NOT NULL,
+                entity_name TEXT DEFAULT '',
+                metric_name TEXT DEFAULT '',
+                metric_value REAL,
+                metric_unit TEXT DEFAULT '',
+                time_period TEXT DEFAULT '',
+                context TEXT DEFAULT '',
+                source_anchor TEXT DEFAULT '',
+                confidence TEXT NOT NULL DEFAULT 'high',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (intel_id) REFERENCES intelligence(id) ON DELETE CASCADE
+            )
+        ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS intel_aggregate (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT DEFAULT '',
+                rule_id INTEGER NOT NULL,
+                group_by TEXT NOT NULL,
+                metrics TEXT DEFAULT '[]',
+                filters TEXT DEFAULT '[]',
+                chart_config TEXT DEFAULT '[]',
+                prompt_template TEXT NOT NULL,
+                schedule_minutes INTEGER NOT NULL DEFAULT 1440,
+                lookback_days INTEGER NOT NULL DEFAULT 30,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                next_run TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                last_fail_time TEXT,
+                last_success_time TEXT,
+                built_in INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (rule_id) REFERENCES intel_extraction_rule(id)
+            )
+        ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS report_run (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL,
+                domain TEXT NOT NULL,
+                scheduled_time TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                aggregated_data TEXT,
+                output_analysis TEXT,
+                output_charts TEXT,
+                output_summary TEXT,
+                fact_count INTEGER,
+                duration_sec INTEGER,
+                error_msg TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (template_id) REFERENCES intel_aggregate(id) ON DELETE CASCADE
+            )
+        ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS report_scheduler (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                scheduler_enabled INTEGER NOT NULL DEFAULT 1,
+                extract_enabled INTEGER NOT NULL DEFAULT 1,
+                report_enabled INTEGER NOT NULL DEFAULT 1,
+                extract_interval_min INTEGER NOT NULL DEFAULT 10,
+                report_interval_min INTEGER NOT NULL DEFAULT 5,
+                last_extract_time TEXT,
+                last_report_time TEXT,
+                extract_success_today INTEGER NOT NULL DEFAULT 0,
+                report_success_today INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
+        # Indexes for intel_fact
+        c.execute('CREATE INDEX IF NOT EXISTS idx_fact_intel ON intel_fact(intel_id)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_fact_rule ON intel_fact(rule_id)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_fact_field ON intel_fact(field_key)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_fact_entity ON intel_fact(entity_name)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_fact_time ON intel_fact(time_period)')
+
+        conn.commit()
+
+        # Migration: add extracted column to intelligence
+        try:
+            c.execute('ALTER TABLE intelligence ADD COLUMN extracted INTEGER DEFAULT 0')
+        except Exception:
+            pass  # column already exists
+
+        # Seed built-in extraction rules
+        now = datetime.now().isoformat()
+
+        rule_count = c.execute('SELECT COUNT(*) FROM intel_extraction_rule').fetchone()[0]
+        if rule_count == 0:
+            c.execute(
+                'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ('research', '厂商市场数据', '从情报中抽取厂商市场相关结构化数据', 'full', 15, 1, 1, now, now)
+            )
+            c.execute(
+                'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ('sales', '竞争情报摘要', '从情报中抽取竞争对手动态和竞争情报', 'full+tables', 15, 1, 1, now, now)
+            )
+
+        # Seed built-in fields for Rule 1 (厂商市场数据)
+        field_count = c.execute('SELECT COUNT(*) FROM intel_extraction_field').fetchone()[0]
+        if field_count == 0:
+            rule1_fields = [
+                (1, 'company_name', '厂商名称', 'company', 1, '', 1, ''),
+                (1, 'market_share', '市场份额', 'pct', 0, '', 2, ''),
+                (1, 'market_size', '市场规模', 'currency', 0, '', 3, ''),
+                (1, 'currency', '币种', 'currency_code', 0, '', 4, ''),
+                (1, 'country', '国家/地区', 'location', 0, '', 5, ''),
+                (1, 'year', '年份', 'year', 0, '', 6, ''),
+                (1, 'growth_rate', '增长率', 'pct', 0, '', 7, ''),
+                (1, 'data_source', '数据来源', 'text', 0, '', 8, ''),
+            ]
+            for f in rule1_fields:
+                c.execute(
+                    'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    f
+                )
+
+        # Seed built-in fields for Rule 2 (竞争情报摘要)
+        rule2_fields = [
+            (2, 'competitor_name', '竞争对手名称', 'company', 1, '', 1, ''),
+            (2, 'action_type', '动作类型', 'text', 1, '', 2, ''),
+            (2, 'action_desc', '动作描述', 'text', 0, '', 3, ''),
+            (2, 'market_impact', '市场影响', 'text', 0, '', 4, ''),
+            (2, 'date', '事件日期', 'date', 0, '', 5, ''),
+            (2, 'source', '信息来源', 'text', 0, '', 6, ''),
+        ]
+        for f in rule2_fields:
+            c.execute(
+                'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                f
+            )
+
+        # Seed built-in report templates
+        template_count = c.execute('SELECT COUNT(*) FROM intel_aggregate').fetchone()[0]
+        if template_count == 0:
+            next_run = (datetime.now() + timedelta(minutes=10)).isoformat()
+            c.execute(
+                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ('research', '市场份额概览', '基于市场数据生成市场份额分析报告', 1, 'entity_name', '[]', '[]', '[]',
+                 '你是一个情报分析师。请基于以下已聚合的数据，撰写市场份额分析报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述市场份额分布、趋势变化、关键厂商对比...）",\n  "summary": "一段话总结市场份额核心发现..."\n}',
+                 1440, 30, 1, next_run, 'active', 0, now, now)
+            )
+            c.execute(
+                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ('sales', '竞争情报摘要', '基于竞争情报数据生成竞争态势摘要', 2, 'entity_name', '[]', '[]', '[]',
+                 '你是竞争情报分析员。请基于以下数据，撰写竞争情报摘要。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述竞争对手最新动态、市场影响、趋势判断...）",\n  "summary": "一段话总结竞争情报核心发现..."\n}',
+                 1440, 30, 1, next_run, 'active', 0, now, now)
+            )
+            c.execute(
+                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ('research', '行业趋势分析', '基于市场数据生成行业趋势分析报告', 1, 'time_period', '[]', '[]', '[]',
+                 '你是行业趋势分析师。请基于以下数据，撰写行业趋势分析报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述行业整体趋势、增长/下降信号、关键转折点...）",\n  "summary": "一段话总结行业趋势核心判断..."\n}',
+                 2880, 90, 1, next_run, 'active', 0, now, now)
+            )
+            c.execute(
+                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ('research', '区域市场对比', '基于市场数据生成区域市场对比报告', 1, 'entity_name', '[]', '[]', '[]',
+                 '你是区域市场分析员。请基于以下数据，撰写区域市场对比报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述各区域市场份额对比、增长差异、重点市场...）",\n  "summary": "一段话总结区域市场核心发现..."\n}',
+                 4320, 60, 1, next_run, 'active', 0, now, now)
+            )
+
+        # Seed report_scheduler initial record
+        c.execute(
+            'INSERT OR IGNORE INTO report_scheduler(id, scheduler_enabled, extract_enabled, report_enabled, extract_interval_min, report_interval_min, updated_at) VALUES (1, 1, 1, 1, 10, 5, datetime("now"))'
+        )
+
         conn.commit()
 
         # Seed default admin user if no users exist
         row = c.execute('SELECT COUNT(*) FROM users').fetchone()
         if row[0] == 0:
             _seed_default_users(conn)
+
+        # Migration: ensure all existing intelligence records are marked for extraction
+        try:
+            c.execute("UPDATE intelligence SET extracted = 0 WHERE extracted = 0 OR extracted IS NULL")
+            conn.commit()
+            print(f"[init_db] Backfill: marked intelligence records for extraction")
+        except Exception as e:
+            print(f"[init_db] Backfill warning: {e}")
 
         conn.commit()
         conn.close()
@@ -260,6 +479,160 @@ def get_user_by_id(db_path, user_id):
             (user_id,)
         ).fetchone()
         return dict(row) if row else None
+
+
+# =============================================================================
+# User Management CRUD
+# =============================================================================
+
+ROLE_LABELS = {
+    'admin': 'admin',
+    'power_user': 'power_user',
+    'user': 'viewer',
+    'agent': 'agent',
+}
+
+
+def _role_to_label(role):
+    """Map internal role name to frontend label."""
+    return ROLE_LABELS.get(role, 'viewer')
+
+
+def _role_to_id(role):
+    """Map internal role name to frontend numeric role_id."""
+    mapping = {'admin': 1, 'power_user': 2, 'user': 3, 'agent': 4}
+    return mapping.get(role, 3)
+
+
+def list_users(db_path, search=None, limit=100):
+    """List users with optional search. Returns dict with 'items' and 'total'."""
+    with get_db(db_path) as conn:
+        sql = "SELECT id, username, display_name, role, enabled, domains, created_at, updated_at FROM users WHERE 1=1"
+        params = []
+        if search:
+            sql += " AND (username LIKE ? OR display_name LIKE ?)"
+            params.extend([f'%{search}%', f'%{search}%'])
+        sql += " ORDER BY id ASC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        items = []
+        for r in rows:
+            u = dict(r)
+            u['role_name'] = _role_to_label(u.get('role', 'user'))
+            u['role_id'] = _role_to_id(u.get('role', 'user'))
+            u['domains'] = u.get('domains') or ''
+            if isinstance(u.get('domains'), str):
+                u['domains'] = [d.strip() for d in u['domains'].split(',') if d.strip()] if u['domains'] else []
+            else:
+                u['domains'] = u['domains'] or []
+            items.append(u)
+        # Also get total count
+        count_sql = "SELECT COUNT(*) as cnt FROM users WHERE 1=1"
+        count_params = []
+        if search:
+            count_sql += " AND (username LIKE ? OR display_name LIKE ?)"
+            count_params.extend([f'%{search}%', f'%{search}%'])
+        total = conn.execute(count_sql, count_params).fetchone()['cnt']
+        return {'items': items, 'total': total}
+
+
+def get_user_by_id_full(db_path, user_id):
+    """Get user by ID with full details (including salt for edit form). Returns user dict or None."""
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            'SELECT id, username, display_name, role, enabled, domains, created_at, updated_at FROM users WHERE id = ?',
+            (user_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        u = dict(row)
+        u['role_name'] = _role_to_label(u.get('role', 'user'))
+        u['role_id'] = _role_to_id(u.get('role', 'user'))
+        u['domains'] = u.get('domains') or ''
+        if isinstance(u.get('domains'), str):
+            u['domains'] = [d.strip() for d in u['domains'].split(',') if d.strip()] if u['domains'] else []
+        else:
+            u['domains'] = u['domains'] or []
+        return u
+
+
+def create_user(db_path, username, display_name, password, role='user', domains=None):
+    """Create a new user. Returns the new user id or None on error."""
+    now = datetime.now().isoformat()
+    password_hash, salt = _hash_password(password)
+    domains_str = ','.join(domains) if domains else ''
+    with get_db(db_path) as conn:
+        try:
+            cursor = conn.execute(
+                'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, domains, created_at, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)',
+                (username.strip(), password_hash, salt, display_name.strip(), role, domains_str, now, now)
+            )
+            conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"[create_user] ERROR: {e}")
+            return None
+
+
+def update_user(db_path, user_id, fields):
+    """Update user fields. Supported: username, display_name, role, domains.
+    Password is separate via update_user_password. Returns updated user dict or None.
+    """
+    allowed_fields = ['username', 'display_name', 'role', 'domains']
+    updates = []
+    params = []
+    for field in allowed_fields:
+        if field in fields and fields[field] is not None:
+            updates.append(f'{field} = ?')
+            params.append(fields[field])
+    if not updates:
+        return None
+    params.append(user_id)
+    with get_db(db_path) as conn:
+        try:
+            conn.execute(
+                f'UPDATE users SET {", ".join(updates)}, updated_at = ? WHERE id = ?',
+                params + [datetime.now().isoformat()]
+            )
+            conn.commit()
+            return get_user_by_id_full(db_path, user_id)
+        except Exception as e:
+            print(f"[update_user] ERROR: {e}")
+            return None
+
+
+def update_user_password(db_path, user_id, password):
+    """Update user password only."""
+    now = datetime.now().isoformat()
+    password_hash, salt = _hash_password(password)
+    with get_db(db_path) as conn:
+        try:
+            conn.execute(
+                'UPDATE users SET password_hash = ?, salt = ?, updated_at = ? WHERE id = ?',
+                (password_hash, salt, now, user_id)
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[update_user_password] ERROR: {e}")
+            return False
+
+
+def delete_user(db_path, user_id):
+    """Delete a user (soft disable, set enabled=0). Returns True on success."""
+    with get_db(db_path) as conn:
+        try:
+            now = datetime.now().isoformat()
+            conn.execute(
+                'UPDATE users SET enabled = 0, updated_at = ? WHERE id = ?',
+                (now, user_id)
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[delete_user] ERROR: {e}")
+            return False
 
 
 # =============================================================================
@@ -708,6 +1081,7 @@ def migrate_db(db_path):
                 ('role', 'TEXT DEFAULT "user"'),
                 ('enabled', 'INTEGER DEFAULT 1'),
                 ('salt', 'TEXT DEFAULT ""'),
+                ('domains', 'TEXT DEFAULT ""'),
                 ('created_at', 'TEXT DEFAULT ""'),
                 ('updated_at', 'TEXT DEFAULT ""'),
             ]:

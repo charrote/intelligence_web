@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>报告结果</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<style>
+.main{display:flex;flex-direction:column;max-width:960px;width:100%;margin:0 auto;padding:24px;height:calc(100vh - 140px)}
+
+/* ── Header ── */
+.report-header{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--gray-200);margin-bottom:20px}
+.report-title{font-size:18px;font-weight:600;color:var(--gray-800);margin:0;display:flex;align-items:center;gap:8px}
+.report-meta{font-size:13px;color:var(--gray-500);display:flex;align-items:center;gap:10px}
+.report-meta .perf{color:var(--green);font-weight:500}
+
+/* ── Version Select ── */
+.version-select{margin-bottom:20px}
+.version-select label{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--gray-600)}
+.version-select select{padding:6px 28px 6px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-700);background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239a9b9d'/%3E%3C/svg%3E") no-repeat right 10px center;appearance:none;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s;min-width:260px}
+.version-select select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.version-badge{display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:10px}
+.version-badge.ok{color:var(--green);background:var(--green-light)}
+.version-badge.fail{color:var(--red);background:var(--red-light)}
+.version-badge.pending{color:var(--amber);background:var(--amber-light)}
+
+/* ── Section ── */
+.report-section{margin-bottom:20px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);overflow:hidden}
+.section-head{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--gray-100);font-size:14px;font-weight:600;color:var(--gray-700);gap:6px}
+.section-body{padding:18px;font-size:14px;line-height:1.75;color:var(--gray-700)}
+
+/* ── Stats Summary ── */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.stat-item{background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius);padding:12px 16px}
+.stat-item .label{font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+.stat-item .value{font-size:16px;font-weight:600;color:var(--gray-800)}
+
+/* ── Markdown Content ── */
+.markdown-body{font-size:14px;line-height:1.75;color:var(--gray-700);word-break:break-word}
+.markdown-body h2{font-size:16px;font-weight:600;margin:16px 0 8px;color:var(--gray-800);padding-bottom:6px;border-bottom:1px solid var(--gray-200)}
+.markdown-body h2:first-child{margin-top:0}
+.markdown-body h3{font-size:15px;font-weight:600;margin:14px 0 6px;color:var(--gray-800)}
+.markdown-body h4{font-size:14px;font-weight:600;margin:12px 0 4px;color:var(--gray-700)}
+.markdown-body p{margin:8px 0}
+.markdown-body ul,.markdown-body ol{padding-left:22px;margin:8px 0}
+.markdown-body li{margin-bottom:4px}
+.markdown-body li > p{margin:0}
+.markdown-body strong{font-weight:600;color:var(--gray-800)}
+.markdown-body em{color:var(--gray-600)}
+.markdown-body code{background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:4px;font-size:12px;font-family:'SF Mono',Monaco,Consolas,monospace}
+.markdown-body pre{background:var(--gray-800);color:#e0e1e3;padding:14px;border-radius:var(--radius);overflow-x:auto;font-size:12px;line-height:1.6;margin:10px 0;font-family:'SF Mono',Monaco,Consolas,monospace}
+.markdown-body pre code{background:none;color:inherit;padding:0}
+.markdown-body blockquote{border-left:3px solid var(--accent);padding:6px 14px;margin:10px 0;background:rgba(59,79,140,0.04);color:var(--gray-600);border-radius:0 var(--radius) var(--radius) 0}
+.markdown-body table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}
+.markdown-body th{background:var(--gray-50);padding:8px 10px;text-align:left;font-weight:600;color:var(--gray-600);border:1px solid var(--gray-200)}
+.markdown-body td{padding:8px 10px;border:1px solid var(--gray-200);color:var(--gray-700)}
+.markdown-body tr:nth-child(even) td{background:var(--gray-50)}
+.markdown-body hr{border:none;border-top:1px solid var(--gray-200);margin:14px 0}
+.markdown-body a{color:var(--accent);text-decoration:none}
+.markdown-body a:hover{text-decoration:underline}
+
+/* ── Chart Containers ── */
+.chart-container{margin:14px 0;border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--accent-mid);background:#fff;box-shadow:var(--shadow-sm)}
+.chart-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);font-size:12px;font-weight:600;color:var(--gray-600)}
+.chart-header .chart-type{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+.chart-type.pie{background:var(--blue-light);color:var(--blue)}
+.chart-type.bar{background:var(--green-light);color:var(--green)}
+.chart-type.line{background:var(--amber-light);color:var(--amber)}
+.chart-body{width:100%;height:300px}
+@media(max-width:600px){.chart-body{height:220px}}
+
+/* ── Error Section ── */
+.error-section{background:var(--red-light);border:1px solid var(--red);border-radius:var(--radius-md)}
+.error-section .section-body{color:var(--red);font-size:14px;line-height:1.6;word-break:break-word}
+
+/* ── Summary Section ── */
+.summary-content{font-size:14px;line-height:1.8;color:var(--gray-700)}
+
+/* ── Action Bar ── */
+.action-bar{display:flex;gap:8px;padding-top:16px;border-top:1px solid var(--gray-200);margin-top:auto}
+
+/* ── Loading Overlay ── */
+.loading-overlay{position:fixed;inset:0;background:rgba(255,255,255,0.8);display:none;align-items:center;justify-content:center;z-index:500;flex-direction:column;gap:12px}
+.loading-overlay.active{display:flex}
+.spinner{width:36px;height:36px;border:3px solid var(--gray-200);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:13px;color:var(--gray-500)}
+
+/* ── Mobile ── */
+@media(max-width:768px){
+  .main{padding:16px;height:calc(100vh - 120px)}
+  .stats-grid{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<main class="main" id="app">
+  <div class="report-header">
+    <h1 class="report-title" id="reportTitle">加载中...</h1>
+    <div class="report-meta" id="reportMeta" style="display:none">
+      <span id="runTime"></span>
+      <span class="perf" id="runPerf"></span>
+    </div>
+  </div>
+
+  <div class="version-select">
+    <label>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      版本切换
+    </label>
+    <select id="versionSelect"></select>
+  </div>
+
+  <div id="sections"></div>
+
+  <div class="action-bar">
+    <button class="btn btn-ghost" onclick="goBack()">← 返回</button>
+    <button class="btn btn-primary" id="rerunBtn" onclick="rerunReport()">重新执行</button>
+  </div>
+</main>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text">正在加载报告...</div>
+</div>
+
+<script>
+var templateId = null;
+var currentRunId = null;
+var runHistory = [];
+var chartInstances = [];
+var pollingTimer = null;
+
+function getTemplateId() {
+  var hashTid = (window.parent.location.hash || '').replace('#template_id=', '');
+  if (hashTid) { var parsed = parseInt(hashTid); if (!isNaN(parsed) && parsed > 0) return parsed; }
+  var params = new URLSearchParams(window.location.search);
+  var fromParams = params.get('template_id');
+  if (fromParams) { var p = parseInt(fromParams); if (!isNaN(p) && p > 0) return p; }
+  return parseInt(localStorage.getItem('lastTemplateId')) || 1;
+}
+
+function showLoading(show) {
+  document.getElementById('loadingOverlay').classList.toggle('active', show);
+}
+
+async function fetchRuns(tid) {
+  var url = systemApiBase() + '/api/reports/runs/' + tid;
+  var res = await apiFetch(url);
+  if (!res.ok) throw new Error('获取运行记录失败: ' + res.status);
+  var data = await res.json();
+  return data || [];
+}
+
+async function fetchRun(runId) {
+  var url = systemApiBase() + '/api/reports/runs/' + runId;
+  var res = await apiFetch(url);
+  if (!res.ok) throw new Error('获取运行详情失败: ' + res.status);
+  var data = await res.json();
+  return data;
+}
+
+function formatRunTime(iso) {
+  if (!iso) return '-';
+  var d = new Date(iso);
+  if (isNaN(d)) return iso;
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  var h = String(d.getHours()).padStart(2, '0');
+  var min = String(d.getMinutes()).padStart(2, '0');
+  return m + '-' + day + ' ' + h + ':' + min;
+}
+
+function renderVersionOptions(runs) {
+  var select = document.getElementById('versionSelect');
+  select.innerHTML = '';
+  var visible = runs.filter(function(r) { return r.scheduled_time; }).slice(0, 20).reverse();
+  visible.forEach(function(run, idx) {
+    var opt = document.createElement('option');
+    var badge = run.status === 'completed' ? '<span class="version-badge ok">✅</span>' :
+                run.status === 'failed' ? '<span class="version-badge fail">❌</span>' :
+                '<span class="version-badge pending">⏳</span>';
+    opt.value = run.id;
+    opt.textContent = badge + ' ' + formatRunTime(run.scheduled_time) + '  ' + (run.status || '');
+    if (run.id === currentRunId) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+function renderSections(run) {
+  var container = document.getElementById('sections');
+  container.innerHTML = '';
+
+  var stats = run.statistics || run.stats || {};
+  if (stats && Object.keys(stats).length > 0) {
+    var sec = document.createElement('div');
+    sec.className = 'report-section';
+    var head = document.createElement('div');
+    head.className = 'section-head';
+    head.textContent = '📋 统计摘要';
+    sec.appendChild(head);
+    var body = document.createElement('div');
+    body.className = 'section-body';
+    var grid = document.createElement('div');
+    grid.className = 'stats-grid';
+    Object.keys(stats).forEach(function(key) {
+      var item = document.createElement('div');
+      item.className = 'stat-item';
+      item.innerHTML = '<div class="label">' + escapeHtml(key) + '</div><div class="value">' + escapeHtml(String(stats[key])) + '</div>';
+      grid.appendChild(item);
+    });
+    body.appendChild(grid);
+    sec.appendChild(body);
+    container.appendChild(sec);
+  }
+
+  if (run.output_analysis) {
+    var sec = document.createElement('div');
+    sec.className = 'report-section';
+    var head = document.createElement('div');
+    head.className = 'section-head';
+    head.textContent = '📝 AI 分析';
+    sec.appendChild(head);
+    var body = document.createElement('div');
+    body.className = 'section-body';
+    body.innerHTML = '<div class="markdown-body">' + renderMarkdown(run.output_analysis) + '</div>';
+    sec.appendChild(body);
+    container.appendChild(sec);
+  }
+
+  if (run.output_charts && Array.isArray(run.output_charts) && run.output_charts.length > 0) {
+    var sec = document.createElement('div');
+    sec.className = 'report-section';
+    var head = document.createElement('div');
+    head.className = 'section-head';
+    head.textContent = '📊 图表';
+    sec.appendChild(head);
+    var body = document.createElement('div');
+    body.className = 'section-body';
+    run.output_charts.forEach(function(chart, idx) {
+      var chartId = 'report-chart-' + idx;
+      var typeClass = chart.type || 'bar';
+      var typeLabel = (chart.type || '图表').toUpperCase();
+      var wrapper = document.createElement('div');
+      wrapper.className = 'chart-container';
+      wrapper.innerHTML = '<div class="chart-header"><span>' + escapeHtml(chart.title || typeLabel + ' 图表') + '</span><span class="chart-type ' + typeClass + '">' + typeLabel + '</span></div>'
+        + '<div class="chart-body" id="' + chartId + '"></div>';
+      body.appendChild(wrapper);
+
+      setTimeout(function() {
+        initChart(chartId, chart);
+      }, 50);
+    });
+    sec.appendChild(body);
+    container.appendChild(sec);
+  }
+
+  if (run.output_summary) {
+    var sec = document.createElement('div');
+    sec.className = 'report-section';
+    var head = document.createElement('div');
+    head.className = 'section-head';
+    head.textContent = '💡 总结';
+    sec.appendChild(head);
+    var body = document.createElement('div');
+    body.className = 'section-body';
+    body.innerHTML = '<div class="summary-content">' + escapeHtml(run.output_summary) + '</div>';
+    sec.appendChild(body);
+    container.appendChild(sec);
+  }
+
+  if (run.error_msg) {
+    var sec = document.createElement('div');
+    sec.className = 'report-section error-section';
+    var head = document.createElement('div');
+    head.className = 'section-head';
+    head.textContent = '⚠️ 错误信息';
+    sec.appendChild(head);
+    var body = document.createElement('div');
+    body.className = 'section-body';
+    body.textContent = run.error_msg;
+    sec.appendChild(body);
+    container.appendChild(sec);
+  }
+
+  if (!run.output_analysis && !run.output_charts && !run.output_summary && !run.error_msg) {
+    var sec = document.createElement('div');
+    sec.className = 'report-section';
+    var body = document.createElement('div');
+    body.className = 'section-body';
+    body.style.textAlign = 'center';
+    body.style.color = 'var(--gray-400)';
+    body.textContent = '暂无报告内容';
+    container.appendChild(sec);
+  }
+}
+
+function initChart(domId, chartData) {
+  var el = document.getElementById(domId);
+  if (!el) return;
+  try {
+    var chart = echarts.init(el);
+
+    var option = {};
+    var type = chartData.type || 'bar';
+    var data = chartData.data || [];
+
+    if (type === 'pie') {
+      option = {
+        tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+        legend: { bottom: 0, type: 'scroll', pageButtonItemGap: 5, pageTextStyle: { fontSize: 10 } },
+        series: [{
+          type: 'pie',
+          radius: ['35%', '65%'],
+          center: ['50%', '42%'],
+          label: { formatter: '{b}\n{c}', fontSize: 11 },
+          data: data,
+          itemStyle: { borderRadius: 4 }
+        }]
+      };
+    } else if (type === 'bar') {
+      var names = data.map(function(d) { return d.name; });
+      var values = data.map(function(d) { return d.value; });
+      option = {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 80, right: 20, top: 10, bottom: 30 },
+        xAxis: { type: 'value', name: '', minInterval: 1 },
+        yAxis: { type: 'category', data: names, axisLabel: { fontSize: 11 } },
+        series: [{ type: 'bar', data: values, barMaxWidth: 32, itemStyle: { borderRadius: [0, 3, 3, 0] } }]
+      };
+    } else if (type === 'line') {
+      var labels = chartData.labels || data.map(function(d) { return d.name; });
+      var seriesData = chartData.values || data.map(function(d) { return d.value; });
+      option = {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 50, right: 20, top: 10, bottom: 30 },
+        xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 11, rotate: labels.length > 8 ? 30 : 0 } },
+        yAxis: { type: 'value', name: '', minInterval: 1 },
+        series: [{ type: 'line', data: seriesData, smooth: true, symbolSize: 6, areaStyle: { opacity: 0.1 } }]
+      };
+    } else {
+      var names = data.map(function(d) { return d.name; });
+      var values = data.map(function(d) { return d.value; });
+      option = {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 80, right: 20, top: 10, bottom: 30 },
+        xAxis: { type: 'value', name: '', minInterval: 1 },
+        yAxis: { type: 'category', data: names, axisLabel: { fontSize: 11 } },
+        series: [{ type: 'bar', data: values, barMaxWidth: 32 }]
+      };
+    }
+
+    chart.setOption(option);
+    var resizeHandler = function() { chart.resize(); };
+    window.addEventListener('resize', resizeHandler);
+    chartInstances.push({ dispose: function() { chart.dispose(); window.removeEventListener('resize', resizeHandler); } });
+  } catch(e) {
+    console.warn('[report] Chart init error for ' + domId + ':', e.message);
+  }
+}
+
+function renderMarkdown(text) {
+  if (typeof marked !== 'undefined') {
+    try { return marked.parse(text); } catch(e) { console.warn('[report] marked.js parse error'); }
+  }
+  var html = escapeHtml(text);
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  html = html.replace(/\n\n/g, '<br/><br/>');
+  html = html.replace(/\n/g, '<br/>');
+  return html;
+}
+
+async function loadRun(runId) {
+  showLoading(true);
+  try {
+    var run = await fetchRun(runId);
+    currentRunId = runId;
+    renderSections(run);
+    document.getElementById('reportMeta').style.display = 'flex';
+    document.getElementById('runTime').textContent = formatRunTime(run.scheduled_time);
+    if (run.duration) {
+      var sec = Math.round(run.duration);
+      var min = Math.floor(sec / 60);
+      var remainSec = sec % 60;
+      var perfText = (min > 0 ? min + '分' : '') + remainSec + '秒';
+      document.getElementById('runPerf').textContent = '✅ ' + perfText;
+    } else if (run.status === 'completed') {
+      document.getElementById('runPerf').textContent = '✅';
+    } else if (run.status === 'failed') {
+      document.getElementById('runPerf').textContent = '❌ 失败';
+    } else {
+      document.getElementById('runPerf').textContent = '⏳';
+    }
+  } catch(e) {
+    console.error('[report] Load run error:', e);
+    document.getElementById('sections').innerHTML = '<div class="report-section error-section"><div class="section-body">加载失败: ' + escapeHtml(e.message) + '</div></div>';
+  } finally {
+    showLoading(false);
+  }
+}
+
+async function rerunReport() {
+  var btn = document.getElementById('rerunBtn');
+  btn.disabled = true;
+  btn.textContent = '执行中...';
+  showLoading(true);
+
+  try {
+    var url = systemApiBase() + '/api/reports/run/' + templateId;
+    var res = await apiFetch(url, { method: 'POST' });
+    if (!res.ok) {
+      var errData = await res.json().catch(function() { return {}; });
+      throw new Error(errData.error || '执行失败 (' + res.status + ')');
+    }
+
+    var data = await res.json();
+    var newRunId = data.run_id || data.id || data.new_run_id;
+
+    if (newRunId) {
+      var pollInterval = 3000;
+      pollingTimer = setInterval(async function() {
+        try {
+          var updated = await fetchRun(newRunId);
+          if (updated.status === 'completed') {
+            clearInterval(pollingTimer);
+            pollingTimer = null;
+            btn.disabled = false;
+            btn.textContent = '重新执行';
+            showLoading(false);
+            runHistory = await fetchRuns(templateId);
+            renderVersionOptions(runHistory);
+            loadRun(newRunId);
+          } else if (updated.status === 'failed') {
+            clearInterval(pollingTimer);
+            pollingTimer = null;
+            btn.disabled = false;
+            btn.textContent = '重新执行';
+            showLoading(false);
+            loadRun(newRunId);
+          }
+        } catch(pollErr) {
+          clearInterval(pollingTimer);
+          pollingTimer = null;
+          btn.disabled = false;
+          btn.textContent = '重新执行';
+          showLoading(false);
+          console.error('[report] Poll error:', pollErr);
+        }
+      }, pollInterval);
+    } else {
+      btn.disabled = false;
+      btn.textContent = '重新执行';
+      showLoading(false);
+      runHistory = await fetchRuns(templateId);
+      renderVersionOptions(runHistory);
+      var latest = runHistory.filter(function(r) { return r.scheduled_time; }).reverse()[0];
+      if (latest) loadRun(latest.id);
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '重新执行';
+    showLoading(false);
+    alert('执行失败: ' + e.message);
+  }
+}
+
+function goBack() {
+  if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    window.location.href = 'reports.html';
+  }
+}
+
+function init() {
+  templateId = getTemplateId();
+  localStorage.setItem('lastTemplateId', templateId);
+  document.getElementById('reportTitle').textContent = '市场份额概览';
+
+  document.getElementById('versionSelect').addEventListener('change', function() {
+    var val = parseInt(this.value);
+    if (!isNaN(val)) loadRun(val);
+  });
+
+  loadReports();
+}
+
+async function loadReports() {
+  try {
+    runHistory = await fetchRuns(templateId);
+    renderVersionOptions(runHistory);
+    var latest = runHistory.filter(function(r) { return r.scheduled_time && r.status !== 'failed'; }).reverse()[0];
+    if (latest) {
+      loadRun(latest.id);
+    } else if (runHistory.length > 0) {
+      loadRun(runHistory[0].id);
+    }
+  } catch(e) {
+    console.error('[report] Load reports error:', e);
+    document.getElementById('reportTitle').textContent = '加载失败';
+    document.getElementById('sections').innerHTML = '<div class="report-section error-section"><div class="section-body">无法加载报告数据: ' + escapeHtml(e.message) + '</div></div>';
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>

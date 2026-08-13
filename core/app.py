@@ -15,11 +15,34 @@ from core.db import (
     add_summary, get_summary, get_dashboard_stats,
     get_commands, add_command_content,
     get_all_settings, get_setting, set_setting,
-    authenticate_user, get_user_by_id, get_db,
+    authenticate_user, get_user_by_id, get_user_by_id_full,
+    list_users, create_user, update_user, update_user_password, delete_user,
+    get_db,
 )
 from core import project as projlib
 from core import datasource as dslib
 from core import target_types as ttslib
+from core.scheduler.scheduler import (
+    trigger_extract_once, trigger_report_once, trigger_report_all
+)
+
+DEFAULT_REPORT_PROMPT = """你是一个情报分析师。请基于以下已聚合的数据，撰写分析报告。
+
+【报告名称】{{ report_name }}
+【分析范围】{{ start_date }} 至 {{ end_date }}
+【参与分析的数据】{{ fact_count }} 条结构化事实
+
+=== 数据聚合结果 ===
+{{ aggregated_data }}
+
+=== 图表数据 ===
+{{ chart_data }}
+
+请按 JSON 格式返回：
+{
+  "analysis": "文字分析内容（不少于 200 字）...",
+  "summary": "一段话总结..."
+}"""
 
 
 # Parse CORS origins from environment variable (comma-separated)
@@ -1214,6 +1237,114 @@ def create_app(project_root, spec):
         return jsonify({'status': 'ok'})
 
     # ========================================================================
+    # User Management
+    # ========================================================================
+
+    @app.route('/api/users', methods=['GET'])
+    def list_users_endpoint():
+        """List all users with optional search. Admin only."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') not in ('admin', 'power_user'):
+            return jsonify({'error': '需要管理员权限'}), 403
+        search = request.args.get('search', '')
+        limit = int(request.args.get('limit', 100))
+        result = list_users(db_path, search=search if search else None, limit=limit)
+        return jsonify(result)
+
+    @app.route('/api/users/<int:user_id>', methods=['GET'])
+    def get_user_endpoint(user_id):
+        """Get a single user by ID. Admin only."""
+        token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not token_user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        u = get_user_by_id_full(db_path, user_id)
+        if u is None:
+            return jsonify({'error': 'not found'}), 404
+        return jsonify(u)
+
+    @app.route('/api/users/<int:user_id>', methods=['PUT'])
+    def update_user_endpoint(user_id):
+        """Update a user. Admin or self (non-password fields). Admin only for password change."""
+        token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not token_user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        # Only admin or self can edit
+        if token_user.get('user_id') != user_id and token_user.get('role') != 'admin':
+            return jsonify({'error': '没有权限修改此用户'}), 403
+        data = request.json
+        if not data:
+            return jsonify({'error': '请提供更新数据'}), 400
+        # Build fields dict (exclude password — handled separately)
+        fields = {}
+        if data.get('username'):
+            fields['username'] = data['username']
+        if data.get('display_name'):
+            fields['display_name'] = data['display_name']
+        if data.get('role_id') is not None:
+            # Map numeric role_id back to role name
+            id_to_role = {1: 'admin', 2: 'power_user', 3: 'user', 4: 'agent'}
+            fields['role'] = id_to_role.get(int(data['role_id']), 'user')
+        if data.get('domains'):
+            domains = data['domains']
+            if isinstance(domains, list):
+                fields['domains'] = ','.join([str(d) for d in domains if d])
+            elif isinstance(domains, str):
+                fields['domains'] = domains
+        updated = update_user(db_path, user_id, fields)
+        if updated is None:
+            return jsonify({'error': '更新失败'}), 500
+        # Handle password update separately
+        if data.get('password') and len(data['password']) >= 6:
+            update_user_password(db_path, user_id, data['password'])
+        return jsonify(updated)
+
+    @app.route('/api/users', methods=['POST'])
+    def create_user_endpoint():
+        """Create a new user. Admin only."""
+        token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not token_user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if token_user.get('role') != 'admin':
+            return jsonify({'error': '只有管理员可以创建用户'}), 403
+        data = request.json
+        if not data:
+            return jsonify({'error': '请提供用户数据'}), 400
+        username = data.get('username', '').strip()
+        display_name = data.get('display_name', '').strip()
+        password = data.get('password', '')
+        role_id = int(data.get('role_id', 3))
+        domains = data.get('domains', [])
+        if not username or not display_name:
+            return jsonify({'error': '用户名和显示名称不能为空'}), 400
+        if not password or len(password) < 6:
+            return jsonify({'error': '密码至少6位'}), 400
+        id_to_role = {1: 'admin', 2: 'power_user', 3: 'user', 4: 'agent'}
+        role = id_to_role.get(role_id, 'user')
+        if isinstance(domains, str):
+            domains = [d.strip() for d in domains.split(',') if d.strip()]
+        uid = create_user(db_path, username, display_name, password, role=role, domains=domains)
+        if uid is None:
+            return jsonify({'error': '创建失败（用户名可能已存在）'}), 409
+        u = get_user_by_id_full(db_path, uid)
+        return jsonify(u), 201
+
+    @app.route('/api/users/<int:user_id>', methods=['DELETE'])
+    def delete_user_endpoint(user_id):
+        """Delete (soft-disable) a user. Admin only."""
+        token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not token_user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if token_user.get('role') != 'admin':
+            return jsonify({'error': '只有管理员可以删除用户'}), 403
+        if user_id == 1:
+            return jsonify({'error': '不能删除超级管理员'}), 403
+        if not delete_user(db_path, user_id):
+            return jsonify({'error': '删除失败'}), 500
+        return jsonify({'ok': True})
+
+    # ========================================================================
     # Authentication
     # ========================================================================
 
@@ -1319,6 +1450,7 @@ def create_app(project_root, spec):
             # 有 thinking 标记但没有分隔 → 整段是思考过程，无正式回复
             return raw_reasoning.strip(), ''
 
+    # Deprecated: AI Analyst real-time Q&A (replaced by scheduled reports)
     @app.route('/api/analyst/analyze', methods=['POST'])
     def analyst_analyze():
         """AI 分析师：基于情报数据回答用户问题。
@@ -1612,5 +1744,540 @@ def create_app(project_root, spec):
                 'error': f'分析失败: {str(e)[:200]}',
                 'searched': len(search_items),
             }), 500
+
+    def _now_iso():
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
+
+
+    def require_auth(f):
+        """Decorator to require JWT auth."""
+        from functools import wraps
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            auth_header = request.headers.get('Authorization', '')
+            token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+            user = _verify_token(token) if token else None
+            if not user:
+                return jsonify({'error': 'Unauthorized'}), 401
+            return f(*args, **kwargs)
+        return decorated
+
+
+    # ─── 抽取规则管理 API ──────────────────────────────────────
+
+    @app.route('/api/extract/rules', methods=['GET'])
+    @require_auth
+    def list_extract_rules():
+        """List all extraction rules."""
+        domain = request.args.get('domain')
+        enabled = request.args.get('enabled')
+
+        with get_db(db_path) as conn:
+            sql = "SELECT er.*, COUNT(e.id) AS field_count " \
+                  "FROM intel_extraction_rule er " \
+                  "LEFT JOIN intel_extraction_field e ON er.id = e.rule_id " \
+                  "WHERE 1=1"
+            params = []
+            if domain:
+                sql += " AND er.domain = ?"
+                params.append(domain)
+            if enabled is not None:
+                sql += " AND er.enabled = ?"
+                params.append(1 if enabled == "1" else 0)
+            sql += " GROUP BY er.id ORDER BY er.name"
+            rows = conn.execute(sql, params).fetchall()
+            return jsonify([dict(r) for r in rows])
+
+
+    @app.route('/api/extract/rules', methods=['POST'])
+    @require_auth
+    def create_extract_rule():
+        """Create a new extraction rule."""
+        data = request.get_json()
+        now = _now_iso()
+        with get_db(db_path) as conn:
+            cursor = conn.execute(
+                """INSERT INTO intel_extraction_rule
+                   (name, domain, description, scope, max_fields, enabled, built_in, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                (data.get("name", ""), data.get("domain", "research"),
+                 data.get("description", ""), data.get("scope", "full"),
+                 data.get("max_fields", 15),
+                 1 if data.get("enabled", True) else 0,
+                 now, now)
+            )
+            conn.commit()
+            return jsonify({"id": cursor.lastrowid, "ok": True}), 201
+
+
+    @app.route('/api/extract/rules/<int:rule_id>', methods=['GET'])
+    @require_auth
+    def get_extract_rule(rule_id):
+        """Get rule details with field list."""
+        with get_db(db_path) as conn:
+            rule = conn.execute(
+                "SELECT * FROM intel_extraction_rule WHERE id = ?", (rule_id,)
+            ).fetchone()
+            if not rule:
+                return jsonify({"error": "Not found"}), 404
+            rule_dict = dict(rule)
+            fields = conn.execute(
+                "SELECT * FROM intel_extraction_field WHERE rule_id = ? ORDER BY sort_order",
+                (rule_id,)
+            ).fetchall()
+            rule_dict["fields"] = [dict(r) for r in fields]
+            return jsonify(rule_dict)
+
+
+    @app.route('/api/extract/rules/<int:rule_id>', methods=['PUT'])
+    @require_auth
+    def update_extract_rule(rule_id):
+        """Update extraction rule (replace fields)."""
+        data = request.get_json()
+        with get_db(db_path) as conn:
+            conn.execute(
+                """UPDATE intel_extraction_rule SET
+                   name=?, domain=?, description=?, scope=?, max_fields=?,
+                   enabled=?, updated_at=?
+                   WHERE id=?""",
+                (data.get("name"), data.get("domain", "research"),
+                 data.get("description", ""), data.get("scope", "full"),
+                 data.get("max_fields", 15),
+                 1 if data.get("enabled", True) else 0,
+                 _now_iso(), rule_id)
+            )
+            conn.execute("DELETE FROM intel_extraction_field WHERE rule_id = ?", (rule_id,))
+            fields = data.get("fields", [])
+            for i, f in enumerate(fields):
+                conn.execute(
+                    """INSERT INTO intel_extraction_field
+                       (rule_id, field_key, field_label, field_type, is_required,
+                        default_value, sort_order, help_text)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (rule_id, f["field_key"], f["field_label"], f.get("field_type", "text"),
+                     1 if f.get("is_required") else 0, f.get("default_value", ""),
+                     f.get("sort_order", i), f.get("help_text", ""))
+                )
+            conn.commit()
+            return jsonify({"ok": True})
+
+
+    @app.route('/api/extract/rules/<int:rule_id>', methods=['DELETE'])
+    @require_auth
+    def delete_extract_rule(rule_id):
+        """Delete extraction rule (built-in cannot be deleted)."""
+        with get_db(db_path) as conn:
+            rule = conn.execute("SELECT built_in FROM intel_extraction_rule WHERE id = ?", (rule_id,)).fetchone()
+            if not rule:
+                return jsonify({"error": "Not found"}), 404
+            if rule["built_in"] == 1:
+                return jsonify({"error": "内置规则不可删除，仅可禁用", "ok": False}), 403
+            conn.execute("DELETE FROM intel_extraction_rule WHERE id = ?", (rule_id,))
+            conn.commit()
+            return jsonify({"ok": True})
+
+
+    @app.route('/api/extract/rules/<int:rule_id>/trigger', methods=['POST'])
+    @require_auth
+    def trigger_extract(rule_id):
+        """Manually trigger extraction for all pending intelligence."""
+        with get_db(db_path) as conn:
+            conn.execute(
+                "UPDATE intelligence SET extracted = 0 "
+                "WHERE id IN (SELECT DISTINCT intel_id FROM intel_fact WHERE rule_id = ?)",
+                (rule_id,)
+            )
+            conn.commit()
+        result = trigger_extract_once()
+        return jsonify(result)
+
+
+    # ─── 报告模板管理 API ──────────────────────────────────────
+
+    @app.route('/api/reports/templates', methods=['GET'])
+    @require_auth
+    def list_report_templates():
+        """List all report templates."""
+        domain = request.args.get('domain')
+        enabled = request.args.get('enabled')
+        status = request.args.get('status')
+
+        with get_db(db_path) as conn:
+            sql = "SELECT * FROM intel_aggregate WHERE 1=1"
+            params = []
+            if domain:
+                sql += " AND domain = ?"
+                params.append(domain)
+            if enabled is not None:
+                sql += " AND enabled = ?"
+                params.append(1 if enabled == "1" else 0)
+            if status:
+                sql += " AND status = ?"
+                params.append(status)
+            sql += " ORDER BY name"
+            rows = conn.execute(sql, params).fetchall()
+            return jsonify([dict(r) for r in rows])
+
+
+    @app.route('/api/reports/templates', methods=['POST'])
+    @require_auth
+    def create_report_template():
+        """Create a report template."""
+        data = request.get_json()
+        now = _now_iso()
+        with get_db(db_path) as conn:
+            rule = conn.execute(
+                "SELECT id FROM intel_extraction_rule WHERE id = ? AND enabled = 1",
+                (data.get("rule_id"),)
+            ).fetchone()
+            if not rule:
+                return jsonify({"error": "指定的抽取规则不存在或已禁用"}), 400
+            cursor = conn.execute(
+                """INSERT INTO intel_aggregate
+                   (domain, name, description, rule_id, group_by, metrics, filters,
+                    chart_config, prompt_template, schedule_minutes, lookback_days,
+                    enabled, next_run, status, built_in, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)""",
+                (data.get("domain", "research"), data.get("name"),
+                 data.get("description", ""), data.get("rule_id"),
+                 data.get("group_by", "entity_name"),
+                 json.dumps(data.get("metrics", [])),
+                 json.dumps(data.get("filters", [])),
+                 json.dumps(data.get("chart_config", [])),
+                 data.get("prompt_template", DEFAULT_REPORT_PROMPT),
+                 data.get("schedule_minutes", 1440),
+                 data.get("lookback_days", 30),
+                 1 if data.get("enabled", True) else 0,
+                 data.get("next_run", now),
+                 now, now)
+            )
+            conn.commit()
+            return jsonify({"id": cursor.lastrowid, "ok": True}), 201
+
+
+    @app.route('/api/reports/templates/<int:template_id>', methods=['GET'])
+    @require_auth
+    def get_report_template(template_id):
+        """Get template details."""
+        with get_db(db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM intel_aggregate WHERE id = ?", (template_id,)
+            ).fetchone()
+            if not row:
+                return jsonify({"error": "Not found"}), 404
+            d = dict(row)
+            for key in ("metrics", "filters", "chart_config"):
+                if d.get(key):
+                    d[key] = json.loads(d[key])
+            return jsonify(d)
+
+
+    @app.route('/api/reports/templates/<int:template_id>', methods=['PUT'])
+    @require_auth
+    def update_report_template(template_id):
+        """Update report template."""
+        data = request.get_json()
+        with get_db(db_path) as conn:
+            conn.execute(
+                """UPDATE intel_aggregate SET
+                   domain=?, name=?, description=?, rule_id=?, group_by=?,
+                   metrics=?, filters=?, chart_config=?, prompt_template=?,
+                   schedule_minutes=?, lookback_days=?, enabled=?, updated_at=?
+                   WHERE id=?""",
+                (data.get("domain"), data.get("name"), data.get("description", ""),
+                 data.get("rule_id"), data.get("group_by", "entity_name"),
+                 json.dumps(data.get("metrics", [])),
+                 json.dumps(data.get("filters", [])),
+                 json.dumps(data.get("chart_config", [])),
+                 data.get("prompt_template", ""),
+                 data.get("schedule_minutes", 1440),
+                 data.get("lookback_days", 30),
+                 1 if data.get("enabled", True) else 0,
+                 _now_iso(), template_id)
+            )
+            conn.commit()
+            return jsonify({"ok": True})
+
+
+    @app.route('/api/reports/templates/<int:template_id>', methods=['DELETE'])
+    @require_auth
+    def delete_report_template(template_id):
+        """Delete report template (built-in cannot be deleted)."""
+        with get_db(db_path) as conn:
+            row = conn.execute("SELECT built_in FROM intel_aggregate WHERE id = ?", (template_id,)).fetchone()
+            if not row:
+                return jsonify({"error": "Not found"}), 404
+            if row["built_in"] == 1:
+                return jsonify({"error": "内置模板不可删除，仅可禁用", "ok": False}), 403
+            conn.execute("DELETE FROM intel_aggregate WHERE id = ?", (template_id,))
+            conn.commit()
+            return jsonify({"ok": True})
+
+
+    # ─── 抽取结果查询 API ──────────────────────────────────────
+
+    @app.route('/api/extract/facts', methods=['GET'])
+    @require_auth
+    def list_facts():
+        """Query structured facts with pagination and filters."""
+        rule_id = request.args.get('rule_id')
+        intel_id = request.args.get('intel_id')
+        field_key = request.args.get('field_key')
+        entity = request.args.get('entity')
+        start_at = request.args.get('start_at')
+        end_at = request.args.get('end_at')
+        limit = min(int(request.args.get('limit', 100)), 1000)
+        offset = int(request.args.get('offset', 0))
+
+        with get_db(db_path) as conn:
+            sql = "SELECT * FROM intel_fact WHERE 1=1"
+            params = []
+            if rule_id:
+                sql += " AND rule_id = ?"
+                params.append(rule_id)
+            if intel_id:
+                sql += " AND intel_id = ?"
+                params.append(intel_id)
+            if field_key:
+                sql += " AND field_key = ?"
+                params.append(field_key)
+            if entity:
+                sql += " AND (entity_name LIKE ? OR context LIKE ?)"
+                params.append(f"%{entity}%", f"%{entity}%")
+            if start_at:
+                sql += " AND created_at >= ?"
+                params.append(start_at)
+            if end_at:
+                sql += " AND created_at <= ?"
+                params.append(end_at)
+            sql += " ORDER BY created_at DESC"
+            total = conn.execute(sql.replace("SELECT *", "SELECT COUNT(*)"), params).fetchone()[0]
+            rows = conn.execute(sql, params).fetchall()
+            return jsonify({
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "rows": [dict(r) for r in rows]
+            })
+
+
+    @app.route('/api/extract/facts/<int:intel_id>', methods=['GET'])
+    @require_auth
+    def get_intel_facts(intel_id):
+        """Get extraction results for a single intelligence record."""
+        with get_db(db_path) as conn:
+            rows = conn.execute(
+                """SELECT f.*, r.name AS rule_name
+                   FROM intel_fact f
+                   LEFT JOIN intel_extraction_rule r ON f.rule_id = r.id
+                   WHERE f.intel_id = ?
+                   ORDER BY f.rule_id, f.field_key""",
+                (intel_id,)
+            ).fetchall()
+            grouped = {}
+            for row in rows:
+                rule_name = row["rule_name"] or f"rule_{row['rule_id']}"
+                if rule_name not in grouped:
+                    grouped[rule_name] = []
+                grouped[rule_name].append(dict(row))
+            return jsonify({"intel_id": intel_id, "rules": grouped})
+
+
+    @app.route('/api/extract/stats', methods=['GET'])
+    @require_auth
+    def extract_stats():
+        """Get extraction statistics."""
+        with get_db(db_path) as conn:
+            total_intel = conn.execute("SELECT COUNT(*) FROM intelligence").fetchone()[0]
+            extracted = conn.execute("SELECT COUNT(*) FROM intelligence WHERE extracted = 1").fetchone()[0]
+            failed = conn.execute("SELECT COUNT(*) FROM intelligence WHERE extracted = 2").fetchone()[0]
+            pending = conn.execute("SELECT COUNT(*) FROM intelligence WHERE extracted = 0").fetchone()[0]
+            total_facts = conn.execute("SELECT COUNT(*) FROM intel_fact").fetchone()[0]
+            rules = conn.execute(
+                "SELECT id, name, domain, enabled, "
+                "(SELECT COUNT(*) FROM intel_fact WHERE rule_id=er.id) AS fact_count "
+                "FROM intel_extraction_rule er ORDER BY name"
+            ).fetchall()
+            return jsonify({
+                "total_intelligence": total_intel,
+                "extracted": extracted,
+                "extract_failed": failed,
+                "pending_extract": pending,
+                "total_facts": total_facts,
+                "coverage_pct": round(extracted / total_intel * 100, 1) if total_intel > 0 else 0,
+                "rules": [dict(r) for r in rules]
+            })
+
+
+    # ─── 调度器管理 API ────────────────────────────────────────
+
+    @app.route('/api/reports/scheduler', methods=['GET'])
+    @require_auth
+    def scheduler_status():
+        """Get scheduler status and template summary."""
+        with get_db(db_path) as conn:
+            row = conn.execute("SELECT * FROM report_scheduler WHERE id = 1").fetchone()
+            templates = conn.execute(
+                """SELECT id, name, domain, status, enabled,
+                          last_success_time, fail_count, next_run
+                   FROM intel_aggregate
+                   ORDER BY domain, name"""
+            ).fetchall()
+            if row:
+                d = dict(row)
+                d["templates"] = [dict(t) for t in templates]
+                return jsonify(d)
+            return jsonify({"error": "scheduler not initialized"}), 500
+
+
+    @app.route('/api/reports/scheduler/toggle', methods=['POST'])
+    @require_auth
+    def toggle_scheduler():
+        """Enable/disable scheduler components."""
+        data = request.get_json()
+        action = data.get("action", "toggle")
+        component = data.get("component", "all")
+
+        with get_db(db_path) as conn:
+            now = _now_iso()
+            if component == "all":
+                if action == "enable":
+                    conn.execute("UPDATE report_scheduler SET scheduler_enabled = 1, extract_enabled = 1, report_enabled = 1, updated_at = ? WHERE id = 1", (now,))
+                elif action == "disable":
+                    conn.execute("UPDATE report_scheduler SET scheduler_enabled = 0, extract_enabled = 0, report_enabled = 0, updated_at = ? WHERE id = 1", (now,))
+                else:
+                    row = conn.execute("SELECT scheduler_enabled FROM report_scheduler WHERE id = 1").fetchone()
+                    new_val = 0 if row["scheduler_enabled"] == 1 else 1
+                    conn.execute(f"UPDATE report_scheduler SET scheduler_enabled = {new_val}, extract_enabled = {new_val}, report_enabled = {new_val}, updated_at = ? WHERE id = 1", (now,))
+            elif component == "extract":
+                if action == "enable":
+                    conn.execute("UPDATE report_scheduler SET extract_enabled = 1, updated_at = ? WHERE id = 1", (now,))
+                elif action == "disable":
+                    conn.execute("UPDATE report_scheduler SET extract_enabled = 0, updated_at = ? WHERE id = 1", (now,))
+                else:
+                    row = conn.execute("SELECT extract_enabled FROM report_scheduler WHERE id = 1").fetchone()
+                    new_val = 0 if row["extract_enabled"] == 1 else 1
+                    conn.execute(f"UPDATE report_scheduler SET extract_enabled = {new_val}, updated_at = ? WHERE id = 1", (now,))
+            elif component == "report":
+                if action == "enable":
+                    conn.execute("UPDATE report_scheduler SET report_enabled = 1, updated_at = ? WHERE id = 1", (now,))
+                elif action == "disable":
+                    conn.execute("UPDATE report_scheduler SET report_enabled = 0, updated_at = ? WHERE id = 1", (now,))
+                else:
+                    row = conn.execute("SELECT report_enabled FROM report_scheduler WHERE id = 1").fetchone()
+                    new_val = 0 if row["report_enabled"] == 1 else 1
+                    conn.execute(f"UPDATE report_scheduler SET report_enabled = {new_val}, updated_at = ? WHERE id = 1", (now,))
+            conn.commit()
+            return jsonify({"ok": True})
+
+
+    @app.route('/api/reports/scheduler/run-all', methods=['POST'])
+    @require_auth
+    def scheduler_run_all():
+        """Trigger all due reports now."""
+        result = trigger_report_all()
+        return jsonify(result)
+
+
+    @app.route('/api/reports/scheduler/reset-fused/<int:template_id>', methods=['POST'])
+    @require_auth
+    def reset_fused(template_id):
+        """Reset a template from fused state."""
+        with get_db(db_path) as conn:
+            conn.execute(
+                """UPDATE intel_aggregate SET
+                   status = 'active',
+                   fail_count = 0,
+                   last_fail_time = NULL,
+                   next_run = ?
+                   WHERE id = ? AND status = 'fused'""",
+                (_now_iso(), template_id)
+            )
+            conn.commit()
+            return jsonify({"ok": True})
+
+
+    # ─── 报告执行 API ──────────────────────────────────────
+
+    @app.route('/api/reports/run/<int:template_id>', methods=['POST'])
+    @require_auth
+    def run_report(template_id):
+        """Manually trigger a single report execution."""
+        result = trigger_report_once(template_id)
+        return jsonify(result)
+
+
+    @app.route('/api/reports/runs/<int:template_id>', methods=['GET'])
+    @require_auth
+    def list_report_runs(template_id):
+        """Get execution history for a template."""
+        limit = min(int(request.args.get('limit', 20)), 100)
+        offset = int(request.args.get('offset', 0))
+        with get_db(db_path) as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM report_run WHERE template_id = ?",
+                (template_id,)
+            ).fetchone()[0]
+            rows = conn.execute(
+                """SELECT id, template_id, domain, scheduled_time, completed_at,
+                          status, duration_sec, retry_count, fact_count
+                   FROM report_run
+                   WHERE template_id = ?
+                   ORDER BY scheduled_time DESC
+                   LIMIT ? OFFSET ?""",
+                (template_id, limit, offset)
+            ).fetchall()
+            return jsonify({
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "runs": [dict(r) for r in rows]
+            })
+
+
+    @app.route('/api/reports/runs/<int:run_id>', methods=['GET'])
+    @require_auth
+    def get_report_run(run_id):
+        """Get single report run details."""
+        with get_db(db_path) as conn:
+            run = conn.execute(
+                """SELECT r.*, a.name AS template_name, a.domain AS template_domain
+                   FROM report_run r
+                   LEFT JOIN intel_aggregate a ON r.template_id = a.id
+                   WHERE r.id = ?""",
+                (run_id,)
+            ).fetchone()
+            if not run:
+                return jsonify({"error": "Not found"}), 404
+            d = dict(run)
+            for key in ("aggregated_data", "output_charts"):
+                if d.get(key):
+                    d[key] = json.loads(d[key])
+            return jsonify(d)
+
+
+    @app.route('/api/reports/overview', methods=['GET'])
+    @require_auth
+    def report_overview():
+        """Get latest execution summary for all templates."""
+        with get_db(db_path) as conn:
+            rows = conn.execute(
+                """SELECT a.id AS template_id, a.name, a.domain,
+                          r.status AS last_status,
+                          r.completed_at AS last_time,
+                          r.duration_sec AS last_duration,
+                          r.fact_count AS last_fact_count,
+                          a.status AS template_status
+                   FROM intel_aggregate a
+                   LEFT JOIN report_run r ON a.id = r.template_id
+                   AND r.id = (
+                       SELECT MAX(id) FROM report_run WHERE template_id = a.id
+                   )
+                   WHERE a.enabled = 1
+                   ORDER BY a.domain, a.name"""
+            ).fetchall()
+            return jsonify([dict(r) for r in rows])
+
 
     return app

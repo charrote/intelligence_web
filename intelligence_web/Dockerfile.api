@@ -11,7 +11,8 @@ COPY intelligence_web/api/ /app/api/
 # Create shared data directory for API Key
 RUN mkdir -p /app/shared_data
 
-RUN pip install --no-cache-dir flask flask-cors pyjwt openpyxl requests
+COPY intelligence_web/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PYTHONUNBUFFERED=1
 

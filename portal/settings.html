@@ -341,6 +341,49 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
     </div>
   </div>
 
+  <!-- ===== Scheduler Configuration ===== -->
+  <div class="settings-pane active" id="pane-scheduler">
+    <div class="form-section">
+      <h3>调度器配置</h3>
+      <div class="form-group">
+        <label>抽取开关</label>
+        <input type="checkbox" id="sched_extract_enabled" data-key="scheduler.extract_enabled">
+      </div>
+      <div class="form-group">
+        <label>报告开关</label>
+        <input type="checkbox" id="sched_report_enabled" data-key="scheduler.report_enabled">
+      </div>
+      <div class="form-group">
+        <label>抽取间隔（分钟）</label>
+        <input type="number" id="sched_extract_interval" data-key="scheduler.extract_interval_min" min="1" max="1440" value="10">
+      </div>
+      <div class="form-group">
+        <label>报告间隔（分钟）</label>
+        <input type="number" id="sched_report_interval" data-key="scheduler.report_interval_min" min="1" max="1440" value="5">
+      </div>
+      <div class="form-group">
+        <label>LLM 抽取超时（秒）</label>
+        <input type="number" id="sched_llm_extract_timeout" data-key="llm.extract_timeout" min="10" max="300" value="60">
+      </div>
+      <div class="form-group">
+        <label>LLM 报告超时（秒）</label>
+        <input type="number" id="sched_llm_report_timeout" data-key="llm.report_timeout" min="10" max="600" value="120">
+      </div>
+      <div class="form-group">
+        <label>报告重试次数</label>
+        <input type="number" id="sched_report_max_retries" data-key="report.max_retries" min="0" max="5" value="1">
+      </div>
+      <div class="form-group">
+        <label>熔断阈值</label>
+        <input type="number" id="sched_fuse_threshold" data-key="report.fuse_threshold" min="1" max="10" value="3">
+      </div>
+      <div class="form-group">
+        <label>报告保留天数</label>
+        <input type="number" id="sched_retention_days" data-key="report.retention_days" min="1" max="365" value="30">
+      </div>
+    </div>
+  </div>
+
   <!-- ===== Domain Controller ===== -->
   <div class="settings-pane" id="pane-domains">
     <div class="settings-section">

@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>报告模板管理</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.stat-card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);padding:12px 16px;box-shadow:var(--shadow-sm);display:flex;align-items:center;gap:10px;min-width:140px}
+.stat-card .indicator{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.stat-card .indicator.green{background:var(--green)}
+.stat-card .indicator.dark{background:#c4c5c7}
+.stat-card .stat-text{font-size:12px;color:var(--gray-500)}
+.stat-card .stat-value{font-size:13px;font-weight:600;color:var(--gray-700)}
+.stat-card .spacer{flex:1}
+.status-tag{display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:500}
+.status-tag.active{background:var(--green-light);color:var(--green)}
+.status-tag.disabled{background:var(--gray-100);color:var(--gray-500)}
+.status-tag.fused{background:var(--red-light);color:var(--red)}
+.status-tag.built-in{background:var(--accent-light);color:var(--accent)}
+.section{margin-bottom:24px}
+.section-title{font-size:14px;font-weight:600;color:var(--gray-700);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.section-title svg{color:var(--gray-400)}
+.section-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.sub-table{width:100%;border-collapse:collapse;font-size:13px;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
+.sub-table th{padding:6px 10px;font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);text-align:left}
+.sub-table td{padding:6px 10px;border-bottom:1px solid var(--gray-100);color:var(--gray-600);vertical-align:middle}
+.sub-table tr:last-child td{border-bottom:none}
+.sub-table input,.sub-table select{width:100%;padding:5px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px;color:var(--gray-700);background:#fff;box-sizing:border-box}
+.sub-table input:focus,.sub-table select:focus{border-color:var(--accent);outline:none}
+.btn-sub-add{padding:6px 14px;border:1px dashed var(--gray-300);border-radius:var(--radius);font-size:12px;font-weight:500;color:var(--gray-500);background:#fff;cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;gap:4px;margin-top:6px}
+.btn-sub-add:hover{border-color:var(--accent);color:var(--accent)}
+.btn-sub-del{padding:3px 10px;border:none;border-radius:var(--radius-sm);font-size:11px;font-weight:500;color:var(--gray-400);background:transparent;cursor:pointer;transition:all 0.12s}
+.btn-sub-del:hover{background:var(--red-light);color:var(--red)}
+.prompt-area{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap}
+#feedback{display:none;padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-top:12px}
+.checkbox-row{display:flex;align-items:center;gap:8px}
+.checkbox-row input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent)}
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="page-title">
+    <span>报告模板管理</span>
+    <button class="btn btn-primary" onclick="openCreate()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建报告</button>
+  </div>
+
+  <!-- Scheduler Status -->
+  <div class="section">
+    <div class="section-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      调度器状态
+    </div>
+    <div class="section-row" id="schedulerStatus">
+      <div class="stat-card"><div class="indicator dark" id="schedulerIndicator"></div><div><div class="stat-text">抽取</div><div class="stat-value" id="extractStatus">加载中…</div></div></div>
+      <div class="stat-card"><div class="indicator dark" id="reportIndicator"></div><div><div class="stat-text">报告</div><div class="stat-value" id="reportStatus">加载中…</div></div></div>
+      <div class="stat-card"><div class="stat-text">今日生成</div><div class="stat-value" id="todayCount">—</div></div>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost btn-sm" id="btnPause" onclick="toggleScheduler(false)" style="display:none">暂停</button>
+      <button class="btn btn-ghost btn-sm" id="btnResume" onclick="toggleScheduler(true)" style="display:none">恢复</button>
+      <button class="btn btn-primary btn-sm" onclick="runAll()">立即执行全部</button>
+    </div>
+  </div>
+
+  <!-- Filter Toolbar -->
+  <div class="toolbar">
+    <select id="filterDomain" onchange="loadTemplates()">
+      <option value="">全部域</option>
+      <option value="research">research</option>
+      <option value="sales">sales</option>
+      <option value="competitive">competitive</option>
+      <option value="market">market</option>
+    </select>
+    <select id="filterStatus" onchange="loadTemplates()">
+      <option value="">全部状态</option>
+      <option value="enabled">启用</option>
+      <option value="disabled">停用</option>
+      <option value="fused">熔断</option>
+    </select>
+    <input type="text" id="filterSearch" placeholder="搜索模板名称…" oninput="loadTemplates()" style="width:180px">
+  </div>
+
+  <!-- Template List -->
+  <div class="table-wrapper" style="margin-top:12px">
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th><th>域</th><th>关联规则</th><th>聚合维度</th><th>状态</th><th>上次成功</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="templateList"></tbody>
+    </table>
+  </div>
+</main>
+
+<!-- Create/Edit Panel -->
+<div class="panel" id="editPanel">
+  <div class="panel-head"><h2 id="panelTitle">新建报告</h2>
+    <button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="panel-body" id="panelBody">
+    <div class="form-group">
+      <label>报告名称 *</label>
+      <input type="text" id="ed_name" placeholder="例：市场份额概览">
+    </div>
+    <div class="form-group">
+      <label>所属域</label>
+      <select id="ed_domain">
+        <option value="research">research</option>
+        <option value="sales">sales</option>
+        <option value="competitive">competitive</option>
+        <option value="market">market</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>描述</label>
+      <textarea id="ed_description" rows="2" placeholder="简要描述此报告的目的和用途"></textarea>
+    </div>
+    <div class="form-group">
+      <label>关联规则</label>
+      <select id="ed_rule_id"><option value="">— 请选择抽取规则 —</option></select>
+    </div>
+    <div class="form-group">
+      <label>回溯天数</label>
+      <select id="ed_lookback_days">
+        <option value="7">7 天</option>
+        <option value="14">14 天</option>
+        <option value="30" selected>30 天</option>
+        <option value="60">60 天</option>
+        <option value="90">90 天</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>聚合维度（Group By）</label>
+      <select id="ed_group_by">
+        <option value="entity_name">实体名称</option>
+        <option value="time_period">时间周期</option>
+        <option value="context">上下文</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>调度间隔（分钟）</label>
+      <select id="ed_schedule_minutes">
+        <option value="1440">1440（每天）</option>
+        <option value="4320">4320（每3天）</option>
+        <option value="2880">2880（每2天）</option>
+        <option value="custom">自定义</option>
+      </select>
+      <input type="number" id="ed_custom_minutes" placeholder="分钟" style="margin-top:6px;display:none;max-width:160px">
+    </div>
+    <div class="form-group">
+      <label><div class="checkbox-row"><input type="checkbox" id="ed_enabled" checked> 启用此模板</div></label>
+    </div>
+    <div class="form-group">
+      <label>指标（Metrics）</label>
+      <table class="sub-table" id="metricsTable">
+        <thead><tr><th style="width:30%">字段</th><th style="width:22%">聚合方式</th><th style="width:20%">标签</th><th style="width:16%">单位</th><th style="width:12%"></th></tr></thead>
+        <tbody id="metricsBody"></tbody>
+      </table>
+      <button class="btn-sub-add" onclick="addMetricRow()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>添加指标</button>
+    </div>
+    <div class="form-group">
+      <label>过滤条件（Filters）</label>
+      <table class="sub-table" id="filtersTable">
+        <thead><tr><th style="width:28%">字段</th><th style="width:12%">条件</th><th style="width:38%">值</th><th style="width:12%"></th></tr></thead>
+        <tbody id="filtersBody"></tbody>
+      </table>
+      <button class="btn-sub-add" onclick="addFilterRow()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>添加过滤</button>
+    </div>
+    <div class="form-group">
+      <label>图表配置（Chart Config）</label>
+      <table class="sub-table" id="chartTable">
+        <thead><tr><th style="width:14%">类型</th><th style="width:22%">标题</th><th style="width:28%">名称字段</th><th style="width:24%">数值字段</th><th style="width:12%"></th></tr></thead>
+        <tbody id="chartBody"></tbody>
+      </table>
+      <button class="btn-sub-add" onclick="addChartRow()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>添加图表</button>
+    </div>
+    <div class="form-group">
+      <label>Prompt 模板（Jinja2）</label>
+      <textarea id="ed_prompt_template" class="prompt-area" rows="8" placeholder="在此编写报告生成的 Jinja2 模板，使用 {{ metrics }}、{{ filters }} 等变量"></textarea>
+    </div>
+    <input type="hidden" id="ed_id">
+    <div id="feedback"></div>
+  </div>
+  <div class="panel-foot">
+    <button class="btn btn-primary" onclick="saveTemplate()">保存</button>
+    <button class="btn btn-ghost" onclick="closePanel()">取消</button>
+  </div>
+</div>
+<div class="panel-overlay" onclick="closePanel()"></div>
+
+<script>
+var token = getToken();
+if (!token) { window.location.href = '/portal/login.html'; }
+
+var allTemplates = [];
+var enabledRules = [];
+
+/* ── Load Scheduler Status ── */
+function loadScheduler() {
+  apiFetch(apiBase() + '/api/reports/scheduler').then(function(r) { return r.json(); }).then(function(d) {
+    if (!d) return;
+    var extOk = d.extract_ok !== false;
+    var rptOk = d.report_ok !== false;
+    var schedulerEnabled = d.enabled !== false;
+
+    var extEl = document.getElementById('extractStatus');
+    var rptEl = document.getElementById('reportStatus');
+    var exI = document.getElementById('extractIndicator');
+    var rpI = document.getElementById('reportIndicator');
+
+    if (extOk) { extEl.textContent = '运行中'; exI.className = 'indicator green'; }
+    else { extEl.textContent = '已停止'; exI.className = 'indicator dark'; }
+    if (rptOk) { rptEl.textContent = '运行中'; rpI.className = 'indicator green'; }
+    else { rptEl.textContent = '已停止'; rpI.className = 'indicator dark'; }
+
+    document.getElementById('todayCount').textContent = d.today_count != null ? d.today_count : '—';
+
+    var pauseBtn = document.getElementById('btnPause');
+    var resumeBtn = document.getElementById('btnResume');
+    if (schedulerEnabled) {
+      pauseBtn.style.display = '';
+      resumeBtn.style.display = 'none';
+    } else {
+      pauseBtn.style.display = 'none';
+      resumeBtn.style.display = '';
+    }
+  }).catch(function() {
+    document.getElementById('extractStatus').textContent = '未知';
+    document.getElementById('reportStatus').textContent = '未知';
+  });
+}
+
+/* ── Toggle Scheduler ── */
+function toggleScheduler(enable) {
+  apiFetch(apiBase() + '/api/reports/scheduler/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: enable })
+  }).then(function() { loadScheduler(); loadTemplates(); });
+}
+
+/* ── Run All Reports ── */
+function runAll() {
+  if (!confirm('确认立即执行全部报告模板？')) return;
+  apiFetch(apiBase() + '/api/reports/scheduler/run-all', { method: 'POST' }).then(function(r) {
+    if (r.ok) { alert('全部报告已触发执行'); loadTemplates(); }
+    else { r.text().then(function(t) { alert('执行失败: ' + (t || '未知错误')); }); }
+  }).catch(function() { alert('请求失败'); });
+}
+
+/* ── Load Templates ── */
+function loadTemplates() {
+  var domain = document.getElementById('filterDomain').value;
+  var status = document.getElementById('filterStatus').value;
+  var search = document.getElementById('filterSearch').value.trim();
+  var params = [];
+  if (domain) params.push('domain=' + encodeURIComponent(domain));
+  if (status) params.push('status=' + encodeURIComponent(status));
+  if (search) params.push('search=' + encodeURIComponent(search));
+
+  apiFetch(apiBase() + '/api/reports/templates' + (params.length ? '?' + params.join('&') : '')).then(function(r) { return r.json(); }).then(function(data) {
+    allTemplates = Array.isArray(data) ? data : (data.templates || []);
+    renderTemplates(allTemplates);
+  }).catch(function() {
+    document.getElementById('templateList').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
+  });
+}
+
+function renderTemplates(list) {
+  var tbody = document.getElementById('templateList');
+  if (!list.length) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">暂无报告模板</td></tr>'; return; }
+  tbody.innerHTML = list.map(function(t) {
+    var ruleName = t.rule_name || t.rule_id || '—';
+    var groupBy = t.group_by || '—';
+    var lastOk = t.last_success_at ? formatDate(t.last_success_at) : '—';
+    var statusHtml = '';
+    if (t.enabled === false || t.enabled === 0) {
+      statusHtml = '<span class="status-tag disabled">停用</span>';
+    } else if (t.fused === true || t.fused === 1) {
+      statusHtml = '<span class="status-tag fused">熔断</span>';
+    } else {
+      statusHtml = '<span class="status-tag active">启用</span>';
+    }
+    if (t.built_in) statusHtml += ' <span class="status-tag built-in">内置</span>';
+
+    var actions = '<div class="action-btns">';
+    actions += '<button class="btn btn-ghost btn-sm" onclick="openEdit(' + t.id + ')">编辑</button>';
+    actions += '<button class="btn btn-ghost btn-sm" onclick="runReport(' + t.id + ')">执行</button>';
+    if (t.built_in) {
+      actions += '<button class="btn btn-ghost btn-sm" onclick="resetFuse(' + t.id + ')">取消熔断</button>';
+    } else {
+      actions += '<button class="btn btn-ghost btn-sm" style="color:var(--gray-400)" onclick="viewHistory(' + t.id + ')">历史</button>';
+      actions += '<button class="btn btn-danger btn-sm" onclick="deleteTemplate(' + t.id + ')">删除</button>';
+    }
+    actions += '</div>';
+
+    return '<tr>'
+      + '<td><strong>' + escapeHtml(t.name || '—') + '</strong>' + (t.description ? '<br><span style="font-size:11px;color:var(--gray-400)">' + escapeHtml(t.description) + '</span>' : '') + '</td>'
+      + '<td>' + escapeHtml(t.domain || '—') + '</td>'
+      + '<td>' + escapeHtml(ruleName) + '</td>'
+      + '<td>' + escapeHtml(groupBy) + '</td>'
+      + '<td>' + statusHtml + '</td>'
+      + '<td>' + lastOk + '</td>'
+      + '<td class="action-cell">' + actions + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+/* ── Run single report ── */
+function runReport(id) {
+  if (!confirm('确认立即执行此报告？')) return;
+  apiFetch(apiBase() + '/api/reports/run/' + id, { method: 'POST' }).then(function(r) {
+    if (r.ok) { loadTemplates(); alert('报告已触发执行'); }
+    else { r.text().then(function(t) { alert('执行失败: ' + (t || '未知错误')); }); }
+  }).catch(function() { alert('请求失败'); });
+}
+
+/* ── Reset Fuse ── */
+function resetFuse(id) {
+  if (!confirm('确认解除此模板的熔断状态？')) return;
+  apiFetch(apiBase() + '/api/reports/scheduler/reset-fused/' + id, { method: 'POST' }).then(function() {
+    loadTemplates();
+  });
+}
+
+/* ── View history ── */
+function viewHistory(id) {
+  window.parent.openTab('report-view');
+}
+
+/* ── Delete template ── */
+function deleteTemplate(id) {
+  if (!confirm('确认删除此报告模板？此操作不可恢复。')) return;
+  apiFetch(apiBase() + '/api/reports/templates/' + id, { method: 'DELETE' }).then(function() {
+    loadTemplates();
+  });
+}
+
+/* ── Load enabled rules ── */
+function loadRules() {
+  apiFetch(apiBase() + '/api/extract/rules?enabled=1').then(function(r) { return r.json(); }).then(function(data) {
+    enabledRules = Array.isArray(data) ? data : (data.rules || []);
+    populateRuleSelect(enabledRules);
+  }).catch(function() { populateRuleSelect([]); });
+}
+
+function populateRuleSelect(rules) {
+  var sel = document.getElementById('ed_rule_id');
+  sel.innerHTML = '<option value="">— 请选择抽取规则 —</option>';
+  rules.forEach(function(r) {
+    sel.innerHTML += '<option value="' + r.id + '">' + escapeHtml(r.name || r.id) + (r.domain ? ' (' + r.domain + ')' : '') + '</option>';
+  });
+}
+
+/* ── Open Create ── */
+function openCreate() {
+  document.getElementById('panelTitle').textContent = '新建报告';
+  document.getElementById('ed_id').value = '';
+  document.getElementById('ed_name').value = '';
+  document.getElementById('ed_name').disabled = false;
+  document.getElementById('ed_domain').value = 'research';
+  document.getElementById('ed_description').value = '';
+  document.getElementById('ed_rule_id').value = '';
+  document.getElementById('ed_lookback_days').value = '30';
+  document.getElementById('ed_group_by').value = 'entity_name';
+  document.getElementById('ed_schedule_minutes').value = '1440';
+  document.getElementById('ed_custom_minutes').value = '';
+  document.getElementById('ed_custom_minutes').style.display = 'none';
+  document.getElementById('ed_enabled').checked = true;
+  document.getElementById('ed_prompt_template').value = '';
+  document.getElementById('metricsBody').innerHTML = '';
+  document.getElementById('filtersBody').innerHTML = '';
+  document.getElementById('chartBody').innerHTML = '';
+  hideFeedback();
+  document.getElementById('editPanel').classList.add('open');
+  document.getElementById('ed_name').focus();
+}
+
+/* ── Open Edit ── */
+function openEdit(id) {
+  document.getElementById('panelTitle').textContent = '编辑报告';
+  apiFetch(apiBase() + '/api/reports/templates/' + id).then(function(r) { return r.json(); }).then(function(t) {
+    document.getElementById('ed_id').value = t.id;
+    document.getElementById('ed_name').value = t.name || '';
+    document.getElementById('ed_name').disabled = !!t.built_in;
+    document.getElementById('ed_domain').value = t.domain || 'research';
+    document.getElementById('ed_description').value = t.description || '';
+    document.getElementById('ed_rule_id').value = t.rule_id || '';
+    document.getElementById('ed_lookback_days').value = t.lookback_days || '30';
+    document.getElementById('ed_group_by').value = t.group_by || 'entity_name';
+    document.getElementById('ed_enabled').checked = t.enabled !== false;
+
+    if (t.schedule_minutes) {
+      if ([1440, 4320, 2880].indexOf(t.schedule_minutes) !== -1) {
+        document.getElementById('ed_schedule_minutes').value = String(t.schedule_minutes);
+        document.getElementById('ed_custom_minutes').value = '';
+        document.getElementById('ed_custom_minutes').style.display = 'none';
+      } else {
+        document.getElementById('ed_schedule_minutes').value = 'custom';
+        document.getElementById('ed_custom_minutes').value = String(t.schedule_minutes);
+        document.getElementById('ed_custom_minutes').style.display = '';
+      }
+    }
+
+    document.getElementById('ed_prompt_template').value = t.prompt_template || '';
+
+    populateRuleSelect(enabledRules);
+    if (document.getElementById('ed_rule_id').value) {
+      document.getElementById('ed_rule_id').value = t.rule_id;
+    }
+
+    renderMetrics(t.metrics || []);
+    renderFilters(t.filters || []);
+    renderCharts(t.chart_config || []);
+    hideFeedback();
+    document.getElementById('editPanel').classList.add('open');
+  }).catch(function() {
+    showFeedback('加载模板失败', true);
+  });
+}
+
+function closePanel() {
+  document.getElementById('editPanel').classList.remove('open');
+}
+
+/* ── Metrics Table ── */
+function addMetricRow(data) {
+  var d = data || { field: '', agg: 'avg', label: '', unit: '' };
+  var html = '<tr data-type="metric">'
+    + '<td><input type="text" value="' + escapeHtml(d.field) + '" placeholder="字段名"></td>'
+    + '<td><select><option value="avg"' + (d.agg === 'avg' ? ' selected' : '') + '>avg</option><option value="sum"' + (d.agg === 'sum' ? ' selected' : '') + '>sum</option><option value="max"' + (d.agg === 'max' ? ' selected' : '') + '>max</option><option value="min"' + (d.agg === 'min' ? ' selected' : '') + '>min</option><option value="count"' + (d.agg === 'count' ? ' selected' : '') + '>count</option></select></td>'
+    + '<td><input type="text" value="' + escapeHtml(d.label) + '" placeholder="显示名"></td>'
+    + '<td><input type="text" value="' + escapeHtml(d.unit) + '" placeholder="单位"></td>'
+    + '<td><button class="btn-sub-del" onclick="removeRow(this)">删除</button></td>'
+    + '</tr>';
+  document.getElementById('metricsBody').insertAdjacentHTML('beforeend', html);
+}
+function renderMetrics(arr) { arr.forEach(function(d) { addMetricRow(d); }); }
+
+/* ── Filters Table ── */
+function addFilterRow(data) {
+  var d = data || { field: '', op: '=', value: '' };
+  var html = '<tr data-type="filter">'
+    + '<td><input type="text" value="' + escapeHtml(d.field) + '" placeholder="字段名"></td>'
+    + '<td><select><option value="="' + (d.op === '=' ? ' selected' : '') + '">=</option><option value="!="' + (d.op === '!=' ? ' selected' : '') + '">!=</option><option value="&gt;"' + (d.op === '>' ? ' selected' : '') + '>&gt;</option><option value="&lt;"' + (d.op === '<' ? ' selected' : '') + '>&lt;</option><option value="like"' + (d.op === 'like' ? ' selected' : '') + '>like</option></select></td>'
+    + '<td><input type="text" value="' + escapeHtml(d.value) + '" placeholder="值"></td>'
+    + '<td><button class="btn-sub-del" onclick="removeRow(this)">删除</button></td>'
+    + '</tr>';
+  document.getElementById('filtersBody').insertAdjacentHTML('beforeend', html);
+}
+function renderFilters(arr) { arr.forEach(function(d) { addFilterRow(d); }); }
+
+/* ── Charts Table ── */
+function addChartRow(data) {
+  var d = data || { chart_type: 'bar', title: '', name_field: '', value_field: '' };
+  var html = '<tr data-type="chart">'
+    + '<td><select><option value="pie"' + (d.chart_type === 'pie' ? ' selected' : '') + '>饼图</option><option value="bar"' + (d.chart_type === 'bar' ? ' selected' : '') + '>柱状图</option><option value="line"' + (d.chart_type === 'line' ? ' selected' : '') + '>折线图</option></select></td>'
+    + '<td><input type="text" value="' + escapeHtml(d.title) + '" placeholder="图表标题"></td>'
+    + '<td><input type="text" value="' + escapeHtml(d.name_field) + '" placeholder="名称字段"></td>'
+    + '<td><input type="text" value="' + escapeHtml(d.value_field) + '" placeholder="数值字段"></td>'
+    + '<td><button class="btn-sub-del" onclick="removeRow(this)">删除</button></td>'
+    + '</tr>';
+  document.getElementById('chartBody').insertAdjacentHTML('beforeend', html);
+}
+function renderCharts(arr) { arr.forEach(function(d) { addChartRow(d); }); }
+
+function removeRow(btn) {
+  btn.closest('tr').remove();
+}
+
+/* ── Schedule minutes toggle ── */
+document.getElementById('ed_schedule_minutes').addEventListener('change', function() {
+  var val = this.value;
+  document.getElementById('ed_custom_minutes').style.display = (val === 'custom') ? '' : 'none';
+});
+
+/* ── Collect dynamic rows ── */
+function collectMetrics() {
+  var rows = document.querySelectorAll('#metricsBody tr[data-type="metric"]');
+  return Array.from(rows).map(function(r) {
+    var inputs = r.querySelectorAll('input, select');
+    return { field: inputs[0].value.trim(), agg: inputs[1].value, label: inputs[2].value.trim(), unit: inputs[3].value.trim() };
+  }).filter(function(m) { return m.field; });
+}
+function collectFilters() {
+  var rows = document.querySelectorAll('#filtersBody tr[data-type="filter"]');
+  return Array.from(rows).map(function(r) {
+    var inputs = r.querySelectorAll('input, select');
+    return { field: inputs[0].value.trim(), op: inputs[1].value, value: inputs[2].value.trim() };
+  }).filter(function(f) { return f.field; });
+}
+function collectCharts() {
+  var rows = document.querySelectorAll('#chartBody tr[data-type="chart"]');
+  return Array.from(rows).map(function(r) {
+    var inputs = r.querySelectorAll('input, select');
+    return { chart_type: inputs[0].value, title: inputs[1].value.trim(), name_field: inputs[2].value.trim(), value_field: inputs[3].value.trim() };
+  }).filter(function(c) { return c.name_field || c.value_field; });
+}
+
+/* ── Save ── */
+function saveTemplate() {
+  var id = document.getElementById('ed_id').value;
+  var name = document.getElementById('ed_name').value.trim();
+  var fb = document.getElementById('feedback');
+
+  if (!name) { showFeedback('报告名称不能为空', true); return; }
+
+  var scheduleMinutes;
+  var schedSel = document.getElementById('ed_schedule_minutes').value;
+  if (schedSel === 'custom') {
+    scheduleMinutes = parseInt(document.getElementById('ed_custom_minutes').value) || 1440;
+  } else {
+    scheduleMinutes = parseInt(schedSel);
+  }
+
+  var body = {
+    name: name,
+    domain: document.getElementById('ed_domain').value,
+    description: document.getElementById('ed_description').value.trim(),
+    rule_id: document.getElementById('ed_rule_id').value ? parseInt(document.getElementById('ed_rule_id').value) : null,
+    lookback_days: parseInt(document.getElementById('ed_lookback_days').value),
+    group_by: document.getElementById('ed_group_by').value,
+    schedule_minutes: scheduleMinutes,
+    enabled: document.getElementById('ed_enabled').checked,
+    prompt_template: document.getElementById('ed_prompt_template').value,
+    metrics: collectMetrics(),
+    filters: collectFilters(),
+    chart_config: collectCharts()
+  };
+
+  var url = id ? (apiBase() + '/api/reports/templates/' + id) : (apiBase() + '/api/reports/templates');
+  var method = id ? 'PUT' : 'POST';
+
+  apiFetch(url, {
+    method: method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    if (!r.ok) { r.text().then(function(t) { throw new Error(t); }); return r; }
+    closePanel();
+    loadTemplates();
+  }).catch(function(e) {
+    showFeedback('保存失败: ' + (e.message || '未知错误'), true);
+  });
+}
+
+function showFeedback(msg, isError) {
+  var fb = document.getElementById('feedback');
+  fb.style.display = 'block';
+  fb.style.background = isError ? '#fceef0' : '#eaf5ef';
+  fb.style.color = isError ? 'var(--red)' : 'var(--green)';
+  fb.textContent = msg;
+}
+function hideFeedback() {
+  document.getElementById('feedback').style.display = 'none';
+}
+
+/* ── Init ── */
+loadRules();
+loadScheduler();
+loadTemplates();
+</script>
+</body>
+</html>
