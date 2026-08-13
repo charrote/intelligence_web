@@ -232,12 +232,37 @@ def list_active_projects(domain: str = "research", status: str = "active",
     filters = {"status": status} if status else {}
 
     items = projlib.get_projects(db, filters)
+
+    # Batch-fetch linked datasources for all projects (avoid N+1 queries)
+    # get_projects() returns datasource_count (int) but NOT datasources list,
+    # so we must fetch them separately via the junction table.
+    ds_lookup = {}  # project_id -> list of datasource dicts
+    if items:
+        project_ids = [p["id"] for p in items]
+        placeholders = ",".join("?" for _ in project_ids)
+        with dblib.get_db(db) as conn:
+            ds_rows = conn.execute(f"""
+                SELECT pd.project_id, d.id, d.name, d.url, d.type, d.schedule, d.indicators
+                FROM project_datasources pd
+                JOIN datasources d ON pd.datasource_id = d.id
+                WHERE pd.project_id IN ({placeholders})
+                ORDER BY pd.project_id, d.id
+            """, project_ids).fetchall()
+            for row in ds_rows:
+                pid = row["project_id"]
+                if pid not in ds_lookup:
+                    ds_lookup[pid] = []
+                ds_lookup[pid].append(dict(row))
+
     result = []
     for p in items[:limit]:
         if target_type and p.get("target_type") != target_type:
             continue
+
+        # Build datasources list from batch-fetched lookup
+        raw_datasources = ds_lookup.get(p["id"], [])
         datasources = []
-        for ds in p.get("datasources", []):
+        for ds in raw_datasources:
             indicators_raw = ds.get("indicators", "") or ""
             indicators = [i.strip() for i in indicators_raw.split(",") if i.strip()] if indicators_raw else []
             datasources.append({
@@ -248,6 +273,7 @@ def list_active_projects(domain: str = "research", status: str = "active",
                 "schedule": ds.get("schedule", ""),
                 "indicators": indicators,
             })
+
         result.append({
             "id": p.get("id"),
             "name": p.get("name", ""),
