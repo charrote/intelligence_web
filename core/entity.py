@@ -54,6 +54,8 @@ def list_entities(db, domain=None, type_=None):
     if isinstance(db, str):
         with _get(db) as conn:
             return list_entities(conn, domain, type_)
+    else:
+        conn = db
 
     q = "SELECT id, name, domain, entity_type, aliases, description FROM entities WHERE 1=1"
     params = []
@@ -73,6 +75,8 @@ def get_entities_for_intel(db, intel_id):
     if isinstance(db, str):
         with _get(db) as conn:
             return get_entities_for_intel(conn, intel_id)
+    else:
+        conn = db
 
     q = """
         SELECT e.id, e.name, e.domain, e.entity_type, e.aliases, e.description
@@ -90,6 +94,8 @@ def get_intel_for_entity(db, entity_id, limit=20):
     if isinstance(db, str):
         with _get(db) as conn:
             return get_intel_for_entity(conn, entity_id, limit)
+    else:
+        conn = db
 
     q = """
         SELECT i.id, i.title, i.status, i.category, ie.relevance
@@ -108,6 +114,8 @@ def link_entity(db, intel_id, entity_id, relevance="primary"):
     if isinstance(db, str):
         with _get(db) as conn:
             return link_entity(conn, intel_id, entity_id, relevance)
+    else:
+        conn = db
 
     now = datetime.now().isoformat()
     try:
@@ -131,6 +139,8 @@ def ensure_entity(db, name, domain, entity_type="company", aliases="", descripti
     if isinstance(db, str):
         with _get(db) as conn:
             return ensure_entity(conn, name, domain, entity_type, aliases, description)
+    else:
+        conn = db
 
     now = datetime.now().isoformat()
     cur = conn.execute(
@@ -155,6 +165,8 @@ def get_entity_by_name(db, name, domain=None):
     if isinstance(db, str):
         with _get(db) as conn:
             return get_entity_by_name(conn, name, domain)
+    else:
+        conn = db
 
     q = "SELECT id, name, domain, entity_type, aliases, description FROM entities WHERE LOWER(name) = LOWER(?)"
     params = [name]
