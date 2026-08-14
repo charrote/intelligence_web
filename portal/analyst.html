@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>快速执行</title>
+<title>AI 分析师 — 快速执行</title>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/reset.css">
 <link rel="stylesheet" href="css/header.css">
@@ -18,41 +18,31 @@
 <script src="js/init.js"></script>
 <script src="js/tabs.js"></script>
 <style>
+/* ── Layout ── */
 .main{display:flex;flex-direction:column;max-width:960px;width:100%;margin:0 auto;padding:24px;height:calc(100vh - 140px);overflow-y:auto}
-
-/* ── Cards ── */
-.card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden}
-.card-head{display:flex;align-items:center;padding:14px 20px;border-bottom:1px solid var(--gray-100)}
-.card-head h2{font-size:15px;font-weight:600;color:var(--gray-800);margin:0}
+.card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden;margin-bottom:16px}
+.card-head{display:flex;align-items:center;padding:14px 20px;border-bottom:1px solid var(--gray-100);gap:12px}
+.card-head h2{font-size:15px;font-weight:600;color:var(--gray-800);margin:0;flex:1}
 .card-body{padding:20px}
 
 /* ── Form ── */
 .form-group{margin-bottom:16px}
 .form-label{display:block;font-size:12px;font-weight:600;color:var(--gray-500);margin-bottom:6px}
-.form-select{width:100%;padding:8px 32px 8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239a9b9d'/%3E%3C/svg%3E") no-repeat right 10px center;appearance:none;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s}
+.form-select{width:100%;padding:10px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;color:var(--gray-800);background:#fff;cursor:pointer;transition:border-color 0.15s}
 .form-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
-
-/* ── Template Info ── */
-.tpl-info{display:flex;gap:16px;padding:10px 14px;background:var(--gray-50);border-radius:var(--radius);font-size:12px;color:var(--gray-600);margin-bottom:16px}
-.tpl-info span{display:inline-flex;align-items:center;gap:4px}
-.tpl-info .tag-domain{display:inline-flex;padding:1px 8px;border-radius:4px;font-size:11px;font-weight:500;color:var(--accent);background:var(--accent-light)}
-.tpl-info .tag-time{color:var(--gray-400)}
-
-/* ── Radio Group ── */
 .radio-group{display:flex;gap:6px;flex-wrap:wrap}
 .radio-group label{display:inline-flex;align-items:center;gap:4px;padding:5px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);cursor:pointer;transition:all 0.15s;user-select:none}
 .radio-group label:has(input:checked){border-color:var(--accent);background:var(--accent-light);color:var(--accent);font-weight:500}
 .radio-group input[type="radio"]{width:auto;accent-color:var(--accent)}
-.radio-group input[type="radio"]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.form-meta{font-size:12px;color:var(--gray-400);margin-top:8px}
+.form-meta strong{color:var(--gray-600)}
 
-/* ── Execute Button ── */
+/* ── Button ── */
 .exec-wrap{display:flex;gap:8px;align-items:center;margin-top:4px}
 .btn-exec{flex:1;padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .btn-exec:hover{background:#2f3f70;box-shadow:0 2px 8px rgba(59,79,140,0.25)}
 .btn-exec:disabled{background:var(--gray-300);cursor:not-allowed;box-shadow:none}
 .btn-exec svg{width:16px;height:16px}
-.loading-spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Progress ── */
 .progress-steps{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
@@ -62,8 +52,7 @@
 .step-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;background:var(--gray-100);color:var(--gray-400);border:2px solid var(--gray-200)}
 .progress-step.active .step-icon{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
 .progress-step.done .step-icon{background:var(--green-light);color:#fff;border-color:var(--green)}
-.progress-step.done .step-icon::after{content:'✓';font-weight:700}
-.progress-step.active .step-icon::after{content:'⠋';animation:spin 0.8s linear infinite}
+.progress-step.done .step-icon::after{content:'\2713';font-weight:700}
 .progress-bar-wrap{height:6px;background:var(--gray-100);border-radius:3px;overflow:hidden;margin-bottom:12px}
 .progress-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width 0.4s ease;animation:progressPulse 1.5s ease-in-out infinite}
 @keyframes progressPulse{0%,100%{opacity:1}50%{opacity:0.7}}
@@ -75,8 +64,7 @@
 .result-status.error{color:var(--red)}
 .result-meta{font-size:12px;color:var(--gray-400)}
 .result-meta strong{color:var(--gray-600)}
-
-/* ── Charts ── */
+/* Charts */
 .chart-container{margin:16px 0;border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--accent-mid);background:#fff;box-shadow:var(--shadow-sm)}
 .chart-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);font-size:12px;font-weight:600;color:var(--gray-600)}
 .chart-header .chart-type{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
@@ -85,8 +73,7 @@
 .chart-type.line{background:var(--amber-light);color:var(--amber)}
 .chart-body{width:100%;height:300px}
 @media(max-width:600px){.chart-body{height:220px}}
-
-/* ── Markdown Content ── */
+/* Markdown */
 .markdown-content{font-size:14px;line-height:1.75;color:var(--gray-700)}
 .markdown-content h2{font-size:15px;font-weight:600;margin:14px 0 8px;color:var(--gray-800);padding-bottom:4px;border-bottom:1px solid var(--gray-200)}
 .markdown-content h2:first-child{margin-top:0}
@@ -106,47 +93,51 @@
 .markdown-content hr{border:none;border-top:1px solid var(--gray-200);margin:14px 0}
 .markdown-content a{color:var(--accent);text-decoration:none}
 .markdown-content a:hover{text-decoration:underline}
-
-/* ── Summary ── */
+/* Summary */
 .summary-box{padding:14px 16px;background:var(--accent-light);border-radius:var(--radius);font-size:13px;line-height:1.7;color:var(--gray-700);margin-top:12px}
 .summary-label{font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}
 
-/* ── Cancel Button ── */
-.btn-cancel{padding:6px 14px;background:transparent;color:var(--red);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;gap:4px}
-.btn-cancel:hover{background:var(--red-light)}
+/* ── Report List ── */
+.report-list{display:flex;flex-direction:column;gap:8px}
+.report-item{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius);cursor:pointer;transition:all 0.15s}
+.report-item:hover{border-color:var(--accent);background:#fff}
+.report-title{font-size:14px;font-weight:500;color:var(--gray-800);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-meta{display:flex;gap:12px;align-items:center;font-size:12px;color:var(--gray-500);margin-left:12px}
+.status-badge{display:inline-flex;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.status-badge.completed{background:var(--green-light);color:var(--green)}
+.status-badge.failed{background:var(--red-light);color:var(--red)}
+.status-badge.running{background:var(--amber-light);color:var(--amber)}
+.empty-state{text-align:center;padding:30px;color:var(--gray-400);font-size:14px}
+
+/* ── Error ── */
+.error-box{padding:14px 16px;background:#fceef0;border-radius:var(--radius);font-size:13px;color:var(--red);line-height:1.6}
 </style>
 </head>
 <body>
 <main class="main">
-  <!-- Template Selector -->
-  <div class="card" id="selectorCard">
-    <div class="card-head"><h2>选择报告模板</h2></div>
+  <!-- Template Selection -->
+  <div class="card" id="selectionCard">
+    <div class="card-head"><h2>快速执行</h2></div>
     <div class="card-body">
       <div class="form-group">
-        <label class="form-label">报告</label>
-        <select class="form-select" id="templateSelect" onchange="onTemplateChange()">
+        <label class="form-label">选择报告模板</label>
+        <select class="form-select" id="templateSelect">
           <option value="">加载中...</option>
         </select>
+        <div class="form-meta" id="templateMeta"></div>
       </div>
-
-      <div class="tpl-info" id="tplInfo" style="display:none">
-        <span><span class="tag-domain" id="tplDomain"></span></span>
-        <span class="tag-time">下次定时: <strong id="tplNextTime"></strong></span>
-      </div>
-
       <div class="form-group">
         <label class="form-label">数据范围</label>
-        <div class="radio-group" id="lookbackGroup">
-          <label><input type="radio" name="lookback" value="7" checked> 近7天</label>
-          <label><input type="radio" name="lookback" value="14"> 近14天</label>
-          <label><input type="radio" name="lookback" value="30"> 近30天</label>
-          <label><input type="radio" name="lookback" value="60"> 近60天</label>
-          <label><input type="radio" name="lookback" value="90"> 近90天</label>
+        <div class="radio-group" id="timeRangeGroup">
+          <label><input type="radio" name="lookback" value="7"> 近 7 天</label>
+          <label><input type="radio" name="lookback" value="14"> 近 14 天</label>
+          <label><input type="radio" name="lookback" value="30" checked> 近 30 天</label>
+          <label><input type="radio" name="lookback" value="60"> 近 60 天</label>
+          <label><input type="radio" name="lookback" value="90"> 近 90 天</label>
         </div>
       </div>
-
       <div class="exec-wrap">
-        <button class="btn-exec" id="execBtn" onclick="startExecution()" disabled>
+        <button class="btn-exec" id="execBtn" onclick="runNow()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           立即生成报告
         </button>
@@ -158,27 +149,26 @@
   <div class="card" id="progressCard" style="display:none">
     <div class="card-head"><h2>执行进度</h2></div>
     <div class="card-body">
-      <div class="progress-steps" id="progressSteps">
-        <div class="progress-step" id="stepData"><span class="step-icon"></span> 正在检索数据...</div>
+      <div class="progress-steps">
+        <div class="progress-step" id="stepQuery"><span class="step-icon"></span> 正在检索数据...</div>
         <div class="progress-step" id="stepAI"><span class="step-icon"></span> 正在调用 AI 分析...</div>
         <div class="progress-step" id="stepDone"><span class="step-icon"></span> 完成</div>
       </div>
-      <div class="progress-bar-wrap">
-        <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span id="progressDetail" style="font-size:12px;color:var(--gray-400)">—</span>
-        <button class="btn-cancel" onclick="cancelExecution()">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-          取消执行
-        </button>
-      </div>
+      <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div class="card" id="errorCard" style="display:none">
+    <div class="card-head"><h2>执行失败</h2></div>
+    <div class="card-body">
+      <div class="error-box" id="errorMsg"></div>
     </div>
   </div>
 
   <!-- Result -->
   <div class="card" id="resultCard" style="display:none">
-    <div class="card-head"><h2>执行结果</h2></div>
+    <div class="card-head"><h2>分析结果</h2></div>
     <div class="card-body">
       <div class="result-header" id="resultHeader"></div>
       <div class="markdown-content" id="resultMarkdown"></div>
@@ -187,494 +177,299 @@
         <div class="summary-label">摘要</div>
         <div id="resultSummaryText"></div>
       </div>
+      <div style="margin-top:16px;text-align:center">
+        <button class="btn btn-ghost" style="font-size:12px" onclick="location.hash='#report-view?run_id=' + currentRunId">
+          在报告查看页打开
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Reports -->
+  <div class="card" id="reportListCard">
+    <div class="card-head"><h2>最近执行</h2></div>
+    <div class="card-body">
+      <div id="reportListContainer"><div class="empty-state">加载中...</div></div>
     </div>
   </div>
 </main>
 
 <script>
-// ── State ──
-var currentTemplate = null;
-var pollingTimer = null;
-var abortFlag = false;
 var chartInstances = [];
+var currentRunId = null;
+var pollTimer = null;
 
 // ── Init ──
-(function init() {
+document.addEventListener('DOMContentLoaded', function() {
   loadTemplates();
-})();
+  loadOverview();
+});
 
+// ── Load enabled templates ──
 async function loadTemplates() {
-  var sel = document.getElementById('templateSelect');
   try {
-    var res = await apiFetch(APP_API_BASE + '/api/reports/templates?enabled=1');
-    var data = await res.json();
-    var templates = data.items || data;
-    if (!Array.isArray(templates)) templates = [];
-
-    sel.innerHTML = '';
-    if (templates.length === 0) {
-      sel.innerHTML = '<option value="">暂无可用模板</option>';
-      return;
-    }
-    templates.forEach(function(t) {
-      var opt = document.createElement('option');
-      opt.value = t.id;
-      opt.textContent = t.name || t.template_name || '未命名模板';
-      sel.appendChild(opt);
+    var res = await fetch('/api/reports/templates?enabled=1', {
+      headers: { 'Authorization': getAuthHeader() }
     });
-    sel.querySelector('option').selected = true;
-  } catch(e) {
-    sel.innerHTML = '<option value="">加载失败</option>';
-    console.error('[analyst] loadTemplates error:', e);
-  }
-}
-
-function onTemplateChange() {
-  var sel = document.getElementById('templateSelect');
-  var tplId = sel.value;
-  var info = document.getElementById('tplInfo');
-  var execBtn = document.getElementById('execBtn');
-
-  if (!tplId) {
-    info.style.display = 'none';
-    execBtn.disabled = true;
-    currentTemplate = null;
-    return;
-  }
-
-  // Find template from select options to get domain info
-  var templates = [];
-  // We'll fetch details if needed, but for now use the select option
-  var opts = sel.options;
-  for (var i = 0; i < opts.length; i++) {
-    if (parseInt(opts[i].value) === parseInt(tplId)) {
-      // Try to get domain from text
-      currentTemplate = { id: tplId };
-      // Show info
-      info.style.display = 'flex';
-      execBtn.disabled = false;
-
-      // Fetch template details for domain and next_time
-      fetchTemplateDetails(tplId);
-      break;
-    }
-  }
-}
-
-async function fetchTemplateDetails(tplId) {
-  try {
-    var res = await apiFetch(APP_API_BASE + '/api/reports/templates');
     var data = await res.json();
-    var templates = data.items || data;
-    if (!Array.isArray(templates)) return;
-    var tpl = templates.find(function(t) { return t.id === parseInt(tplId); });
-    if (!tpl) return;
-    currentTemplate = tpl;
-    if (tpl.domain) {
-      document.getElementById('tplDomain').textContent = tpl.domain;
+    var select = document.getElementById('templateSelect');
+    select.innerHTML = '';
+    if (data.templates && data.templates.length > 0) {
+      data.templates.forEach(function(t) {
+        var opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name + ' (' + (t.domain || '-') + ')';
+        select.appendChild(opt);
+      });
+      // Update meta for first template
+      updateMeta(data.templates[0]);
+    } else {
+      select.innerHTML = '<option value="">暂无可用模板，请先在「报告模板」页创建</option>';
+      document.getElementById('execBtn').disabled = true;
     }
-    if (tpl.next_scheduled || tpl.next_run || tpl.next_time) {
-      var time = tpl.next_scheduled || tpl.next_run || tpl.next_time;
-      document.getElementById('tplNextTime').textContent = formatTime(time);
-    }
-  } catch(e) {
-    console.warn('[analyst] fetchTemplateDetails error:', e);
+  } catch (e) {
+    document.getElementById('templateSelect').innerHTML = '<option value="">加载失败</option>';
   }
 }
 
-function formatTime(iso) {
-  if (!iso) return '未设置';
-  try {
-    var d = new Date(iso);
-    if (isNaN(d)) return iso;
-    return d.getMonth()+1 + '月' + d.getDate() + '日 ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-  } catch(e) {
-    return iso;
-  }
-}
-function pad(n) { return n < 10 ? '0' + n : '' + n; }
-
-// ── Execution ──
-async function startExecution() {
-  if (!currentTemplate || !currentTemplate.id) return;
-
-  var tplId = currentTemplate.id;
-  var lookback = document.querySelector('input[name="lookback"]:checked').value;
-
-  // Show progress card
-  document.getElementById('progressCard').style.display = '';
-  document.getElementById('resultCard').style.display = 'none';
-  resetProgress();
-
-  var execBtn = document.getElementById('execBtn');
-  execBtn.disabled = true;
-  execBtn.innerHTML = '<span class="loading-spinner"></span> 执行中...';
-
-  abortFlag = false;
-
-  try {
-    // POST to start execution
-    var res = await apiFetch(APP_API_BASE + '/api/reports/run/' + tplId, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lookback_days: parseInt(lookback) })
-    });
-
-    if (!res.ok) {
-      var errData = await res.json().catch(function() { return {}; });
-      throw new Error(errData.error || ('HTTP ' + res.status));
-    }
-
-    // Start polling
-    pollStatus(tplId);
-  } catch(e) {
-    if (e.name !== 'AbortError') {
-      setProgressError('启动失败: ' + e.message);
-      execBtn.disabled = false;
-      execBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> 立即生成报告';
-    }
-  }
+function updateMeta(t) {
+  var meta = document.getElementById('templateMeta');
+  var parts = ['域: <strong>' + (t.domain || '-') + '</strong>'];
+  if (t.schedule_time) parts.push('下次执行: ' + t.schedule_time);
+  meta.innerHTML = parts.join(' | ');
 }
 
-function pollStatus(tplId) {
-  if (abortFlag) {
-    setStep('stepAI', 'done');
-    setStep('stepDone', 'done');
-    setProgressDetail('已取消');
-    document.getElementById('progressFill').style.width = '100%';
-    return;
-  }
-
-  apiFetch(APP_API_BASE + '/api/reports/runs/' + tplId + '?limit=1')
-    .then(function(res) { return res.json(); })
-    .then(function(data) {
-      var runs = data.items || data;
-      var latest = Array.isArray(runs) && runs.length > 0 ? runs[0] : null;
-
-      if (!latest) {
-        // Still pending, keep polling
-        updateProgressSteps(null, null);
-        pollingTimer = setTimeout(function() { pollStatus(tplId); }, 3000);
-        return;
-      }
-
-      var status = latest.status || 'pending';
-      var dataCount = latest.data_count || latest.record_count || 0;
-      var duration = latest.duration_sec || 0;
-      var analysis = latest.output_analysis || '';
-      var charts = latest.output_charts || [];
-      var summary = latest.output_summary || '';
-      var error = latest.error || latest.status_msg || '';
-
-      updateProgressSteps(status, dataCount);
-
-      if (status === 'completed') {
-        if (pollingTimer) clearTimeout(pollingTimer);
-        showResult({
-          status: 'success',
-          error: null,
-          analysis: analysis,
-          charts: charts,
-          summary: summary,
-          duration: duration
-        });
-        resetExecBtn();
-      } else if (status === 'failed') {
-        if (pollingTimer) clearTimeout(pollingTimer);
-        showResult({
-          status: 'failed',
-          error: error,
-          analysis: '',
-          charts: [],
-          summary: '',
-          duration: duration
-        });
-        resetExecBtn();
-      } else {
-        // pending or running — keep polling
-        pollingTimer = setTimeout(function() { pollStatus(tplId); }, 3000);
+document.getElementById('templateSelect').addEventListener('change', function() {
+  var id = this.value;
+  if (!id) { document.getElementById('templateMeta').innerHTML = ''; return; }
+  // Find template data from overview
+  apiFetch('/api/reports/overview', { headers: { 'Authorization': getAuthHeader() } })
+    .then(function(r) { return r.json(); })
+    .then(function(list) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].template_id == id) { updateMeta(list[i]); break; }
       }
     })
-    .catch(function(e) {
-      if (e.name === 'AbortError') {
-        if (pollingTimer) clearTimeout(pollingTimer);
-        setProgressDetail('已取消');
-        document.getElementById('progressFill').style.width = '100%';
-        resetExecBtn();
-      } else {
-        setProgressError('轮询失败: ' + e.message);
-        resetExecBtn();
-      }
+    .catch(function() {});
+});
+
+// ── Run Now ──
+async function runNow() {
+  var templateId = document.getElementById('templateSelect').value;
+  var lookback = document.querySelector('input[name="lookback"]:checked').value;
+  if (!templateId) { alert('请选择报告模板'); return; }
+
+  showProgress();
+  document.getElementById('execBtn').disabled = true;
+
+  try {
+    var res = await fetch('/api/reports/run/' + templateId, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': getAuthHeader()
+      },
+      body: JSON.stringify({ lookback_days: parseInt(lookback) })
     });
-}
+    var data = await res.json();
 
-function updateProgressSteps(status, dataCount) {
-  var dataStep = document.getElementById('stepData');
-  var aiStep = document.getElementById('stepAI');
-  var doneStep = document.getElementById('stepDone');
-  var detail = document.getElementById('progressDetail');
-  var fill = document.getElementById('progressFill');
-
-  if (status === 'running' || status === 'pending') {
-    if (dataCount > 0) {
-      setStep('stepData', 'done');
-      setStep('stepAI', 'active');
-      fill.style.width = '40%';
-      detail.textContent = '已检索 ' + dataCount + ' 条';
+    if (data.ok) {
+      currentRunId = data.run_id;
+      startPolling(templateId);
     } else {
-      setStep('stepData', 'active');
-      detail.textContent = '正在检索数据...';
+      hideProgress();
+      showError(data.error || '执行失败');
     }
-  } else if (status === 'completed' || status === 'failed') {
-    setStep('stepData', 'done');
-    setStep('stepAI', 'done');
-    if (status === 'completed') {
-      setStep('stepDone', 'active');
-      fill.style.width = '100%';
-    } else {
-      setStep('stepDone', 'done');
-      fill.style.width = '100%';
-    }
-    if (dataCount > 0) detail.textContent = '已检索 ' + dataCount + ' 条';
+  } catch (e) {
+    hideProgress();
+    showError('网络错误: ' + (e.message || ''));
   }
 }
 
-function setProgressError(msg) {
-  setStep('stepData', 'done');
-  setStep('stepAI', 'done');
-  document.getElementById('progressFill').style.width = '100%';
-  document.getElementById('progressDetail').textContent = msg;
-  document.getElementById('progressDetail').style.color = 'var(--red)';
+// ── Progress ──
+function showProgress() {
+  document.getElementById('progressCard').style.display = 'block';
+  document.getElementById('resultCard').style.display = 'none';
+  document.getElementById('errorCard').style.display = 'none';
+  document.getElementById('stepQuery').className = 'progress-step active';
+  document.getElementById('stepAI').className = 'progress-step';
+  document.getElementById('stepDone').className = 'progress-step';
+  document.getElementById('progressFill').style.width = '10%';
 }
 
-function resetProgress() {
-  var steps = ['stepData', 'stepAI', 'stepDone'];
-  steps.forEach(function(id) {
-    var el = document.getElementById(id);
-    el.className = 'progress-step';
-    var icon = el.querySelector('.step-icon');
-    if (icon) {
-      icon.className = 'step-icon';
-      icon.textContent = '';
+function hideProgress() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  document.getElementById('progressCard').style.display = 'none';
+}
+
+// ── Poll execution status ──
+function startPolling(templateId) {
+  pollTimer = setInterval(async function() {
+    try {
+      var res = await fetch('/api/reports/runs/' + templateId + '?limit=1', {
+        headers: { 'Authorization': getAuthHeader() }
+      });
+      var data = await res.json();
+      if (!data.runs || data.runs.length === 0) return;
+
+      var latest = data.runs[0];
+      document.getElementById('progressFill').style.width = '45%';
+
+      if (latest.status === 'running') {
+        document.getElementById('stepQuery').className = 'progress-step done';
+        document.getElementById('stepAI').className = 'progress-step active';
+        document.getElementById('progressFill').style.width = '70%';
+      } else if (latest.status === 'completed') {
+        clearInterval(pollTimer);
+        hideProgress();
+        showResult(latest.id);
+      } else if (latest.status === 'failed') {
+        clearInterval(pollTimer);
+        hideProgress();
+        var errMsg = latest.error_msg || latest.error || '执行失败';
+        showError(errMsg);
+      }
+    } catch (e) {
+      // Ignore poll errors
     }
-  });
-  document.getElementById('progressFill').style.width = '0%';
-  document.getElementById('progressDetail').textContent = '—';
-  document.getElementById('progressDetail').style.color = '';
+  }, 3000);
 }
 
-function cancelExecution() {
-  abortFlag = true;
-  if (pollingTimer) clearTimeout(pollingTimer);
+// ── Error display ──
+function showError(msg) {
+  document.getElementById('errorCard').style.display = 'block';
+  document.getElementById('errorMsg').textContent = msg;
+  document.getElementById('execBtn').disabled = false;
 }
 
-function resetExecBtn() {
-  var execBtn = document.getElementById('execBtn');
-  execBtn.disabled = false;
-  execBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> 立即生成报告';
-}
+// ── Result display ──
+async function showResult(runId) {
+  document.getElementById('resultCard').style.display = 'block';
+  document.getElementById('execBtn').disabled = false;
+  currentRunId = runId;
 
-function setStep(id, state) {
-  var el = document.getElementById(id);
-  if (!el) return;
-  var icon = el.querySelector('.step-icon');
-  el.classList.remove('active', 'done');
-  if (state) el.classList.add(state);
-  if (icon && state !== 'done') {
-    icon.textContent = '';
-  } else if (icon && state === 'active') {
-    icon.textContent = '';
-  }
-}
+  try {
+    var res = await fetch('/api/reports/runs/' + runId, {
+      headers: { 'Authorization': getAuthHeader() }
+    });
+    var run = await res.json();
 
-function setProgressDetail(text) {
-  document.getElementById('progressDetail').textContent = text;
-}
+    // Header
+    var statusClass = run.status === 'completed' ? 'success' : 'error';
+    var statusText = run.status === 'completed' ? '✓ 执行完成' : '✗ 执行失败';
+    var header = '<div class="result-status ' + statusClass + '">' + statusText + '</div>';
+    header += '<div class="result-meta">涉及 <strong>' + (run.fact_count || 0) + '</strong> 条事实 ｜ 耗时 <strong>' + formatDuration(run.duration_sec) + '</strong></div>';
+    document.getElementById('resultHeader').innerHTML = header;
 
-// ── Result Display ──
-function showResult(data) {
-  var card = document.getElementById('resultCard');
-  var header = document.getElementById('resultHeader');
-  var mdEl = document.getElementById('resultMarkdown');
-  var chartsEl = document.getElementById('resultCharts');
-  var sumBox = document.getElementById('resultSummary');
-  var sumText = document.getElementById('resultSummaryText');
+    // Markdown
+    var mdContent = run.output_analysis || run.result_markdown || '';
+    document.getElementById('resultMarkdown').innerHTML = marked.parse(mdContent || '暂无内容');
 
-  card.style.display = '';
-
-  if (data.status === 'success') {
-    header.innerHTML =
-      '<span class="result-status success">'
-      + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
-      + '执行成功！</span>'
-      + '<span class="result-meta">耗时: <strong>' + formatDuration(data.duration) + '</strong></span>';
-
-    if (data.analysis) {
-      mdEl.innerHTML = renderMarkdown(data.analysis);
+    // Charts
+    if (run.output_charts && run.output_charts.length > 0) {
+      renderCharts(run.output_charts, 'resultCharts');
     } else {
-      mdEl.innerHTML = '<p style="color:var(--gray-400)">未生成分析报告</p>';
+      document.getElementById('resultCharts').innerHTML = '';
     }
 
-    renderCharts(data.charts, chartsEl);
-
-    if (data.summary) {
-      sumBox.style.display = '';
-      sumText.innerHTML = escapeHtml(data.summary);
+    // Summary
+    var summary = run.output_summary || run.result_summary || '';
+    if (summary) {
+      document.getElementById('resultSummary').style.display = 'block';
+      document.getElementById('resultSummaryText').textContent = summary;
     } else {
-      sumBox.style.display = 'none';
+      document.getElementById('resultSummary').style.display = 'none';
     }
-  } else {
-    header.innerHTML =
-      '<span class="result-status error">'
-      + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
-      + '执行失败</span>'
-      + (data.duration ? '<span class="result-meta">耗时: <strong>' + formatDuration(data.duration) + '</strong></span>' : '');
 
-    mdEl.innerHTML = '<p style="color:var(--red)">' + escapeHtml(data.error || '未知错误') + '</p>';
-    chartsEl.innerHTML = '';
-    sumBox.style.display = 'none';
+    document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth' });
+    loadOverview();
+  } catch (e) {
+    showError('加载结果失败: ' + (e.message || ''));
   }
-
-  // Scroll to result
-  setTimeout(function() {
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, 100);
 }
 
 function formatDuration(sec) {
-  if (!sec || sec <= 0) return '—';
-  sec = Math.floor(sec);
+  if (!sec) return '-';
+  if (sec < 60) return sec + '秒';
   var m = Math.floor(sec / 60);
   var s = sec % 60;
-  if (m > 0) return m + '分' + s + '秒';
-  return s + '秒';
+  return m + '分' + s + '秒';
 }
 
-// ── ECharts Rendering ──
-function renderCharts(charts, container) {
-  if (!charts || charts.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-  if (typeof echarts === 'undefined') {
-    container.innerHTML = '<p style="color:var(--gray-400)">图表加载失败</p>';
-    return;
-  }
-
+// ── Charts ──
+function renderCharts(charts, containerId) {
+  var container = document.getElementById(containerId);
   container.innerHTML = '';
-
   charts.forEach(function(chart, idx) {
-    try {
-      var dom = document.createElement('div');
-      dom.className = 'chart-container';
-      var typeLabel = (chart.type || 'bar').toUpperCase();
-      var typeClass = chart.type || 'bar';
+    var div = document.createElement('div');
+    div.className = 'chart-container';
+    div.innerHTML = '<div class="chart-header"><span>' + (chart.title || '') + '</span><span class="chart-type ' + (chart.type || 'bar') + '">' + (chart.type || 'bar') + '</span></div><div class="chart-body" id="chart-' + idx + '"></div>';
+    container.appendChild(div);
+    var instance = echarts.init(document.getElementById('chart-' + idx));
+    instance.setOption({
+      tooltip: { trigger: 'axis' },
+      xAxis: { type: 'category', data: (chart.data && chart.data.categories) || [] },
+      yAxis: { type: 'value' },
+      series: [{ data: (chart.data && chart.data.values) || [], type: chart.type || 'bar', smooth: chart.type === 'line' }],
+      grid: { left: 40, right: 20, bottom: 30, top: 10 }
+    });
+    chartInstances.push(instance);
+  });
+}
 
-      dom.innerHTML = '<div class="chart-header">'
-        + '<span>' + escapeHtml(chart.title || typeLabel + ' 图表') + '</span>'
-        + '<span class="chart-type ' + typeClass + '">' + typeLabel + '</span>'
-        + '</div>'
-        + '<div class="chart-body" id="chart-' + idx + '"></div>';
+// ── Overview / Recent Reports ──
+async function loadOverview() {
+  try {
+    var res = await fetch('/api/reports/overview', {
+      headers: { 'Authorization': getAuthHeader() }
+    });
+    var list = await res.json();
+    renderOverview(list);
+  } catch (e) {
+    document.getElementById('reportListContainer').innerHTML = '<div class="empty-state">加载失败</div>';
+  }
+}
 
-      container.appendChild(dom);
+function renderOverview(list) {
+  var container = document.getElementById('reportListContainer');
+  if (!list || list.length === 0) {
+    container.innerHTML = '<div class="empty-state">暂无报告模板</div>';
+    return;
+  }
+  var html = '<div class="report-list">';
+  list.forEach(function(item) {
+    var title = item.name || '未命名';
+    var time = item.last_time ? item.last_time.slice(0, 16) : '-';
+    var statusClass = item.last_status === 'completed' ? 'completed' : (item.last_status === 'failed' ? 'failed' : (item.last_status === 'running' ? 'running' : 'pending'));
+    var duration = item.last_duration ? formatDuration(item.last_duration) : '-';
+    html += '<div class="report-item" onclick="viewTemplateReports(' + item.template_id + ')">';
+    html += '<span class="report-title">' + escapeHtml(title) + '</span>';
+    html += '<div class="report-meta">';
+    html += '<span class="status-badge ' + statusClass + '">' + (item.last_status || '-') + '</span>';
+    html += '<span>' + time + '</span>';
+    html += '<span>' + duration + '</span>';
+    html += '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
 
-      var el = document.getElementById('chart-' + idx);
-      if (!el) return;
-
-      var option = buildChartOption(chart);
-      var instance = echarts.init(el);
-      instance.setOption(option);
-
-      var resizeHandler = function() { instance.resize(); };
-      window.addEventListener('resize', resizeHandler);
-      chartInstances.push({ dispose: function() { instance.dispose(); window.removeEventListener('resize', resizeHandler); } });
-    } catch(e) {
-      console.warn('[analyst] Chart render error:', e.message);
+async function viewTemplateReports(templateId) {
+  try {
+    var res = await fetch('/api/reports/runs/' + templateId + '?limit=5', {
+      headers: { 'Authorization': getAuthHeader() }
+    });
+    var data = await res.json();
+    if (!data.runs || data.runs.length === 0) {
+      alert('该模板暂无执行记录');
+      return;
     }
-  });
-}
-
-function buildChartOption(chart) {
-  var title = {
-    text: chart.title || '',
-    left: 'center',
-    textStyle: { fontSize: 13, fontWeight: 600, color: '#3b3c3d' }
-  };
-  var tooltip = { trigger: 'item' };
-
-  if (chart.type === 'pie') {
-    return {
-      title: title,
-      tooltip: { ...tooltip, formatter: '{b}: {c} ({d}%)' },
-      legend: { bottom: 0, type: 'scroll', pageButtonItemGap: 5 },
-      series: [{
-        type: 'pie',
-        radius: ['35%', '65%'],
-        center: ['50%', '45%'],
-        label: { formatter: '{b}\n{c}条', fontSize: 11 },
-        data: chart.data || [],
-        itemStyle: { borderRadius: 4 }
-      }]
-    };
-  } else if (chart.type === 'bar') {
-    var names = (chart.data || []).map(function(d) { return d.name || d.x; });
-    var values = (chart.data || []).map(function(d) { return d.value || d.y || d; });
-    return {
-      title: title,
-      tooltip: { trigger: 'axis' },
-      grid: { left: 60, right: 20, top: 40, bottom: 30 },
-      xAxis: { type: 'category', data: names, axisLabel: { rotate: names.length > 5 ? 30 : 0, fontSize: 11 } },
-      yAxis: { type: 'value', name: '条', minInterval: 1 },
-      series: [{ type: 'bar', data: values, barMaxWidth: 40, itemStyle: { borderRadius: [3,3,0,0] } }]
-    };
-  } else if (chart.type === 'line') {
-    var labels = chart.labels || chart.data.map(function(d) { return d.name || d.x; });
-    var lineValues = chart.data.map(function(d) { return d.value || d.y || d; });
-    return {
-      title: title,
-      tooltip: { trigger: 'axis' },
-      grid: { left: 50, right: 20, top: 40, bottom: 30 },
-      xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 11 } },
-      yAxis: { type: 'value', name: '条', minInterval: 1 },
-      series: [{ type: 'line', data: lineValues, smooth: true, symbolSize: 6, areaStyle: { opacity: 0.1 } }]
-    };
-  } else {
-    // Fallback bar
-    var fnames = (chart.data || []).map(function(d) { return d.name || d.x; });
-    var fvalues = (chart.data || []).map(function(d) { return d.value || d.y || d; });
-    return {
-      title: title,
-      tooltip: { trigger: 'axis' },
-      grid: { left: 60, right: 20, top: 40, bottom: 30 },
-      xAxis: { type: 'category', data: fnames, axisLabel: { rotate: 30, fontSize: 11 } },
-      yAxis: { type: 'value', minInterval: 1 },
-      series: [{ type: 'bar', data: fvalues }]
-    };
+    // Open the latest run
+    showResult(data.runs[0].id);
+  } catch (e) {
+    alert('加载失败: ' + (e.message || ''));
   }
-}
-
-// ── Markdown ──
-if (typeof marked !== 'undefined') {
-  marked.setOptions({
-    breaks: true,
-    gfm: true,
-    headerIds: false,
-    mangle: false
-  });
-}
-
-function renderMarkdown(text) {
-  if (!text) return '';
-  if (typeof marked !== 'undefined') {
-    try { return marked.parse(text); } catch(e) { /* fallback below */ }
-  }
-  var html = escapeHtml(text);
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\n\n/g, '<br/><br/>');
-  return html;
 }
 </script>
 </body>
