@@ -40,6 +40,14 @@
 .field-table input:focus,.field-table select:focus{outline:none;border-color:var(--accent)}
 .section-label{font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:8px}
 .empty-field{padding:12px;text-align:center;color:var(--gray-400);font-size:12px;border:1px dashed var(--gray-200);border-radius:var(--radius)}
+.help-tip{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:var(--gray-100);color:var(--gray-400);font-size:10px;font-weight:700;cursor:help;position:relative;border:1px solid var(--gray-200);margin-left:4px;vertical-align:middle;line-height:1}
+.help-tip:hover::after{content:attr(data-tip);position:absolute;left:50%;top:calc(100% + 6px);transform:translateX(-50%);z-index:100;background:#1a1a1a;color:#fff;font-size:11px;font-weight:400;line-height:1.5;padding:6px 10px;border-radius:6px;white-space:normal;min-width:180px;max-width:280px;text-align:left;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,0.15)}
+.help-tip:hover::before{content:'';position:absolute;left:50%;top:calc(100% + 2px);transform:translateX(-50%);border:5px solid transparent;border-top-color:#1a1a1a;z-index:100}
+.field-header{display:grid;grid-template-columns:100px 120px 100px 70px 50px 36px;gap:6px;align-items:center;margin-bottom:4px;padding:0 0 6px;border-bottom:1px solid var(--gray-200);font-size:11px;font-weight:600;color:var(--gray-400)}
+.field-header span{text-align:center}
+.field-header span:first-child{text-align:left}
+.field-desc{font-size:12px;color:var(--gray-500);line-height:1.8;margin-bottom:8px;padding:8px 12px;background:var(--gray-50);border-radius:var(--radius);border:1px solid var(--gray-100)}
+.field-desc strong{color:var(--gray-700)}
 </style>
 </head>
 <body>
@@ -86,7 +94,7 @@
 
   <!-- Modal -->
   <div class="modal-overlay" id="modalOverlay">
-    <div class="modal" style="width:620px">
+    <div class="modal" style="width:620px;max-height:90vh">
       <div class="modal-header">
         <h2 id="modalTitle">新建抽取规则</h2>
         <button class="btn-icon" onclick="closeModal()" data-tip="关闭"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -128,7 +136,25 @@
           <label>描述</label>
           <textarea id="ruleDesc" rows="2" placeholder="规则描述（可选）" style="width:100%;padding:8px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);resize:vertical"></textarea>
         </div>
-        <div class="section-label">抽取字段</div>
+        <div class="section-label">抽取字段 <span style="font-weight:400;font-size:12px;color:var(--gray-400)">为每条规则配置要从情报中抽取的信息项</span></div>
+        <div id="fieldGuide">
+          <div class="field-desc">
+            <strong>什么是抽取字段？</strong> 每个字段代表从情报中提取的一个信息项。例如"市场份额"是一个百分比类型的字段，配置后 AI 会自动从情报文本中提取该值。<br>
+            <strong>字段中文名</strong> — 给 AI 看的中文描述，最终存入数据库的字段名。 <span class="help-tip" data-tip="如"市场份额"、"厂商名称"，AI 会根据这个名称在文本中寻找对应信息。"></span><br>
+            <strong>字段标识</strong> — 字段的英文唯一标识（英文短横线命名），作为 LLM 返回 JSON 中的键名。 <span class="help-tip" data-tip="如 company_name、market_share。必须唯一、英文小写，用下划线连接单词。AI 返回数据时用这个键来匹配。"></span><br>
+            <strong>类型</strong> — 决定 AI 提取的值存到数据库哪个位置。 <span class="help-tip" data-tip="company: 存为厂商名 | pct: 百分比，自动加%单位 | currency: 金额 | currency_code: 货币代码(如 USD) | location: 地点/国家 | year: 年份 | number: 数字 | date: 日期 | text: 任意文本"></span><br>
+            <strong>必填</strong> — 勾选后 AI 抽取时会收到"必填"提示，提醒它尽力提取该字段。 <span class="help-tip" data-tip="目前为软约束，仅作为 LLM Prompt 中的提示标注，后端不做强制校验。"></span><br>
+            <strong>排序</strong> — 控制字段在列表中的显示顺序，数字越小越靠前。 <span class="help-tip" data-tip="默认值=行号，手动修改可调整显示顺序。"></span>
+          </div>
+          <div class="field-header">
+            <span>字段中文名</span>
+            <span>字段标识</span>
+            <span>类型</span>
+            <span>必填</span>
+            <span>排序</span>
+            <span></span>
+          </div>
+        </div>
         <div id="fieldsContainer"></div>
         <button class="btn btn-ghost" onclick="addFieldRow()" style="margin-top:6px;font-size:12px">+ 添加字段</button>
         <div id="modalFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:10px"></div>
@@ -174,7 +200,7 @@ function renderTable() {
         + '<td><strong>' + escapeHtml(r.name || '-') + '</strong></td>'
         + '<td><span class="tag">' + escapeHtml(domainLabel) + '</span></td>'
         + '<td><span class="status-dot ' + (r.enabled ? 'on' : 'off') + '"></span>' + (r.enabled ? '启用' : '停用') + '</td>'
-        + '<td>' + (r.fields ? r.fields.length : 0) + '</td>'
+        + '<td>' + (r.field_count || 0) + '</td>'
         + '<td class="action-cell">'
           + '<div class="action-btns">'
           + '<button class="btn-icon btn-info" onclick="triggerExtract(' + r.id + ')" data-tip="立即抽取"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></button>'
@@ -222,35 +248,39 @@ function openCreate() {
   document.getElementById('ruleName').focus();
 }
 
-function editRule(id) {
-  var rule = rules.find(function(r) { return r.id === id; });
-  if (!rule) return;
-  editingId = id;
-  document.getElementById('modalTitle').textContent = '编辑抽取规则';
-  document.getElementById('ruleName').value = rule.name || '';
-  document.getElementById('ruleDomain').value = rule.domain || 'research';
-  document.getElementById('ruleScope').value = rule.scope || 'full';
-  document.getElementById('ruleMaxFields').value = rule.max_fields || 20;
-  document.getElementById('ruleEnabled').checked = rule.enabled !== false;
-  document.getElementById('ruleDesc').value = rule.description || '';
-  document.getElementById('modalFeedback').style.display = 'none';
+async function editRule(id) {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/extract/rules/' + id);
+    var rule = await r.json();
+    editingId = id;
+    document.getElementById('modalTitle').textContent = '编辑抽取规则';
+    document.getElementById('ruleName').value = rule.name || '';
+    document.getElementById('ruleDomain').value = rule.domain || 'research';
+    document.getElementById('ruleScope').value = rule.scope || 'full';
+    document.getElementById('ruleMaxFields').value = rule.max_fields || 20;
+    document.getElementById('ruleEnabled').checked = rule.enabled !== false;
+    document.getElementById('ruleDesc').value = rule.description || '';
+    document.getElementById('modalFeedback').style.display = 'none';
 
-  var fields = rule.fields || [];
-  document.getElementById('fieldsContainer').innerHTML = '';
-  if (fields.length === 0) {
-    addFieldRow();
-  } else {
-    fields.forEach(function(f) {
-      addFieldRow({
-        label: f.label || '',
-        field: f.field || '',
-        type: f.type || 'text',
-        required: f.required === true || f.required === 1,
-        order: f.order || 0
+    var fields = rule.fields || [];
+    document.getElementById('fieldsContainer').innerHTML = '';
+    if (fields.length === 0) {
+      addFieldRow();
+    } else {
+      fields.forEach(function(f) {
+        addFieldRow({
+          label: f.field_label || '',
+          field: f.field_key || '',
+          type: f.field_type || 'text',
+          required: f.is_required === true || f.is_required === 1,
+          order: f.sort_order || 0
+        });
       });
-    });
+    }
+    openModal();
+  } catch(e) {
+    alert('加载规则详情失败：' + (e.message || ''));
   }
-  openModal();
 }
 
 function openModal() {
@@ -267,10 +297,10 @@ function addFieldRow(data) {
   var types = ['company','pct','currency','currency_code','location','year','text','number','date'];
   var typeOptions = types.map(function(t) { return '<option value="' + t + '">' + t + '</option>'; }).join('');
   var html = '<div class="field-row" style="display:grid;grid-template-columns:100px 120px 100px 70px 50px 36px;gap:6px;align-items:center;margin-bottom:6px">'
-    + '<div class="form-group"><input type="text" class="fld-label" placeholder="中文名" value="' + escapeHtml((data && data.label) || '') + '"></div>'
-    + '<div class="form-group"><input type="text" class="fld-field" placeholder="字段标识" value="' + escapeHtml((data && data.field) || '') + '"></div>'
-    + '<div class="form-group"><select class="fld-type">' + typeOptions + '</select></div>'
-    + '<div class="form-group"><input type="checkbox" class="fld-required"' + ((data && data.required) ? ' checked' : '') + '></div>'
+    + '<div class="form-group"><input type="text" class="fld-label" placeholder="中文名" value="' + escapeHtml((data && data.label) || '') + '" style="width:100%;padding:5px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-700)"></div>'
+    + '<div class="form-group"><input type="text" class="fld-field" placeholder="字段标识" value="' + escapeHtml((data && data.field) || '') + '" style="width:100%;padding:5px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-700)"></div>'
+    + '<div class="form-group"><select class="fld-type" style="width:100%;padding:5px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-700);background:#fff">' + typeOptions + '</select></div>'
+    + '<div class="form-group" style="text-align:center"><input type="checkbox" class="fld-required"' + ((data && data.required) ? ' checked' : '') + ' style="width:16px;height:16px;cursor:pointer"></div>'
     + '<div class="form-group"><input type="number" class="fld-order" value="' + (data && data.order !== undefined ? data.order : idx) + '" min="0" style="width:100%;padding:5px 8px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-700)"></div>'
     + '<div style="text-align:center"><button type="button" class="btn-icon btn-danger" onclick="removeFieldRow(this)" data-tip="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>'
     + '</div>';
@@ -308,7 +338,13 @@ async function saveRule() {
     var required = row.querySelector('.fld-required').checked;
     var order = parseInt(row.querySelector('.fld-order').value) || 0;
     if (label || field) {
-      fields.push({ label: label, field: field, type: type, required: required, order: order });
+      fields.push({
+        field_label: label,
+        field_key: field,
+        field_type: type,
+        is_required: required,
+        sort_order: order
+      });
     }
   });
 

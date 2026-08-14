@@ -170,7 +170,7 @@ tr:hover td{background:var(--gray-50)}
 /* Modal (Center) */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
 .modal-overlay.open{display:flex;align-items:center;justify-content:center}
-.modal{background:#fff;border-radius:var(--radius-lg);padding:0;width:460px;max-width:90vw;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;overflow:hidden}
+.modal{background:#fff;border-radius:var(--radius-lg);padding:0;width:460px;max-width:90vw;max-height:90vh;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;overflow:hidden}
 .modal-header{display:flex;align-items:center;padding:18px 24px 14px;border-bottom:1px solid var(--gray-100);flex-shrink:0}
 .modal-header h2{font-size:16px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4}
 .modal-body{padding:16px 24px 20px;flex:1;overflow-y:auto}

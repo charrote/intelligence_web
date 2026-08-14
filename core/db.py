@@ -170,12 +170,12 @@ def init_db(project_root, spec):
                 intel_id INTEGER NOT NULL,
                 rule_id INTEGER NOT NULL,
                 field_key TEXT NOT NULL,
+                field_label TEXT DEFAULT '',
+                value_text TEXT DEFAULT '',
+                value_num REAL,
+                value_type TEXT NOT NULL,
                 entity_name TEXT DEFAULT '',
-                metric_name TEXT DEFAULT '',
-                metric_value REAL,
-                metric_unit TEXT DEFAULT '',
                 time_period TEXT DEFAULT '',
-                context TEXT DEFAULT '',
                 source_anchor TEXT DEFAULT '',
                 confidence TEXT NOT NULL DEFAULT 'high',
                 created_at TEXT NOT NULL,
@@ -263,82 +263,8 @@ def init_db(project_root, spec):
         except Exception:
             pass  # column already exists
 
-        # Seed built-in extraction rules
-        now = datetime.now().isoformat()
-
-        rule_count = c.execute('SELECT COUNT(*) FROM intel_extraction_rule').fetchone()[0]
-        if rule_count == 0:
-            c.execute(
-                'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                ('research', '厂商市场数据', '从情报中抽取厂商市场相关结构化数据', 'full', 15, 1, 1, now, now)
-            )
-            c.execute(
-                'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                ('sales', '竞争情报摘要', '从情报中抽取竞争对手动态和竞争情报', 'full+tables', 15, 1, 1, now, now)
-            )
-
-        # Seed built-in fields for Rule 1 (厂商市场数据)
-        field_count = c.execute('SELECT COUNT(*) FROM intel_extraction_field').fetchone()[0]
-        if field_count == 0:
-            rule1_fields = [
-                (1, 'company_name', '厂商名称', 'company', 1, '', 1, ''),
-                (1, 'market_share', '市场份额', 'pct', 0, '', 2, ''),
-                (1, 'market_size', '市场规模', 'currency', 0, '', 3, ''),
-                (1, 'currency', '币种', 'currency_code', 0, '', 4, ''),
-                (1, 'country', '国家/地区', 'location', 0, '', 5, ''),
-                (1, 'year', '年份', 'year', 0, '', 6, ''),
-                (1, 'growth_rate', '增长率', 'pct', 0, '', 7, ''),
-                (1, 'data_source', '数据来源', 'text', 0, '', 8, ''),
-            ]
-            for f in rule1_fields:
-                c.execute(
-                    'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    f
-                )
-
-        # Seed built-in fields for Rule 2 (竞争情报摘要)
-        rule2_fields = [
-            (2, 'competitor_name', '竞争对手名称', 'company', 1, '', 1, ''),
-            (2, 'action_type', '动作类型', 'text', 1, '', 2, ''),
-            (2, 'action_desc', '动作描述', 'text', 0, '', 3, ''),
-            (2, 'market_impact', '市场影响', 'text', 0, '', 4, ''),
-            (2, 'date', '事件日期', 'date', 0, '', 5, ''),
-            (2, 'source', '信息来源', 'text', 0, '', 6, ''),
-        ]
-        for f in rule2_fields:
-            c.execute(
-                'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                f
-            )
-
-        # Seed built-in report templates
-        template_count = c.execute('SELECT COUNT(*) FROM intel_aggregate').fetchone()[0]
-        if template_count == 0:
-            next_run = (datetime.now() + timedelta(minutes=10)).isoformat()
-            c.execute(
-                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                ('research', '市场份额概览', '基于市场数据生成市场份额分析报告', 1, 'entity_name', '[]', '[]', '[]',
-                 '你是一个情报分析师。请基于以下已聚合的数据，撰写市场份额分析报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述市场份额分布、趋势变化、关键厂商对比...）",\n  "summary": "一段话总结市场份额核心发现..."\n}',
-                 1440, 30, 1, next_run, 'active', 0, now, now)
-            )
-            c.execute(
-                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                ('sales', '竞争情报摘要', '基于竞争情报数据生成竞争态势摘要', 2, 'entity_name', '[]', '[]', '[]',
-                 '你是竞争情报分析员。请基于以下数据，撰写竞争情报摘要。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述竞争对手最新动态、市场影响、趋势判断...）",\n  "summary": "一段话总结竞争情报核心发现..."\n}',
-                 1440, 30, 1, next_run, 'active', 0, now, now)
-            )
-            c.execute(
-                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                ('research', '行业趋势分析', '基于市场数据生成行业趋势分析报告', 1, 'time_period', '[]', '[]', '[]',
-                 '你是行业趋势分析师。请基于以下数据，撰写行业趋势分析报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述行业整体趋势、增长/下降信号、关键转折点...）",\n  "summary": "一段话总结行业趋势核心判断..."\n}',
-                 2880, 90, 1, next_run, 'active', 0, now, now)
-            )
-            c.execute(
-                'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                ('research', '区域市场对比', '基于市场数据生成区域市场对比报告', 1, 'entity_name', '[]', '[]', '[]',
-                 '你是区域市场分析员。请基于以下数据，撰写区域市场对比报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述各区域市场份额对比、增长差异、重点市场...）",\n  "summary": "一段话总结区域市场核心发现..."\n}',
-                 4320, 60, 1, next_run, 'active', 0, now, now)
-            )
+        # Note: Extraction rule/field/template seeding is handled by migrate_db,
+        # not here, to avoid duplicate data and rule_id mismatches.
 
         # Seed report_scheduler initial record
         c.execute(
@@ -1193,7 +1119,169 @@ def migrate_db(db_path):
                     ('user', h, s, '普通用户', 'user', 1, now, now)
                 )
 
-            conn.commit()
+            # ── Layer 2/3/4: Extraction Rules + Facts + Aggregates ──
+            # init_db no longer seeds these. migrate_db seeds on first run only.
+
+            # Check if built-in rules have been seeded yet
+            try:
+                _rule_count = c.execute('SELECT COUNT(*) FROM intel_extraction_rule').fetchone()[0]
+            except Exception:
+                _rule_count = 0
+
+            if _rule_count == 0:
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS intel_extraction_rule (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain TEXT NOT NULL DEFAULT 'research',
+                        name TEXT NOT NULL,
+                        description TEXT DEFAULT '',
+                        scope TEXT NOT NULL DEFAULT 'full',
+                        max_fields INTEGER NOT NULL DEFAULT 15,
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        built_in INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                ''')
+
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS intel_extraction_field (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        rule_id INTEGER NOT NULL,
+                        field_key TEXT NOT NULL,
+                        field_label TEXT NOT NULL,
+                        field_type TEXT NOT NULL,
+                        is_required INTEGER NOT NULL DEFAULT 0,
+                        default_value TEXT DEFAULT '',
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        help_text TEXT DEFAULT '',
+                        FOREIGN KEY (rule_id) REFERENCES intel_extraction_rule(id) ON DELETE CASCADE
+                    )
+                ''')
+
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS intel_fact (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        intel_id INTEGER NOT NULL,
+                        rule_id INTEGER NOT NULL,
+                        field_key TEXT NOT NULL,
+                        field_label TEXT DEFAULT '',
+                        value_text TEXT DEFAULT '',
+                        value_num REAL,
+                        value_type TEXT NOT NULL,
+                        entity_name TEXT DEFAULT '',
+                        time_period TEXT DEFAULT '',
+                        source_anchor TEXT DEFAULT '',
+                        confidence TEXT NOT NULL DEFAULT 'high',
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY (intel_id) REFERENCES intelligence(id) ON DELETE CASCADE
+                    )
+                ''')
+
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS intel_aggregate (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        domain TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        description TEXT DEFAULT '',
+                        rule_id INTEGER NOT NULL,
+                        group_by TEXT NOT NULL,
+                        metrics TEXT DEFAULT '[]',
+                        filters TEXT DEFAULT '[]',
+                        chart_config TEXT DEFAULT '[]',
+                        prompt_template TEXT NOT NULL,
+                        schedule_minutes INTEGER NOT NULL DEFAULT 1440,
+                        lookback_days INTEGER NOT NULL DEFAULT 30,
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        next_run TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'active',
+                        fail_count INTEGER NOT NULL DEFAULT 0,
+                        last_fail_time TEXT,
+                        last_success_time TEXT,
+                        built_in INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        FOREIGN KEY (rule_id) REFERENCES intel_extraction_rule(id)
+                    )
+                ''')
+
+                # Indexes
+                c.execute('CREATE INDEX IF NOT EXISTS idx_fact_intel ON intel_fact(intel_id)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_fact_rule ON intel_fact(rule_id)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_fact_field ON intel_fact(field_key)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_fact_entity ON intel_fact(entity_name)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_fact_time ON intel_fact(time_period)')
+
+                # Seed built-in rules (only if table is empty)
+                try:
+                    rule_count = c.execute('SELECT COUNT(*) FROM intel_extraction_rule').fetchone()[0]
+                except Exception:
+                    rule_count = 0
+
+                if rule_count == 0:
+                    now = datetime.now().isoformat()
+
+                    # Insert rules and capture their auto-generated IDs
+                    c.execute(
+                        'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        ('research', '厂商市场数据', '从情报中抽取厂商市场相关结构化数据', 'full', 15, 1, 1, now, now)
+                    )
+                    rule1_id = c.lastrowid
+
+                    c.execute(
+                        'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        ('sales', '竞争情报摘要', '从情报中抽取竞争对手动态和竞争情报', 'full+tables', 15, 1, 1, now, now)
+                    )
+                    rule2_id = c.lastrowid
+
+                    # Seed fields for Rule 1: 厂商市场数据
+                    rule1_fields = [
+                        (rule1_id, 'company_name', '厂商名称', 'company', 1, '', 1, ''),
+                        (rule1_id, 'market_share', '市场份额', 'pct', 0, '', 2, ''),
+                        (rule1_id, 'market_size', '市场规模', 'currency', 0, '', 3, ''),
+                        (rule1_id, 'currency', '币种', 'currency_code', 0, '', 4, ''),
+                        (rule1_id, 'country', '国家/地区', 'location', 0, '', 5, ''),
+                        (rule1_id, 'year', '年份', 'year', 0, '', 6, ''),
+                        (rule1_id, 'growth_rate', '增长率', 'pct', 0, '', 7, ''),
+                        (rule1_id, 'data_source', '数据来源', 'text', 0, '', 8, ''),
+                    ]
+                    for f in rule1_fields:
+                        c.execute(
+                            'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                            f
+                        )
+
+                    # Seed fields for Rule 2: 竞争情报摘要
+                    rule2_fields = [
+                        (rule2_id, 'competitor_name', '竞争对手名称', 'company', 1, '', 1, ''),
+                        (rule2_id, 'action_type', '动作类型', 'text', 1, '', 2, ''),
+                        (rule2_id, 'action_desc', '动作描述', 'text', 0, '', 3, ''),
+                        (rule2_id, 'market_impact', '市场影响', 'text', 0, '', 4, ''),
+                        (rule2_id, 'date', '事件日期', 'date', 0, '', 5, ''),
+                        (rule2_id, 'source', '信息来源', 'text', 0, '', 6, ''),
+                    ]
+                    for f in rule2_fields:
+                        c.execute(
+                            'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                            f
+                        )
+
+                    # Seed built-in report templates
+                    next_run = (datetime.now() + timedelta(minutes=10)).isoformat()
+                    c.execute(
+                        'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        ('research', '市场份额概览', '基于市场数据生成市场份额分析报告', rule1_id, 'entity_name', '[{"field_key":"market_share","agg":"avg","unit":"%"},{"field_key":"market_size","agg":"sum","unit":"USD"},{"field_key":"growth_rate","agg":"avg","unit":"%"}]', '[]', '[]',
+                         '你是一个情报分析师。请基于以下已聚合的数据，撰写市场份额分析报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述市场份额分布、趋势变化、关键厂商对比...）",\n  "summary": "一段话总结市场份额核心发现..."\n}',
+                         1440, 30, 1, next_run, 'active', 0, 0, now, now)
+                    )
+                    c.execute(
+                        'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        ('sales', '竞争情报摘要', '基于竞争情报数据生成竞争态势摘要', rule2_id, 'entity_name', '[{"field_key":"competitor_name","agg":"count","unit":""}]', '[]', '[]',
+                         '你是竞争情报分析员。请基于以下数据，撰写竞争情报摘要。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述竞争对手最新动态、市场影响、趋势判断...）",\n  "summary": "一段话总结竞争情报核心发现..."\n}',
+                         1440, 30, 1, next_run, 'active', 0, 0, now, now)
+                    )
+
+                conn.commit()
 
         # Step 3: Verify data integrity after migration
         post_counts = _record_counts(db_path)

@@ -1,6 +1,8 @@
 """WSGI entry point for Gunicorn."""
 import os, sys
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _PROJECT_ROOT)
 
-from intelligence_web.api.app import app
+# In Docker: /app/intelligence_web/wsgi.py, /app/api/app.py
+# The api directory is at /app/api/, core is at /app/core/
+sys.path.insert(0, '/app')
+
+from api.app import app

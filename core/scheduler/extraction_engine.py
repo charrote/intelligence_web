@@ -118,7 +118,7 @@ def _get_db_path() -> str:
 
 def _save_facts(conn, intel_id: int, rule_id: int, fields: list,
                 data: dict) -> int:
-    """Save extracted facts to intel_fact table."""
+    """Save extracted facts to intel_fact table (Plan A: consolidated columns)."""
     now = datetime.now(timezone.utc).isoformat()
     count = 0
 
@@ -128,44 +128,45 @@ def _save_facts(conn, intel_id: int, rule_id: int, fields: list,
         if value is None:
             continue
 
-        entity_name = ""
-        metric_name = ""
-        metric_value = None
-        metric_unit = ""
-        time_period = ""
-        context = ""
-
         ft = field["field_type"]
-        if ft == "company":
-            entity_name = str(value)
-        elif ft in ("pct", "number"):
-            metric_name = field["field_label"]
-            metric_value = _safe_float(value)
-            if ft == "pct":
-                metric_unit = "%"
+        field_label = field["field_label"]
+        value_text = ""
+        value_num = None
+        value_type = ft
+        entity_name = ""
+        time_period = ""
+
+        if ft in ("company", "location"):
+            # 实体类字段：值存 value_text，实体名存 entity_name
+            value_text = str(value)
+            entity_name = value_text
+        elif ft in ("pct", "number", "year"):
+            # 数值类字段：标签存 field_label，数值存 value_num
+            field_label = field_label if ft != "year" else "年份"
+            value_text = str(value)
+            value_num = _safe_float(value)
         elif ft == "currency":
-            metric_name = field["field_label"]
-            metric_value = _safe_float(value)
+            # 金额：标签存 field_label，数值存 value_num
+            value_text = str(value)
+            value_num = _safe_float(value)
         elif ft == "currency_code":
-            metric_unit = str(value)
-        elif ft == "location":
-            entity_name = str(value)
-        elif ft == "year":
-            metric_name = "年份"
-            metric_value = _safe_float(value)
-            metric_unit = "年"
+            # 货币代码：纯文本
+            value_text = str(value)
         elif ft == "date":
+            # 日期：存 time_period
             time_period = str(value)
+            value_text = str(value)
         elif ft == "text":
-            context = str(value)
+            # 任意文本
+            value_text = str(value)
 
         conn.execute(
             """INSERT INTO intel_fact
-               (intel_id, rule_id, field_key, entity_name, metric_name,
-                metric_value, metric_unit, time_period, context, confidence, created_at)
+               (intel_id, rule_id, field_key, field_label, value_text,
+                value_num, value_type, entity_name, time_period, confidence, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (intel_id, rule_id, fk, entity_name, metric_name,
-             metric_value, metric_unit, time_period, context, "high", now)
+            (intel_id, rule_id, fk, field_label, value_text,
+             value_num, value_type, entity_name, time_period, "high", now)
         )
         count += 1
 

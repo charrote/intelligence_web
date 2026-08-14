@@ -7,6 +7,9 @@ WORKDIR /app
 COPY core/ /app/core/
 COPY config/ /app/config/
 COPY intelligence_web/api/ /app/api/
+RUN mkdir -p /app/intelligence_web
+COPY intelligence_web/domain_spec.py /app/intelligence_web/
+COPY intelligence_web/wsgi.py /app/intelligence_web/
 
 # Create shared data directory for API Key
 RUN mkdir -p /app/shared_data

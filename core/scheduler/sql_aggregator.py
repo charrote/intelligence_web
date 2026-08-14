@@ -58,6 +58,7 @@ def aggregate(db_path: str, template: dict) -> dict:
             result_rows = [dict(r) for r in rows]
 
             # 5. Enrich with metric values via sub-queries
+            #    Value is stored in value_text (all types use one column)
             enriched_rows = []
             for row in result_rows:
                 enriched = dict(row)
@@ -67,15 +68,26 @@ def aggregate(db_path: str, template: dict) -> dict:
                     unit = m.get("unit", "")
 
                     sub_sql = f"""
-                        SELECT {field_key}, metric_unit
+                        SELECT value_text
                         FROM intel_fact
                         WHERE rule_id = ? AND {group_field} = ?
+                          AND field_key = ?
                           AND created_at >= ?
                     """
-                    sub_params = [template['rule_id'], enriched['entity_name'], cutoff.isoformat()]
+                    sub_params = [template['rule_id'], enriched['entity_name'],
+                                  field_key, cutoff.isoformat()]
                     sub_rows = conn.execute(sub_sql, sub_params).fetchall()
 
-                    values = [r[field_key] for r in sub_rows if r[field_key] is not None]
+                    # Convert string values to numbers for aggregation
+                    values = []
+                    for r in sub_rows:
+                        raw = r["value_text"]
+                        if raw is not None and raw != "":
+                            try:
+                                values.append(float(str(raw).replace(",", "").replace("，", "")))
+                            except (ValueError, TypeError):
+                                pass
+
                     enriched[f"metric_{i}"] = _apply_agg(values, agg_fn) if values else 0
                     enriched[f"metric_{i}_unit"] = unit
                 enriched_rows.append(enriched)
@@ -96,7 +108,8 @@ def _map_group_field(group_by: str) -> str:
     mapping = {
         "entity_name": "entity_name",
         "time_period": "time_period",
-        "context": "context",
+        "value_text": "value_text",
+        "value_type": "value_type",
         "country": "entity_name",
     }
     return mapping.get(group_by, "entity_name")
@@ -126,8 +139,11 @@ def _build_filter_clauses(filters: list) -> tuple:
         op = f.get("op", "eq")
         val = f.get("value", "")
 
-        # Map field_key to column
-        col = "entity_name" if fk in ("country", "location") else "context"
+        # Map field_key to column: company/location → entity_name, others → value_text
+        if fk in ("country", "location"):
+            col = "entity_name"
+        else:
+            col = "value_text"
         clause = f"({col} = ?)"
         clauses.append(clause)
         params.append(val)

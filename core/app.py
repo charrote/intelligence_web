@@ -1807,8 +1807,24 @@ def create_app(project_root, spec):
                  1 if data.get("enabled", True) else 0,
                  now, now)
             )
+            rule_id = cursor.lastrowid
             conn.commit()
-            return jsonify({"id": cursor.lastrowid, "ok": True}), 201
+
+            # Create fields
+            fields = data.get("fields", [])
+            for i, f in enumerate(fields):
+                conn.execute(
+                    """INSERT INTO intel_extraction_field
+                       (rule_id, field_key, field_label, field_type, is_required,
+                        default_value, sort_order, help_text)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (rule_id, f.get("field_key", ""), f.get("field_label", ""),
+                     f.get("field_type", "text"),
+                     1 if f.get("is_required") else 0, f.get("default_value", ""),
+                     f.get("sort_order", i), f.get("help_text", ""))
+                )
+            conn.commit()
+            return jsonify({"id": rule_id, "ok": True}), 201
 
 
     @app.route('/api/extract/rules/<int:rule_id>', methods=['GET'])
@@ -2043,7 +2059,7 @@ def create_app(project_root, spec):
                 sql += " AND field_key = ?"
                 params.append(field_key)
             if entity:
-                sql += " AND (entity_name LIKE ? OR context LIKE ?)"
+                sql += " AND (entity_name LIKE ? OR value_text LIKE ?)"
                 params.append(f"%{entity}%", f"%{entity}%")
             if start_at:
                 sql += " AND created_at >= ?"
