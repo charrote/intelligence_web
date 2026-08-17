@@ -319,6 +319,9 @@ def init_db(project_root, spec):
         except Exception:
             pass  # column already exists
 
+        # Migration: intel_fact legacy (metric_*) → current (value_*)
+        _migrate_intel_fact_schema(conn)
+
         # Note: Extraction rule/field/template seeding is handled by migrate_db,
         # not here, to avoid duplicate data and rule_id mismatches.
 
@@ -366,6 +369,53 @@ def init_db(project_root, spec):
         if backup_path and _restore_backup(db_path, backup_path):
             print(f"[init_db] restored from backup: {backup_path}")
         raise
+
+
+def _migrate_intel_fact_schema(conn):
+    """Migrate intel_fact from legacy (metric_*) to current (value_*) schema.
+
+    历史生产库的 intel_fact 仍是旧列（metric_name/metric_value/metric_unit/
+    context），而抽取引擎与 sql_aggregator 全部使用新列（field_label/
+    value_text/value_num/value_type）。init_db 的 CREATE TABLE IF NOT EXISTS
+    对已存在的旧表不会迁移，导致抽取一直写不进 intel_fact。
+
+    幂等：已在新 schema（含 field_label 列）时直接返回。
+    旧列在所有代码路径中零引用（extraction + sql_aggregator 均用 value_*），
+    且生产库 intel_fact 为空，故将旧表改名保留作安全备份，按当前 schema 重建。
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(intel_fact)")]
+    if "field_label" in cols:
+        return  # 已是当前 schema
+
+    print("[init_db] Migrate intel_fact: legacy metric_* schema -> current value_* schema")
+    conn.execute("ALTER TABLE intel_fact RENAME TO intel_fact_legacy")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS intel_fact (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            intel_id INTEGER NOT NULL,
+            rule_id INTEGER NOT NULL,
+            field_key TEXT NOT NULL,
+            field_label TEXT DEFAULT '',
+            value_text TEXT DEFAULT '',
+            value_num REAL,
+            value_type TEXT NOT NULL,
+            entity_name TEXT DEFAULT '',
+            time_period TEXT DEFAULT '',
+            source_anchor TEXT DEFAULT '',
+            confidence TEXT NOT NULL DEFAULT 'high',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (intel_id) REFERENCES intelligence(id) ON DELETE CASCADE,
+            FOREIGN KEY (rule_id) REFERENCES intel_extraction_rule(id) ON DELETE CASCADE
+        )
+    """)
+    # 重建索引（rename 后旧索引仍指向 intel_fact_legacy，需为新表重建）
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_fact_intel ON intel_fact(intel_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_fact_rule ON intel_fact(rule_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_fact_field ON intel_fact(field_key)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_fact_entity ON intel_fact(entity_name)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_fact_time ON intel_fact(time_period)')
+    conn.commit()
+    print("[init_db] intel_fact migrated (legacy table preserved as intel_fact_legacy)")
 
 
 def _seed_research_demos(db_path, spec):

@@ -59,6 +59,60 @@ def render_extraction_prompt(rule_name: str, fields: list,
     return system_prompt, user_prompt
 
 
+def render_extraction_prompt_multi(rule_fields: list,
+                                   intel_title: str, intel_content: str) -> tuple:
+    """Render a single extraction prompt covering MULTIPLE rules at once (P1).
+
+    一次 LLM 调用抽取同一篇情报下多个规则的全部字段，把 N×M 次调用降为 N 次。
+    为避免跨规则 field_key 冲突，JSON key 统一加规则前缀：`{rule_id}__{field_key}`。
+
+    Args:
+        rule_fields: list of (rule_id, rule_name, fields) — 每个元素是一组
+            待 LLM 抽取的字段（应只含 regex 未命中的 remaining 字段）
+        intel_title: 情报标题
+        intel_content: 情报正文
+
+    Returns:
+        (system_prompt, user_prompt)
+    """
+    system_prompt = """你是一个专业的情报数据提取员。你的任务是从同一段文本中，按多个抽取规则一次性提取字段数据。
+
+重要规则：
+1. 只提取文本中明确提到的信息，不要推断或虚构
+2. 找不到的字段填 null
+3. 严格按 JSON 格式返回，不要包含任何其他内容
+4. 数值字段请提取为数字（不是字符串）
+5. JSON 的 key 必须与下方字段定义完全一致（含规则前缀 rule_id__field_key），不要改动 key"""
+
+    fields_list = ""
+    json_keys = []
+    for rule_id, rule_name, fields in rule_fields:
+        fields_list += f"【规则 {rule_id}: {rule_name}】\n"
+        for f in fields:
+            req = "，必填" if f.get("is_required") else ""
+            key = f"{rule_id}__{f['field_key']}"
+            fields_list += f'- {key}（{f["field_label"]}）：类型为 {f["field_type"]}{req}\n'
+            json_keys.append(f'"{key}": null')
+
+    json_fields = ",\n  ".join(json_keys)
+
+    user_prompt = f"""请从以下情报文本中，按上述多个规则一次性提取字段数据：
+
+【字段定义】
+{fields_list}
+【情报标题】{intel_title}
+
+【情报内容】
+{intel_content}
+
+请严格按以下 JSON 格式返回（key 必须与字段定义完全一致）：
+{{
+  {json_fields}
+}}"""
+
+    return system_prompt, user_prompt
+
+
 def render_report_prompt(report_name: str, start_date: str, end_date: str,
                           fact_count: int, aggregated_data: str,
                           chart_data: str, prompt_template: str) -> tuple:

@@ -1,28 +1,46 @@
-"""Extraction engine: extracts structured facts from intelligence records."""
-import json
+"""Extraction engine: extracts structured facts from intelligence records.
+
+P1（合并规则）：同一篇情报只打 1 次 LLM，一次抽完所有启用规则的字段，
+把 N×M 次调用降为 N 次。落库仍按规则拆分（每条规则写各自 rule_id），
+下游报告聚合 / 事实查询完全不受影响。
+
+安全设计：
+  - LLM 侧字段 key 加规则前缀（{rule_id}__{field_key}），跨规则同 key 不冲突。
+  - regex 快路径仍按规则分别跑（field_extractor 的 label windowing 依赖单规则
+    字段顺序，合并会改变窗口切分导致串值），只合并 LLM 部分，regex 语义不变。
+  - 数据库写入统一在主线程串行完成（单连接），避免多线程共享 SQLite 连接竞争。
+  - content 超长截断，防止长文拖慢单次 LLM 调用。
+"""
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from core.db import get_db, get_setting
 from core.scheduler.llm_client import call_llm, parse_json_from_response
-from core.scheduler.prompt_renderer import render_extraction_prompt
+from core.scheduler.prompt_renderer import render_extraction_prompt_multi
+from core.scheduler.field_extractor import extract_fields_regex
 
 logger = logging.getLogger(__name__)
+
+# 默认配置（可被 settings 表 llm.extract_concurrency / llm.extract_content_max_chars 覆盖）
+# 注意：本地 LLM 并发上限实测为 2 —— C=3 起输出退化（JSON 串词/格式错乱，失败率飙升）。
+# 不要盲目调高；P1 合并规则后调用数已减半，C=2 即已足够。
+DEFAULT_CONCURRENCY = 2
+DEFAULT_CONTENT_MAX_CHARS = 8000
 
 
 def extract_all_pending(db_path: str) -> dict:
     """
     Extract structured facts from all pending intelligence records.
 
-    Args:
-        db_path: path to the SQLite database
+    每篇情报 1 次 LLM 调用（合并全部启用规则），并发度由
+    llm.extract_concurrency 控制。
 
     Returns:
         {"processed": int, "success": int, "failed": int}
     """
-    processed = 0
-    success = 0
-    failed = 0
+    concurrency = max(1, int(get_setting(db_path, "llm.extract_concurrency") or DEFAULT_CONCURRENCY))
+    content_max_chars = max(0, int(get_setting(db_path, "llm.extract_content_max_chars") or DEFAULT_CONTENT_MAX_CHARS))
 
     with get_db(db_path) as conn:
         pending = conn.execute(
@@ -36,36 +54,143 @@ def extract_all_pending(db_path: str) -> dict:
             "SELECT id, name FROM intel_extraction_rule WHERE enabled = 1"
         ).fetchall()
 
-        for intel_row in pending:
-            intel_id = intel_row["id"]
-            intel_title = intel_row["title"]
-            intel_content = intel_row["content"]
-            row_success = True
-
-            for rule_row in rules:
-                rule_id = rule_row["id"]
-                rule_name = rule_row["name"]
-                fields = _get_rule_fields(conn, rule_id)
-                result = _extract_single(intel_id, rule_id, rule_name,
-                                          fields, intel_title, intel_content, conn)
-                if not result["ok"]:
-                    row_success = False
-                    logger.warning(f"Extract failed intel={intel_id} rule={rule_id}: {result.get('error')}")
-
-            new_status = 1 if row_success else 2
-            conn.execute(
-                "UPDATE intelligence SET extracted = ? WHERE id = ?",
-                (new_status, intel_id)
-            )
+        if not rules:
+            # 无启用规则：整批直接标记完成
+            for row in pending:
+                conn.execute("UPDATE intelligence SET extracted = 1 WHERE id = ?", (row["id"],))
             conn.commit()
+            logger.info(f"[extract] no enabled rules; marked {len(pending)} records done")
+            return {"processed": len(pending), "success": len(pending), "failed": 0}
 
-            if row_success:
-                success += 1
+        # 预取规则字段（主线程，单连接）
+        rule_fields = {r["id"]: _get_rule_fields(conn, r["id"]) for r in rules}
+
+        # 为每条情报构建一个合并任务
+        tasks = []
+        for intel_row in pending:
+            iid, title, content = intel_row["id"], intel_row["title"], intel_row["content"]
+
+            # regex 快路径按规则分别跑（保留 windowing 语义）
+            per_rule = []  # [(rule_id, rule_name, fields, regex_values, remaining)]
+            for r in rules:
+                rid, rname = r["id"], r["name"]
+                fields = rule_fields[rid]
+                regex_values, remaining = extract_fields_regex(fields, title, content)
+                per_rule.append((rid, rname, fields, regex_values, remaining))
+
+            # 收集所有规则的 remaining 字段，作为这一次 LLM 调用的字段集
+            llm_rule_fields = [(rid, rname, remaining) for rid, rname, fields, _, remaining in per_rule if remaining]
+
+            tasks.append({
+                "id": iid,
+                "title": title,
+                "content": content,
+                "per_rule": per_rule,
+                "llm_rule_fields": llm_rule_fields,
+                "_content_max_chars": content_max_chars,
+            })
+
+        total = len(tasks)
+        logger.info(
+            f"[extract] {total} intel × {len(rules)} rules → {total} merged LLM calls "
+            f"(concurrency={concurrency}, content_max_chars={content_max_chars})"
+        )
+
+        # 并发执行每篇情报的合并 LLM 调用（worker 只做 LLM，结果存回 task）
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            for task in ex.map(_extract_intel_merged, tasks):
+                _persist_intel(conn, task, rule_fields)
+
+        processed = sum(1 for t in tasks if t.get("_row_success"))
+        success = sum(1 for t in tasks if t.get("_row_success"))
+        failed = total - success
+        logger.info(f"[extract] done: processed={processed} success={success} failed={failed}")
+        return {"processed": processed, "success": success, "failed": failed}
+
+
+def _extract_intel_merged(task: dict) -> dict:
+    """Run the single merged LLM call for one intel (worker). No DB access.
+
+    结果（含规则前缀的原始 dict）写入 task["_llm_values"]；失败写入 task["_llm_error"]。
+    返回 task 本身（供 ex.map 迭代）。
+    """
+    llm_rule_fields = task["llm_rule_fields"]
+    if not llm_rule_fields:
+        # 全部字段都被 regex 命中，无需 LLM
+        task["_llm_values"] = {}
+        return task
+
+    db_path = _get_db_path()
+    timeout = int(get_setting(db_path, "llm.extract_timeout") or 60)
+
+    content = task["content"] or ""
+    max_chars = task.get("_content_max_chars", 0)
+    if max_chars and len(content) > max_chars:
+        content = content[:max_chars]
+
+    try:
+        system_prompt, user_prompt = render_extraction_prompt_multi(
+            llm_rule_fields, task["title"], content
+        )
+
+        result = call_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.1,
+            max_tokens=1500,
+            timeout=timeout
+        )
+
+        if not result.get("ok"):
+            task["_llm_values"] = None
+            task["_llm_error"] = result.get("error", "LLM call failed")
+            return task
+
+        parsed, json_ok = parse_json_from_response(result["raw"])
+        if not json_ok:
+            task["_llm_values"] = None
+            task["_llm_error"] = f"JSON parse failed. Raw: {result['raw'][:200]}"
+            return task
+
+        task["_llm_values"] = parsed if isinstance(parsed, dict) else {}
+    except Exception as e:
+        task["_llm_values"] = None
+        task["_llm_error"] = str(e)
+
+    return task
+
+
+def _persist_intel(conn, task: dict, rule_fields: dict) -> None:
+    """Merge regex + LLM values per rule and save to intel_fact (main thread, single connection)."""
+    llm_values = task.get("_llm_values")
+    if llm_values is None and task.get("_llm_error"):
+        logger.warning(f"[extract] LLM failed intel={task['id']}: {task['_llm_error']}")
+
+    intel_id = task["id"]
+    row_success = True
+    for rid, rname, fields, regex_values, remaining in task["per_rule"]:
+        if llm_values is None:
+            # LLM 失败 → 该规则整体标记失败
+            row_success = False
+            continue
+
+        # 按规则前缀拆分 LLM 值，并与 regex 合并（regex 优先）
+        merged = {}
+        for f in fields:
+            fk = f["field_key"]
+            if fk in regex_values:
+                merged[fk] = regex_values[fk]
             else:
-                failed += 1
-            processed += 1
+                prefixed = f"{rid}__{fk}"
+                if prefixed in llm_values and llm_values[prefixed] is not None:
+                    merged[fk] = llm_values[prefixed]
 
-    return {"processed": processed, "success": success, "failed": failed}
+        _save_facts(conn, intel_id, rid, fields, merged)
+
+    new_status = 1 if row_success else 2
+    conn.execute("UPDATE intelligence SET extracted = ? WHERE id = ?", (new_status, intel_id))
+    conn.commit()
+    task["_row_success"] = row_success
 
 
 def _get_rule_fields(conn, rule_id: int) -> list:
@@ -75,72 +200,6 @@ def _get_rule_fields(conn, rule_id: int) -> list:
         (rule_id,)
     ).fetchall()
     return [dict(r) for r in rows]
-
-
-def _extract_single(intel_id: int, rule_id: int, rule_name: str,
-                    fields: list, intel_title: str, intel_content: str,
-                    conn) -> dict:
-    """Extract facts for a single intel x single rule.
-
-    Hybrid strategy:
-      1. Regex fast path handles numeric-ish fields (number/pct/currency/
-         currency_code/date/year) — deterministic, zero LLM cost.
-      2. LLM only processes the remaining fields (company/location/text,
-         plus regex-missed numerics as fallback).
-      3. If there is nothing left for the LLM, skip the call entirely.
-    """
-    from core.scheduler.field_extractor import extract_fields_regex
-
-    db_path = _get_db_path()
-
-    # Step 1: regex fast path
-    regex_values, remaining_fields = extract_fields_regex(
-        fields, intel_title, intel_content
-    )
-
-    # Step 2: LLM for the rest (entity/text fields + regex misses)
-    llm_values: dict = {}
-    if remaining_fields:
-        timeout = int(get_setting(db_path, "llm.extract_timeout") or 60)
-
-        system_prompt, user_prompt = render_extraction_prompt(
-            rule_name, remaining_fields, intel_title, intel_content
-        )
-
-        result = call_llm(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.1,
-            max_tokens=500,
-            timeout=timeout
-        )
-
-        if not result.get("ok"):
-            # Preserve pre-hybrid semantics: LLM failure → row marked failed
-            return {"ok": False, "error": result.get("error", "LLM call failed")}
-
-        parsed, json_ok = parse_json_from_response(result["raw"])
-        if not json_ok:
-            return {"ok": False,
-                    "error": f"JSON parse failed. Raw: {result['raw'][:200]}"}
-        llm_values = parsed if isinstance(parsed, dict) else {}
-
-    # Step 3: merge (regex wins; LLM fills the gaps) and save
-    merged: dict = {}
-    for f in fields:
-        fk = f.get("field_key", "")
-        if fk in regex_values:
-            merged[fk] = regex_values[fk]
-        elif fk in llm_values and llm_values[fk] is not None:
-            merged[fk] = llm_values[fk]
-
-    fact_count = _save_facts(conn, intel_id, rule_id, fields, merged)
-    return {
-        "ok": True,
-        "fact_count": fact_count,
-        "regex_count": len(regex_values),
-        "llm_count": len(remaining_fields),
-    }
 
 
 def _get_db_path() -> str:

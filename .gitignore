@@ -22,9 +22,14 @@ config/llm.json
 # Database files
 *.db
 *.db-journal
+*.bak
 data/intelligence
 data/intelligence_web
 data/intelligence_sales
+
+# Domain data directories (SQLite DBs + backups — never commit)
+intelligence_web/data/
+intelligence_sales/data/
 
 # IDE
 .vscode/
