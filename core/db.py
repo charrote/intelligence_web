@@ -9,6 +9,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta
 from contextlib import contextmanager
+from core.seed_data import DEMOS as _RESEARCH_DEMOS
 
 
 def get_db_path(project_root, db_filename):
@@ -365,6 +366,32 @@ def init_db(project_root, spec):
         if backup_path and _restore_backup(db_path, backup_path):
             print(f"[init_db] restored from backup: {backup_path}")
         raise
+
+
+def _seed_research_demos(db_path, spec):
+    """Seed demo intelligence records into an empty research-domain database.
+
+    Runs only for the research domain (slug == 'intelligence_web') and only
+    when the intelligence table is completely empty (first run on a fresh
+    deployment). Uses create_intelligence so titles are deduped.
+    Returns the number of records inserted.
+    """
+    if spec.get("slug") != "intelligence_web":
+        return 0
+    try:
+        with get_db(db_path) as conn:
+            n = conn.execute("SELECT COUNT(*) FROM intelligence").fetchone()[0]
+    except Exception:
+        return 0
+    if n != 0:
+        return 0
+    inserted = 0
+    for title, content, category, contact, metadata in _RESEARCH_DEMOS:
+        if create_intelligence(db_path, title, content, category, contact, metadata):
+            inserted += 1
+    if inserted:
+        print(f"[init_db] Seeded {inserted} demo intelligence records (research domain, empty db)")
+    return inserted
 
 
 @contextmanager

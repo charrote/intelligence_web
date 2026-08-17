@@ -11,6 +11,7 @@ from core.db import (
     get_intelligence_count_for_project, update_intelligence_status,
     delete_intelligence,
     get_history, get_categories,
+    _seed_research_demos,
     add_comment, get_comments,
     add_summary, get_summary, get_dashboard_stats,
     get_commands, add_command_content,
@@ -99,6 +100,9 @@ def create_app(project_root, spec):
     
     # --- Migrate (create new tables for projects/datasources/target_types) ---
     migrate_db(db_path)
+
+    # --- Seed demo data (research domain, empty db only) ---
+    _seed_research_demos(db_path, spec)
 
     # --- Seed target types if empty ---
     db_target_types = ttslib.get_target_types(db_path)
