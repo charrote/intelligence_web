@@ -36,6 +36,7 @@ services:
     volumes:
       - ./intelligence_web/data:/app/data
       - ./mcp_server/data:/app/shared_data  # 共享数据卷（与 mcp_server 共享 API Key）
+      - ./config:/app/config  # 平台级配置（LLM 等，可热更新）
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8766/api/health"]
       interval: 30s
@@ -62,6 +63,7 @@ services:
       "
     volumes:
       - ./intelligence_sales/data:/app/data
+      - ./config:/app/config  # 平台级配置（LLM 等，可热更新）
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8767/api/health"]
       interval: 30s

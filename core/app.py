@@ -18,12 +18,19 @@ from core.db import (
     authenticate_user, get_user_by_id, get_user_by_id_full,
     list_users, create_user, update_user, update_user_password, delete_user,
     get_db,
+    get_ai_analysis_configs, get_ai_analysis_config_by_id,
+    save_ai_analysis_config, delete_ai_analysis_config, enable_ai_analysis_config,
+    get_ai_analysis_runs, get_ai_analysis_run_by_id,
+    save_ai_analysis_run, delete_ai_analysis_run,
+    run_ai_analysis,
+    generate_analysis_config,
 )
 from core import project as projlib
 from core import datasource as dslib
 from core import target_types as ttslib
 from core.scheduler.scheduler import (
-    trigger_extract_once, trigger_report_once, trigger_report_all
+    trigger_extract_once, trigger_report_once, trigger_report_all,
+    trigger_extract_async
 )
 
 DEFAULT_REPORT_PROMPT = """你是一个情报分析师。请基于以下已聚合的数据，撰写分析报告。
@@ -1764,6 +1771,53 @@ def create_app(project_root, spec):
         return decorated
 
 
+    # ─── 平台级 LLM 配置（所有域共享） ─────────────────────────
+
+    @app.route('/api/system/llm', methods=['GET'])
+    @require_auth
+    def get_llm_settings():
+        """获取平台级 LLM 配置（api_key 脱敏）"""
+        from config import get_llm_config
+        cfg = get_llm_config()
+        api_key = cfg.get('api_key', '')
+        if len(api_key) > 6:
+            cfg['api_key_masked'] = api_key[:3] + '***' + api_key[-3:]
+        else:
+            cfg['api_key_masked'] = '***' if api_key else ''
+        cfg.pop('api_key', None)  # 不返回明文
+        return jsonify(cfg)
+
+    @app.route('/api/system/llm', methods=['PUT'])
+    @require_auth
+    def update_llm_settings():
+        """更新平台级 LLM 配置"""
+        from config import get_llm_config, save_llm_config
+        data = request.json or {}
+        # 读取当前配置，合并更新（api_key 为空/脱敏值时不更新）
+        current = get_llm_config()
+        new_key = data.get('api_key', '').strip()
+        if new_key and '***' not in new_key:
+            current['api_key'] = new_key
+        elif new_key:
+            # 脱敏值，不更新 key
+            pass
+        for k in ('provider', 'api_base_url', 'model_name', 'temperature', 'max_tokens'):
+            if k in data and data[k] not in (None, ''):
+                current[k] = data[k]
+        save_llm_config(current)
+        return jsonify({'ok': True})
+
+    @app.route('/api/system/llm/test', methods=['POST'])
+    @require_auth
+    def test_llm_connection():
+        """测试 LLM 连接"""
+        from core.scheduler.llm_client import call_llm
+        result = call_llm("你是测试助手。", "请回复：ok", temperature=0.1, max_tokens=50, timeout=15)
+        if result.get('ok'):
+            return jsonify({'ok': True, 'model': '已连通'})
+        return jsonify({'ok': False, 'error': result.get('error', '未知错误')}), 500
+
+
     # ─── 抽取规则管理 API ──────────────────────────────────────
 
     @app.route('/api/extract/rules', methods=['GET'])
@@ -1907,6 +1961,16 @@ def create_app(project_root, spec):
             conn.commit()
         result = trigger_extract_once()
         return jsonify(result)
+
+    @app.route('/api/extract/trigger', methods=['POST'])
+    @require_auth
+    def trigger_extract_all():
+        """Manually trigger a full extraction cycle (async).
+
+        Returns immediately; extraction runs in a background thread.
+        Poll /api/extract/stats (pending_extract) to track progress.
+        """
+        return jsonify(trigger_extract_async())
 
 
     # ─── 报告模板管理 API ──────────────────────────────────────
@@ -2224,25 +2288,31 @@ def create_app(project_root, spec):
         return jsonify(result)
 
 
-    @app.route('/api/reports/runs/<int:template_id>', methods=['GET'])
+    @app.route('/api/reports/runs', methods=['GET'])
     @require_auth
-    def list_report_runs(template_id):
-        """Get execution history for a template."""
+    def list_report_runs(template_id=None):
+        """Get execution history (optionally filtered by template_id)."""
+        template_id = request.args.get('template_id', type=int)
         limit = min(int(request.args.get('limit', 20)), 100)
         offset = int(request.args.get('offset', 0))
         with get_db(db_path) as conn:
+            if template_id is not None:
+                where = "WHERE template_id = ?"
+                wp = [template_id]
+            else:
+                where = ""
+                wp = []
             total = conn.execute(
-                "SELECT COUNT(*) FROM report_run WHERE template_id = ?",
-                (template_id,)
+                f"SELECT COUNT(*) FROM report_run {where}", wp
             ).fetchone()[0]
             rows = conn.execute(
-                """SELECT id, template_id, domain, scheduled_time, completed_at,
-                          status, duration_sec, retry_count, fact_count
+                f"""SELECT id, template_id, domain, scheduled_time, completed_at,
+                          status, duration_sec, retry_count, fact_count, error_msg
                    FROM report_run
-                   WHERE template_id = ?
+                   {where}
                    ORDER BY scheduled_time DESC
                    LIMIT ? OFFSET ?""",
-                (template_id, limit, offset)
+                wp + [limit, offset]
             ).fetchall()
             return jsonify({
                 "total": total,
@@ -2295,5 +2365,157 @@ def create_app(project_root, spec):
             ).fetchall()
             return jsonify([dict(r) for r in rows])
 
+
+    # ──────────────────────────────────────────────
+    # AI Analysis Config Routes
+    # ──────────────────────────────────────────────
+
+    @app.route('/api/ai/analysis/configs', methods=['GET'])
+    @require_auth
+    def api_ai_analysis_configs():
+        """Get analysis config list."""
+        domain = request.args.get('domain')
+        enabled = request.args.get('enabled')
+        if enabled is not None:
+            enabled = int(enabled)
+        configs = get_ai_analysis_configs(db_path, domain=domain, enabled=enabled)
+        return jsonify(configs)
+
+    @app.route('/api/ai/analysis/configs/<int:config_id>', methods=['GET'])
+    @require_auth
+    def api_ai_analysis_config_detail(config_id):
+        """Get single analysis config."""
+        config = get_ai_analysis_config_by_id(db_path, config_id)
+        if not config:
+            return jsonify({"error": "Config not found"}), 404
+        return jsonify(config)
+
+    @app.route('/api/ai/analysis/configs', methods=['POST'])
+    @require_auth
+    def api_ai_analysis_config_create():
+        """Create analysis config."""
+        data = request.json
+        if not all(k in data for k in ['domain', 'name', 'intent']):
+            return jsonify({"error": "Missing required fields: domain, name, intent"}), 400
+        config_id = save_ai_analysis_config(db_path, data)
+        return jsonify({"success": True, "id": config_id})
+
+    @app.route('/api/ai/analysis/configs/<int:config_id>', methods=['PUT'])
+    @require_auth
+    def api_ai_analysis_config_update(config_id):
+        """Update analysis config."""
+        data = request.json
+        data['id'] = config_id
+        existing = get_ai_analysis_config_by_id(db_path, config_id)
+        if not existing:
+            return jsonify({"error": "Config not found"}), 404
+        config_id = save_ai_analysis_config(db_path, data)
+        return jsonify({"success": True, "id": config_id})
+
+    @app.route('/api/ai/analysis/configs/<int:config_id>/toggle', methods=['POST'])
+    @require_auth
+    def api_ai_analysis_config_toggle(config_id):
+        """Toggle config enabled/disabled."""
+        data = request.json
+        enabled = data.get('enabled', 1)
+        enable_ai_analysis_config(db_path, config_id, enabled)
+        return jsonify({"success": True, "enabled": enabled})
+
+    @app.route('/api/ai/analysis/configs/<int:config_id>', methods=['DELETE'])
+    @require_auth
+    def api_ai_analysis_config_delete(config_id):
+        """Delete analysis config."""
+        delete_ai_analysis_config(db_path, config_id)
+        return jsonify({"success": True})
+
+    # ──────────────────────────────────────────────
+    # AI Analysis Run Routes
+    # ──────────────────────────────────────────────
+
+    @app.route('/api/ai/analysis/runs', methods=['GET'])
+    @require_auth
+    def api_ai_analysis_runs():
+        """Get analysis run list."""
+        config_id = request.args.get('config_id')
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        runs = get_ai_analysis_runs(db_path, config_id=config_id, limit=limit, offset=offset)
+        return jsonify(runs)
+
+    @app.route('/api/ai/analysis/runs/<int:run_id>', methods=['GET'])
+    @require_auth
+    def api_ai_analysis_run_detail(run_id):
+        """Get single analysis run details."""
+        run = get_ai_analysis_run_by_id(db_path, run_id)
+        if not run:
+            return jsonify({"error": "Run not found"}), 404
+        # Parse JSON fields
+        for key in ("result_charts", "result_data"):
+            if run.get(key):
+                run[key] = json.loads(run[key])
+        return jsonify(run)
+
+    @app.route('/api/ai/analysis/runs/<int:run_id>', methods=['DELETE'])
+    @require_auth
+    def api_ai_analysis_run_delete(run_id):
+        """Delete analysis run."""
+        delete_ai_analysis_run(db_path, run_id)
+        return jsonify({"success": True})
+
+    @app.route('/api/ai/analysis/runs/<int:run_id>/re-run', methods=['POST'])
+    @require_auth
+    def api_ai_analysis_run_re_run(run_id):
+        """Re-run an analysis."""
+        run = get_ai_analysis_run_by_id(db_path, run_id)
+        if not run:
+            return jsonify({"error": "Run not found"}), 404
+        # Create a new run with same parameters
+        new_run_id = save_ai_analysis_run(db_path, {
+            "config_id": run.get("config_id"),
+            "domain": run["domain"],
+            "title": run["title"],
+            "status": "running",
+            "start_time": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+            "lookback_days": run.get("lookback_days", 30),
+        })
+        return jsonify({"success": True, "run_id": new_run_id})
+
+    # ──────────────────────────────────────────────
+    # AI Analysis - Natural Language Input (one-shot)
+    # ──────────────────────────────────────────────
+
+    @app.route('/api/ai/analysis/run', methods=['POST'])
+    @require_auth
+    def api_ai_analysis_run():
+        """Natural language analysis - one-shot execution."""
+        data = request.json
+        if not data or 'intent' not in data:
+            return jsonify({"error": "Missing 'intent' field"}), 400
+        intent = data['intent']
+        lookback_days = data.get('lookback_days', 30)
+        spec_slug = spec.get("slug", "research")
+        
+        # Execute analysis
+        result = run_ai_analysis(db_path, {"slug": spec_slug}, intent, lookback_days)
+        return jsonify(result)
+
+    @app.route('/api/ai/generate-config', methods=['POST'])
+    @require_auth
+    def api_ai_generate_config():
+        """Generate structured config (extraction rule + report template) from natural language."""
+        data = request.get_json(silent=True) or {}
+        intent = (data.get('intent') or '').strip()
+        if not intent:
+            return jsonify({"ok": False, "error": "请描述你想要的报告内容"}), 400
+        lookback_days = int(data.get('lookback_days') or 30)
+        spec_slug = spec.get("slug", "research")
+
+        try:
+            result = generate_analysis_config(db_path, {"slug": spec_slug}, intent, lookback_days)
+            if result.get("ok"):
+                return jsonify(result)
+            return jsonify(result), 500
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"生成配置异常: {str(e)}"}), 500
 
     return app

@@ -248,12 +248,67 @@ def init_db(project_root, spec):
             )
         ''')
 
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS ai_analysis_config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                intent TEXT DEFAULT '',
+                entity_type TEXT DEFAULT '',
+                time_range INTEGER DEFAULT 30,
+                group_by TEXT DEFAULT '',
+                metrics_config TEXT DEFAULT '[]',
+                filters_config TEXT DEFAULT '[]',
+                chart_config TEXT DEFAULT '[]',
+                llm_prompt TEXT DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'draft',
+                source TEXT DEFAULT 'user_input',
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS ai_analysis_run (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                config_id INTEGER DEFAULT NULL,
+                domain TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                progress INTEGER DEFAULT 0,
+                error_msg TEXT DEFAULT '',
+                result_markdown TEXT DEFAULT '',
+                result_charts TEXT DEFAULT '[]',
+                result_summary TEXT DEFAULT '',
+                result_data TEXT DEFAULT '[]',
+                lookback_days INTEGER DEFAULT 30,
+                execution_time_ms INTEGER DEFAULT 0,
+                start_time TEXT NOT NULL,
+                end_time TEXT,
+                created_by TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
         # Indexes for intel_fact
         c.execute('CREATE INDEX IF NOT EXISTS idx_fact_intel ON intel_fact(intel_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_fact_rule ON intel_fact(rule_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_fact_field ON intel_fact(field_key)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_fact_entity ON intel_fact(entity_name)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_fact_time ON intel_fact(time_period)')
+
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ai_config_domain ON ai_analysis_config(domain)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ai_config_status ON ai_analysis_config(status)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ai_config_enabled ON ai_analysis_config(enabled)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_config ON ai_analysis_run(config_id)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_domain ON ai_analysis_run(domain)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_status ON ai_analysis_run(status)')
+
 
         conn.commit()
 
@@ -1212,6 +1267,14 @@ def migrate_db(db_path):
                 c.execute('CREATE INDEX IF NOT EXISTS idx_fact_entity ON intel_fact(entity_name)')
                 c.execute('CREATE INDEX IF NOT EXISTS idx_fact_time ON intel_fact(time_period)')
 
+                c.execute('CREATE INDEX IF NOT EXISTS idx_ai_config_domain ON ai_analysis_config(domain)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_ai_config_status ON ai_analysis_config(status)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_ai_config_enabled ON ai_analysis_config(enabled)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_config ON ai_analysis_run(config_id)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_domain ON ai_analysis_run(domain)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_status ON ai_analysis_run(status)')
+
+
                 # Seed built-in rules (only if table is empty)
                 try:
                     rule_count = c.execute('SELECT COUNT(*) FROM intel_extraction_rule').fetchone()[0]
@@ -1309,3 +1372,602 @@ def migrate_db(db_path):
             else:
                 print(f"[migrate_db] FAILED to restore backup: {backup_path}")
         raise
+
+# ──────────────────────────────────────────────
+# AI Analysis Config CRUD
+# ──────────────────────────────────────────────
+
+def get_ai_analysis_configs(db_path, domain=None, enabled=None):
+    """查询分析配置列表"""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    query = "SELECT * FROM ai_analysis_config WHERE 1=1"
+    params = []
+    if domain:
+        query += " AND domain = ?"
+        params.append(domain)
+    if enabled is not None:
+        query += " AND enabled = ?"
+        params.append(1 if enabled else 0)
+    query += " ORDER BY sort_order ASC, updated_at DESC"
+    c.execute(query, params)
+    configs = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return configs
+
+
+def get_ai_analysis_config_by_id(db_path, config_id):
+    """根据 ID 查询配置"""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM ai_analysis_config WHERE id = ?", (config_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_ai_analysis_config(db_path, config_data):
+    """保存分析配置（新增或更新）"""
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+    if config_data.get("id"):
+        # Update
+        c.execute("""
+            UPDATE ai_analysis_config SET
+                domain = ?, name = ?, description = ?, intent = ?,
+                entity_type = ?, time_range = ?, group_by = ?,
+                metrics_config = ?, filters_config = ?, chart_config = ?,
+                llm_prompt = ?, enabled = ?, status = ?,
+                updated_at = ?
+            WHERE id = ?
+        """, (
+            config_data["domain"], config_data["name"],
+            config_data.get("description", ""),
+            config_data.get("intent", ""),
+            config_data.get("entity_type", ""),
+            config_data.get("time_range", 30),
+            config_data.get("group_by", ""),
+            json.dumps(config_data.get("metrics_config", [])),
+            json.dumps(config_data.get("filters_config", [])),
+            json.dumps(config_data.get("chart_config", [])),
+            config_data.get("llm_prompt", ""),
+            config_data.get("enabled", 1),
+            config_data.get("status", "active"),
+            now, config_data["id"]
+        ))
+    else:
+        # Insert
+        c.execute("""
+            INSERT INTO ai_analysis_config (
+                domain, name, description, intent, entity_type, time_range,
+                group_by, metrics_config, filters_config, chart_config,
+                llm_prompt, enabled, status, source, sort_order,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            config_data["domain"], config_data["name"],
+            config_data.get("description", ""),
+            config_data.get("intent", ""),
+            config_data.get("entity_type", ""),
+            config_data.get("time_range", 30),
+            config_data.get("group_by", ""),
+            json.dumps(config_data.get("metrics_config", [])),
+            json.dumps(config_data.get("filters_config", [])),
+            json.dumps(config_data.get("chart_config", [])),
+            config_data.get("llm_prompt", ""),
+            config_data.get("enabled", 1),
+            config_data.get("status", "draft"),
+            config_data.get("source", "user_input"),
+            config_data.get("sort_order", 0),
+            now, now
+        ))
+        config_data["id"] = c.lastrowid
+
+    conn.commit()
+    conn.close()
+    return config_data["id"]
+
+
+def delete_ai_analysis_config(db_path, config_id):
+    """删除分析配置"""
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("DELETE FROM ai_analysis_config WHERE id = ?", (config_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def enable_ai_analysis_config(db_path, config_id, enabled):
+    """启用/停用分析配置"""
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    c.execute("""
+        UPDATE ai_analysis_config SET enabled = ?, status = ?, updated_at = ?
+        WHERE id = ?
+    """, (1 if enabled else 0, 'active' if enabled else 'inactive', now, config_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
+# ──────────────────────────────────────────────
+# AI Analysis Run CRUD
+# ──────────────────────────────────────────────
+
+def get_ai_analysis_runs(db_path, config_id=None, limit=20, offset=0):
+    """查询报告执行记录"""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    query = "SELECT id, config_id, domain, title, status, progress, error_msg, result_summary, start_time, end_time, execution_time_ms, created_at FROM ai_analysis_run WHERE 1=1"
+    params = []
+    if config_id:
+        query += " AND config_id = ?"
+        params.append(config_id)
+    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    c.execute(query, params)
+    runs = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return runs
+
+
+def get_ai_analysis_run_by_id(db_path, run_id):
+    """根据 ID 查询报告执行记录"""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM ai_analysis_run WHERE id = ?", (run_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_ai_analysis_run(db_path, run_data):
+    """保存报告执行记录"""
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+    if run_data.get("id"):
+        # Update
+        c.execute("""
+            UPDATE ai_analysis_run SET
+                status = ?, progress = ?, error_msg = ?,
+                result_markdown = ?, result_charts = ?, result_summary = ?,
+                result_data = ?, execution_time_ms = ?, end_time = ?,
+                updated_at = ?
+            WHERE id = ?
+        """, (
+            run_data["status"], run_data.get("progress", 0),
+            run_data.get("error_msg", ""),
+            run_data.get("result_markdown", ""),
+            json.dumps(run_data.get("result_charts", [])),
+            run_data.get("result_summary", ""),
+            json.dumps(run_data.get("result_data", [])),
+            run_data.get("execution_time_ms", 0),
+            now if run_data["status"] in ["completed", "failed"] else None,
+            now, run_data["id"]
+        ))
+    else:
+        # Insert
+        c.execute("""
+            INSERT INTO ai_analysis_run (
+                config_id, domain, title, status, progress, error_msg,
+                result_markdown, result_charts, result_summary, result_data,
+                lookback_days, execution_time_ms, start_time, end_time,
+                created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            run_data.get("config_id"), run_data["domain"], run_data["title"],
+            run_data["status"], run_data.get("progress", 0),
+            run_data.get("error_msg", ""),
+            run_data.get("result_markdown", ""),
+            json.dumps(run_data.get("result_charts", [])),
+            run_data.get("result_summary", ""),
+            json.dumps(run_data.get("result_data", [])),
+            run_data.get("lookback_days", 30),
+            run_data.get("execution_time_ms", 0),
+            run_data["start_time"],
+            datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S') if run_data["status"] in ["completed", "failed"] else None,
+            run_data.get("created_by", ""),
+            now, now
+        ))
+        run_data["id"] = c.lastrowid
+
+    conn.commit()
+    conn.close()
+    return run_data["id"]
+
+
+def delete_ai_analysis_run(db_path, run_id):
+    """删除报告执行记录"""
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("DELETE FROM ai_analysis_run WHERE id = ?", (run_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+# ──────────────────────────────────────────────
+# AI Config generation (NL → structured config)
+# ──────────────────────────────────────────────
+
+FIELD_TYPE_META = {
+    "company": "公司/厂商名称",
+    "pct": "百分比（如 35%）",
+    "currency": "金额（如 1200万）",
+    "currency_code": "货币代码（如 USD）",
+    "location": "地点/国家/区域",
+    "year": "年份",
+    "number": "纯数字",
+    "date": "日期",
+    "text": "任意文本",
+}
+
+GROUP_BY_META = {
+    "entity_name": "按实体名称（厂商/公司）",
+    "time_period": "按时间周期",
+    "value_text": "按抽取值",
+    "value_type": "按字段类型",
+}
+
+CHART_TYPES = ["bar", "line", "pie"]
+
+
+def generate_analysis_config(db_path, spec, intent, lookback_days=30):
+    """
+    Use lightweight LLM call to translate user's natural language into
+    a structured config (extraction rule + report template).
+
+    Returns:
+        {"ok": True, "config": {...}} on success
+        {"ok": False, "error": "..."} on failure
+    """
+    from core.scheduler.llm_client import call_llm, parse_json_from_response
+
+    # 1. Query existing fields for context (so LLM knows what's already extracted)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("""
+        SELECT f.field_label, f.field_key, f.field_type
+        FROM intel_extraction_field f
+        JOIN intel_extraction_rule r ON f.rule_id = r.id
+        WHERE r.enabled = 1
+        LIMIT 30
+    """)
+    existing_fields = [dict(r) for r in c.fetchall()]
+    conn.close()
+
+    # Build field list for prompt
+    existing_fields_str = ""
+    if existing_fields:
+        existing_fields_str = "已有字段：\n" + "\n".join(
+            f"- {f['field_label']} (field_key={f['field_key']}, 类型={f['field_type']})"
+            for f in existing_fields[:20]
+        )
+    else:
+        existing_fields_str = "暂无已有字段。"
+
+    # 2. Build prompt
+    system_prompt = """你是一个配置生成器。用户用自然语言描述他想要的情报分析报告，你需要输出完整的配置 JSON。
+
+约束：
+1. field_key 必须英文小写下划线命名，唯一
+2. field_type 从以下选择: company, pct, currency, currency_code, location, year, number, date, text
+3. group_by 从以下选择: entity_name, time_period, value_text, value_type
+4. chart type 从以下选择: bar, line, pie
+5. 如果用户说的指标已有字段，直接复用（不新建）
+6. 最多 5 个抽取字段
+7. metrics 的 field 必须是抽取字段的 field_key
+8. 只输出 JSON，不要任何解释文字
+
+输出格式（严格 JSON）：
+{
+  "extraction_rule": {
+    "name": "规则名称（中文，简短）",
+    "description": "一句话描述",
+    "fields": [
+      {"field_key": "english_key", "field_label": "中文名称", "field_type": "pct", "is_required": true, "sort_order": 0}
+    ]
+  },
+  "report_template": {
+    "name": "报告名称（中文，简短）",
+    "description": "一句话描述",
+    "group_by": "entity_name",
+    "metrics": [
+      {"field": "field_key", "agg": "avg", "label": "中文标签", "unit": ""}
+    ],
+    "filters": [],
+    "chart_config": [
+      {"chart_type": "line", "title": "图表标题", "name_field": "entity_name", "value_field": "field_key"}
+    ],
+    "lookback_days": 30,
+    "schedule_minutes": 1440
+  }
+}"""
+
+    user_prompt = f"""用户想要的报告：{intent}
+时间范围：{lookback_days} 天
+
+{existing_fields_str}
+
+请生成配置 JSON："""
+
+    # 3. Call LLM (reasoning 模型需要足够 token 用于思考 + 输出)
+    llm_result = call_llm(
+        system_prompt, user_prompt,
+        temperature=0.1, max_tokens=4000, timeout=90
+    )
+
+    if not llm_result.get("ok"):
+        return {"ok": False, "error": llm_result.get("error", "LLM 调用失败")}
+
+    # 空值防护：reasoning 模型可能在 token 耗尽时返回空 content
+    raw = llm_result.get("raw")
+    if not raw or not raw.strip():
+        return {"ok": False, "error": "模型返回空内容（可能是 reasoning 模型 token 不足，请重试或调大 max_tokens）"}
+
+    # 4. Parse JSON
+    parsed, json_ok = parse_json_from_response(raw)
+    if not json_ok or not parsed:
+        return {"ok": False, "error": f"LLM 返回格式异常: {llm_result['raw'][:200]}"}
+
+    # 5. Validate and normalize
+    config = _normalize_config(parsed, lookback_days)
+    if config.get("error"):
+        return {"ok": False, "error": config["error"]}
+
+    return {"ok": True, "config": config}
+
+
+def _normalize_config(raw, lookback_days):
+    """Validate and normalize LLM output."""
+    # Check required top-level keys
+    if "extraction_rule" not in raw or "report_template" not in raw:
+        return {"error": "配置缺少 extraction_rule 或 report_template"}
+
+    rule = raw["extraction_rule"]
+    template = raw["report_template"]
+
+    # Validate fields
+    valid_types = set(FIELD_TYPE_META.keys())
+    fields = []
+    seen_keys = set()
+    for f in rule.get("fields", []):
+        key = f.get("field_key", "")
+        ftype = f.get("field_type", "text")
+        if not key:
+            continue
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        if ftype not in valid_types:
+            ftype = "text"
+        fields.append({
+            "field_key": key,
+            "field_label": f.get("field_label", key),
+            "field_type": ftype,
+            "is_required": bool(f.get("is_required", False)),
+            "sort_order": len(fields),
+        })
+
+    if not fields:
+        return {"error": "未生成任何抽取字段"}
+
+    # Validate group_by
+    valid_groups = set(GROUP_BY_META.keys())
+    group_by = template.get("group_by", "entity_name")
+    if group_by not in valid_groups:
+        group_by = "entity_name"
+
+    # Validate metrics
+    valid_keys = seen_keys
+    metrics = []
+    for m in template.get("metrics", []):
+        field = m.get("field", "")
+        if field not in valid_keys:
+            continue
+        agg = m.get("agg", "avg")
+        if agg not in ("avg", "sum", "max", "min", "count"):
+            agg = "avg"
+        metrics.append({
+            "field": field,
+            "agg": agg,
+            "label": m.get("label", field),
+            "unit": m.get("unit", ""),
+        })
+
+    # Validate charts
+    valid_chart_types = set(CHART_TYPES)
+    charts = []
+    for ch in template.get("chart_config", []):
+        ctype = ch.get("chart_type", "bar")
+        if ctype not in valid_chart_types:
+            ctype = "bar"
+        charts.append({
+            "chart_type": ctype,
+            "title": ch.get("title", ""),
+            "name_field": ch.get("name_field", "entity_name"),
+            "value_field": ch.get("value_field", ""),
+        })
+
+    # Validate lookback
+    lb = int(template.get("lookback_days", lookback_days) or lookback_days)
+    if lb not in (7, 14, 30, 60, 90):
+        lb = lookback_days
+
+    # Validate schedule
+    sched = int(template.get("schedule_minutes", 1440) or 1440)
+    if sched < 60:
+        sched = 1440
+
+    return {
+        "extraction_rule": {
+            "name": rule.get("name", "未命名规则"),
+            "domain": rule.get("domain", "research"),
+            "description": rule.get("description", ""),
+            "scope": "full",
+            "max_fields": max(5, len(fields)),
+            "enabled": True,
+            "fields": fields,
+        },
+        "report_template": {
+            "name": template.get("name", "未命名报告"),
+            "domain": template.get("domain", "research"),
+            "description": template.get("description", ""),
+            "group_by": group_by,
+            "metrics": metrics,
+            "filters": template.get("filters", []),
+            "chart_config": charts,
+            "lookback_days": lb,
+            "schedule_minutes": sched,
+            "enabled": True,
+        },
+    }
+
+
+# ──────────────────────────────────────────────
+# AI Analysis execution engine
+# ──────────────────────────────────────────────
+
+def run_ai_analysis(db_path, spec, intent, lookback_days=30):
+    """执行 AI 分析"""
+    from core.scheduler.llm_client import call_llm, parse_json_from_response
+
+    start_time = datetime.utcnow()
+
+    # 1. Query intelligence data
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    cutoff = (datetime.utcnow() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+    c.execute("""
+        SELECT id, title, content, company, category, status,
+               contact_name, deal_value, industry, source_url, created_at
+        FROM intelligence
+        WHERE created_at >= ?
+        ORDER BY created_at DESC
+    """, (cutoff,))
+    intel_list = [dict(r) for r in c.fetchall()]
+    conn.close()
+
+    if not intel_list:
+        return {
+            "success": False,
+            "error": "该时间范围内没有情报数据",
+            "data_count": 0
+        }
+
+    # 2. Build LLM prompt for intent parsing + analysis
+    system_prompt = """你是一个数据分析助手。你的任务是根据用户的自然语言需求，从情报数据中提取和分析信息，生成结构化的分析报告。
+
+你需要：
+1. 理解用户的分析意图
+2. 从情报数据中提取相关数据
+3. 生成 Markdown 格式的分析报告
+4. 如果数据适合可视化，提供图表配置（JSON 格式）
+5. 提供一段简短的摘要
+
+请严格按以下 JSON 格式返回：
+{
+  "intent": "你理解的用户意图",
+  "data_count": 提取到的数据条数,
+  "markdown": "Markdown 格式的分析报告",
+  "summary": "一段话总结核心发现",
+  "charts": [
+    {
+      "title": "图表标题",
+      "type": "bar|line|pie",
+      "data": {
+        "categories": ["分类名1", "分类名2"],
+        "values": [数值1, 数值2]
+      }
+    }
+  ],
+  "entity_type": "推断的实体类型: company|market|tech|deal|investment|region"
+}"""
+
+    # Build user prompt from intelligence data
+    intel_preview = []
+    for intel in intel_list[:30]:  # Limit to 30 for token budget
+        preview = {
+            "title": intel.get("title", ""),
+            "company": intel.get("company", ""),
+            "category": intel.get("category", ""),
+            "content_short": intel.get("content", "")[:200],
+            "date": intel.get("created_at", "")[:10]
+        }
+        if intel.get("deal_value"):
+            preview["deal_value"] = intel["deal_value"]
+        intel_preview.append(preview)
+
+    user_prompt = f"""用户想分析：{intent}
+
+请从以下 {len(intel_list)} 条情报数据中分析：
+时间范围：过去 {lookback_days} 天
+
+"""
+    for i, intel in enumerate(intel_preview):
+        user_prompt += f"--- 情报 {i+1} ---\n"
+        user_prompt += f"标题: {intel['title']}\n"
+        if intel.get('company'):
+            user_prompt += f"公司: {intel['company']}\n"
+        if intel.get('category'):
+            user_prompt += f"分类: {intel['category']}\n"
+        user_prompt += f"内容: {intel['content_short']}\n"
+        user_prompt += f"日期: {intel['date']}\n"
+
+    # 3. Call LLM
+    llm_result = call_llm(system_prompt, user_prompt)
+
+    # 4. Parse LLM response
+    try:
+        parsed = parse_json_from_response(llm_result)
+    except Exception:
+        parsed = {
+            "intent": intent,
+            "data_count": len(intel_list),
+            "markdown": llm_result,
+            "summary": "分析完成",
+            "charts": [],
+            "entity_type": ""
+        }
+
+    end_time = datetime.utcnow()
+    execution_ms = int((end_time - start_time).total_seconds() * 1000)
+
+    # 5. Save run record
+    run_id = save_ai_analysis_run(db_path, {
+        "config_id": None,
+        "domain": spec.get("slug", "research"),
+        "title": intent[:100],
+        "status": "completed",
+        "result_markdown": parsed.get("markdown", ""),
+        "result_charts": parsed.get("charts", []),
+        "result_summary": parsed.get("summary", ""),
+        "result_data": intel_list,
+        "lookback_days": lookback_days,
+        "execution_time_ms": execution_ms,
+        "start_time": start_time.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+    return {
+        "success": True,
+        "run_id": run_id,
+        "data_count": len(intel_list),
+        "execution_time_ms": execution_ms,
+        "result_markdown": parsed.get("markdown", ""),
+        "result_charts": parsed.get("charts", []),
+        "result_summary": parsed.get("summary", "")
+    }
+

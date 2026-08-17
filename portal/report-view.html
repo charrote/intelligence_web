@@ -202,6 +202,23 @@ function renderSections(run) {
   var container = document.getElementById('sections');
   container.innerHTML = '';
 
+  if (run.status === 'no_data') {
+    var sec = document.createElement('div');
+    sec.className = 'report-section';
+    var head = document.createElement('div');
+    head.className = 'section-head';
+    head.textContent = '暂无数据';
+    sec.appendChild(head);
+    var body = document.createElement('div');
+    body.className = 'section-body';
+    body.innerHTML = '<div style="padding:14px 16px;background:var(--amber-light,#fff7e6);border-radius:8px;color:#b26a00;font-size:13px;line-height:1.7">'
+      + escapeHtml(run.error_msg || '所选时间范围内没有已抽取的事实数据（intel_fact 为空）。')
+      + '<div style="margin-top:8px">报告基于已抽取的结构化数据生成。请先执行抽取，再运行报告。</div></div>';
+    sec.appendChild(body);
+    container.appendChild(sec);
+    return;
+  }
+
   var stats = run.statistics || run.stats || {};
   if (stats && Object.keys(stats).length > 0) {
     var sec = document.createElement('div');

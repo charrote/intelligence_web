@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI 分析师 — 快速执行</title>
+<title>AI 分析师 — 配置向导</title>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/reset.css">
 <link rel="stylesheet" href="css/header.css">
@@ -19,30 +19,84 @@
 <script src="js/tabs.js"></script>
 <style>
 /* ── Layout ── */
-.main{display:flex;flex-direction:column;max-width:960px;width:100%;margin:0 auto;padding:24px;height:calc(100vh - 140px);overflow-y:auto}
+.main{display:flex;flex-direction:column;max-width:960px;width:100%;margin:0 auto;padding:24px}
 .card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden;margin-bottom:16px}
 .card-head{display:flex;align-items:center;padding:14px 20px;border-bottom:1px solid var(--gray-100);gap:12px}
 .card-head h2{font-size:15px;font-weight:600;color:var(--gray-800);margin:0;flex:1}
+.card-head .sub{font-size:12px;color:var(--gray-400)}
 .card-body{padding:20px}
+
+/* ── Preset cards ── */
+.preset-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+@media(max-width:640px){.preset-grid{grid-template-columns:repeat(2,1fr)}}
+.preset{padding:10px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);background:#fff;cursor:pointer;font-size:12px;color:var(--gray-600);transition:all 0.15s;line-height:1.5}
+.preset:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.preset.active{border-color:#3B82F6;background:rgba(59,130,246,0.08);color:#3B82F6;font-weight:600}
+.preset .p-title{font-weight:600;color:var(--gray-800);margin-bottom:2px}
+.preset.active .p-title{color:#3B82F6}
+.preset .p-desc{font-size:11px;color:var(--gray-400)}
 
 /* ── Form ── */
 .form-group{margin-bottom:16px}
 .form-label{display:block;font-size:12px;font-weight:600;color:var(--gray-500);margin-bottom:6px}
 .form-select{width:100%;padding:10px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;color:var(--gray-800);background:#fff;cursor:pointer;transition:border-color 0.15s}
 .form-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.form-textarea{width:100%;padding:10px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;color:var(--gray-800);background:#fff;resize:vertical;font-family:inherit;line-height:1.6}
+.form-textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.form-input{width:100%;padding:9px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff;box-sizing:border-box}
+.form-input:focus{outline:none;border-color:var(--accent)}
 .radio-group{display:flex;gap:6px;flex-wrap:wrap}
 .radio-group label{display:inline-flex;align-items:center;gap:4px;padding:5px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);cursor:pointer;transition:all 0.15s;user-select:none}
 .radio-group label:has(input:checked){border-color:var(--accent);background:var(--accent-light);color:var(--accent);font-weight:500}
 .radio-group input[type="radio"]{width:auto;accent-color:var(--accent)}
-.form-meta{font-size:12px;color:var(--gray-400);margin-top:8px}
-.form-meta strong{color:var(--gray-600)}
+.inline-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:640px){.inline-fields{grid-template-columns:1fr}}
 
 /* ── Button ── */
-.exec-wrap{display:flex;gap:8px;align-items:center;margin-top:4px}
 .btn-exec{flex:1;padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .btn-exec:hover{background:#2f3f70;box-shadow:0 2px 8px rgba(59,79,140,0.25)}
 .btn-exec:disabled{background:var(--gray-300);cursor:not-allowed;box-shadow:none}
 .btn-exec svg{width:16px;height:16px}
+.exec-wrap{display:flex;gap:8px;align-items:center;margin-top:4px}
+.btn-ghost{padding:7px 14px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);cursor:pointer;transition:all 0.15s}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── Generated config preview ── */
+.config-preview{margin-top:16px;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
+.config-section{border-bottom:1px solid var(--gray-100)}
+.config-section:last-child{border-bottom:none}
+.config-section-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--gray-50);font-size:12px;font-weight:600;color:var(--gray-600)}
+.config-section-head .tag{font-size:10px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--accent-light);color:var(--accent);text-transform:uppercase;letter-spacing:0.4px}
+.config-section-body{padding:14px}
+.cfg-field{display:grid;grid-template-columns:1fr 1fr 130px 60px;gap:6px;margin-bottom:6px;align-items:center}
+@media(max-width:640px){.cfg-field{grid-template-columns:1fr 1fr;}}
+.cfg-field .cf-lbl{padding:6px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px}
+.cfg-field .cf-key{padding:6px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px;font-family:'SF Mono',Monaco,Consolas,monospace;color:var(--gray-600)}
+.cfg-field select{padding:6px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px;background:#fff}
+.cfg-field .cf-req{display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gray-500)}
+.cfg-field .cf-req input{width:16px;height:16px;accent-color:var(--accent)}
+.cfg-field .cf-del{padding:0 6px;background:transparent;border:none;color:var(--gray-400);cursor:pointer;font-size:16px}
+.cfg-field .cf-del:hover{color:var(--red)}
+.cfg-metric{display:grid;grid-template-columns:1fr 110px 1fr 80px;gap:6px;margin-bottom:6px;align-items:center}
+@media(max-width:640px){.cfg-metric{grid-template-columns:1fr 1fr;}}
+.cfg-metric input,.cfg-metric select{padding:6px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px}
+.cfg-metric select{background:#fff}
+.cfg-metric .cm-del{padding:0 6px;background:transparent;border:none;color:var(--gray-400);cursor:pointer;font-size:16px}
+.cfg-metric .cm-del:hover{color:var(--red)}
+.cfg-chart{display:grid;grid-template-columns:110px 1fr 1fr 1fr;gap:6px;margin-bottom:6px;align-items:center}
+@media(max-width:640px){.cfg-chart{grid-template-columns:1fr 1fr;}}
+.cfg-chart input,.cfg-chart select{padding:6px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px}
+.cfg-chart select{background:#fff}
+.cfg-chart .cc-del{padding:0 6px;background:transparent;border:none;color:var(--gray-400);cursor:pointer;font-size:16px}
+.cfg-chart .cc-del:hover{color:var(--red)}
+.add-row-btn{padding:5px 12px;border:1px dashed var(--gray-300);border-radius:var(--radius);font-size:12px;color:var(--gray-500);background:#fff;cursor:pointer;transition:all 0.15s}
+.add-row-btn:hover{border-color:var(--accent);color:var(--accent)}
+.cfg-row-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:10px}
+@media(max-width:640px){.cfg-row-grid{grid-template-columns:1fr}}
+.feedback{display:none;padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-top:12px}
+.feedback.err{background:#fceef0;color:var(--red)}
+.feedback.ok{background:var(--green-light);color:var(--green)}
+.feedback.prog{background:var(--accent-light);color:var(--accent);display:flex;align-items:center}
 
 /* ── Progress ── */
 .progress-steps{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
@@ -56,6 +110,8 @@
 .progress-bar-wrap{height:6px;background:var(--gray-100);border-radius:3px;overflow:hidden;margin-bottom:12px}
 .progress-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width 0.4s ease;animation:progressPulse 1.5s ease-in-out infinite}
 @keyframes progressPulse{0%,100%{opacity:1}50%{opacity:0.7}}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.4);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Result ── */
 .result-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--gray-200)}
@@ -64,7 +120,6 @@
 .result-status.error{color:var(--red)}
 .result-meta{font-size:12px;color:var(--gray-400)}
 .result-meta strong{color:var(--gray-600)}
-/* Charts */
 .chart-container{margin:16px 0;border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--accent-mid);background:#fff;box-shadow:var(--shadow-sm)}
 .chart-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);font-size:12px;font-weight:600;color:var(--gray-600)}
 .chart-header .chart-type{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
@@ -73,7 +128,6 @@
 .chart-type.line{background:var(--amber-light);color:var(--amber)}
 .chart-body{width:100%;height:300px}
 @media(max-width:600px){.chart-body{height:220px}}
-/* Markdown */
 .markdown-content{font-size:14px;line-height:1.75;color:var(--gray-700)}
 .markdown-content h2{font-size:15px;font-weight:600;margin:14px 0 8px;color:var(--gray-800);padding-bottom:4px;border-bottom:1px solid var(--gray-200)}
 .markdown-content h2:first-child{margin-top:0}
@@ -93,7 +147,6 @@
 .markdown-content hr{border:none;border-top:1px solid var(--gray-200);margin:14px 0}
 .markdown-content a{color:var(--accent);text-decoration:none}
 .markdown-content a:hover{text-decoration:underline}
-/* Summary */
 .summary-box{padding:14px 16px;background:var(--accent-light);border-radius:var(--radius);font-size:13px;line-height:1.7;color:var(--gray-700);margin-top:12px}
 .summary-label{font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}
 
@@ -107,6 +160,7 @@
 .status-badge.completed{background:var(--green-light);color:var(--green)}
 .status-badge.failed{background:var(--red-light);color:var(--red)}
 .status-badge.running{background:var(--amber-light);color:var(--amber)}
+.status-badge.no_data{background:var(--amber-light);color:var(--amber)}
 .empty-state{text-align:center;padding:30px;color:var(--gray-400);font-size:14px}
 
 /* ── Error ── */
@@ -115,37 +169,97 @@
 </head>
 <body>
 <main class="main">
-  <!-- Template Selection -->
-  <div class="card" id="selectionCard">
-    <div class="card-head"><h2>快速执行</h2></div>
+
+  <!-- ── 卡片 1：新建报告（配置向导）── -->
+  <div class="card" id="wizardCard">
+    <div class="card-head">
+      <h2>新建报告</h2>
+      <span class="sub">描述需求，AI 自动生成配置</span>
+    </div>
+    <div class="card-body">
+
+      <!-- 预设卡片 -->
+      <div class="form-group">
+        <label class="form-label">快捷选择</label>
+        <div class="preset-grid" id="presetGrid"></div>
+      </div>
+
+      <!-- 自然语言输入 -->
+      <div class="form-group">
+        <label class="form-label">描述你想要的报告</label>
+        <textarea class="form-textarea" id="intentInput" rows="2" placeholder="例如：各厂商最近30天的市场份额变化，用折线图展示"></textarea>
+      </div>
+
+      <div class="inline-fields">
+        <div class="form-group">
+          <label class="form-label">数据范围</label>
+          <div class="radio-group" id="timeRangeGroup">
+            <label><input type="radio" name="lookback" value="7"> 近 7 天</label>
+            <label><input type="radio" name="lookback" value="14"> 近 14 天</label>
+            <label><input type="radio" name="lookback" value="30" checked> 近 30 天</label>
+            <label><input type="radio" name="lookback" value="60"> 近 60 天</label>
+            <label><input type="radio" name="lookback" value="90"> 近 90 天</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">所属域</label>
+          <select class="form-select" id="domainSelect">
+            <option value="research">research</option>
+            <option value="sales">sales</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="exec-wrap">
+        <button class="btn-exec" id="genBtn" onclick="generateConfig()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          AI 生成配置
+        </button>
+      </div>
+
+      <div class="feedback" id="genFeedback"></div>
+
+      <!-- 生成的配置（可编辑） -->
+      <div class="config-preview" id="configPreview" style="display:none"></div>
+
+      <div id="saveWrap" style="display:none;margin-top:14px">
+        <div class="exec-wrap">
+          <button class="btn-exec" id="saveBtn" onclick="saveConfig()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            保存并开始定时生成
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── 卡片 2：快速执行（手动触发已有模板）── -->
+  <div class="card" id="quickCard">
+    <div class="card-head"><h2>快速执行</h2><span class="sub">手动触发已配置的报告</span></div>
     <div class="card-body">
       <div class="form-group">
         <label class="form-label">选择报告模板</label>
         <select class="form-select" id="templateSelect">
           <option value="">加载中...</option>
         </select>
-        <div class="form-meta" id="templateMeta"></div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">数据范围</label>
-        <div class="radio-group" id="timeRangeGroup">
-          <label><input type="radio" name="lookback" value="7"> 近 7 天</label>
-          <label><input type="radio" name="lookback" value="14"> 近 14 天</label>
-          <label><input type="radio" name="lookback" value="30" checked> 近 30 天</label>
-          <label><input type="radio" name="lookback" value="60"> 近 60 天</label>
-          <label><input type="radio" name="lookback" value="90"> 近 90 天</label>
-        </div>
+        <div class="form-meta" id="templateMeta" style="font-size:12px;color:var(--gray-400);margin-top:8px"></div>
       </div>
       <div class="exec-wrap">
         <button class="btn-exec" id="execBtn" onclick="runNow()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           立即生成报告
         </button>
+        <button class="btn-ghost" id="extractBtn" onclick="triggerExtractNow()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/></svg>
+          立即抽取数据
+        </button>
+        <span id="extractStatus" style="font-size:12px;color:var(--gray-400)"></span>
       </div>
     </div>
   </div>
 
-  <!-- Progress -->
+  <!-- ── 进度 ── -->
   <div class="card" id="progressCard" style="display:none">
     <div class="card-head"><h2>执行进度</h2></div>
     <div class="card-body">
@@ -158,15 +272,28 @@
     </div>
   </div>
 
-  <!-- Error -->
+  <!-- ── 错误 ── -->
   <div class="card" id="errorCard" style="display:none">
     <div class="card-head"><h2>执行失败</h2></div>
+    <div class="card-body"><div class="error-box" id="errorMsg"></div></div>
+  </div>
+
+  <!-- ── 无数据 ── -->
+  <div class="card" id="noDataCard" style="display:none">
+    <div class="card-head"><h2>暂无数据</h2></div>
     <div class="card-body">
-      <div class="error-box" id="errorMsg"></div>
+      <div style="padding:14px 16px;background:var(--amber-light);border-radius:var(--radius);color:var(--amber);font-size:13px;line-height:1.7">
+        <div id="noDataMsg">所选时间范围内没有已抽取的事实数据。</div>
+        <div style="margin-top:10px">报告基于已抽取的结构化数据（intel_fact）生成。新导入的情报需要先经过抽取才能参与报告。</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn-ghost" onclick="triggerExtractNow()">先执行抽取</button>
+          <button class="btn-ghost" onclick="hideNoData()">知道了</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- Result -->
+  <!-- ── 结果 ── -->
   <div class="card" id="resultCard" style="display:none">
     <div class="card-head"><h2>分析结果</h2></div>
     <div class="card-body">
@@ -178,53 +305,422 @@
         <div id="resultSummaryText"></div>
       </div>
       <div style="margin-top:16px;text-align:center">
-        <button class="btn btn-ghost" style="font-size:12px" onclick="location.hash='#report-view?run_id=' + currentRunId">
-          在报告查看页打开
-        </button>
+        <button class="btn-ghost" onclick="location.hash='#report-view?run_id=' + currentRunId">在报告查看页打开</button>
       </div>
     </div>
   </div>
 
-  <!-- Recent Reports -->
+  <!-- ── 最近执行 ── -->
   <div class="card" id="reportListCard">
     <div class="card-head"><h2>最近执行</h2></div>
     <div class="card-body">
       <div id="reportListContainer"><div class="empty-state">加载中...</div></div>
     </div>
   </div>
+
 </main>
 
 <script>
 var chartInstances = [];
 var currentRunId = null;
 var pollTimer = null;
+var generatedConfig = null; // AI 生成的配置（含编辑）
+
+// 字段类型中文映射
+var FIELD_TYPES = {
+  company: '公司/厂商', pct: '百分比', currency: '金额', currency_code: '货币代码',
+  location: '地点/区域', year: '年份', number: '数字', date: '日期', text: '文本'
+};
+var AGG_TYPES = { avg: '平均', sum: '求和', max: '最大', min: '最小', count: '计数' };
+var GROUP_TYPES = { entity_name: '按厂商/实体', time_period: '按时间周期', value_text: '按抽取值', value_type: '按字段类型' };
+var CHART_TYPES = { bar: '柱状图', line: '折线图', pie: '饼图' };
+
+// 预设卡片
+var PRESETS = [
+  { title: '市场份额', desc: '各厂商份额变化', text: '各厂商最近30天的市场份额变化趋势，用折线图展示' },
+  { title: '竞品动态', desc: '竞争对手动态汇总', text: '各竞争对手最近30天的重大动态和新闻，按厂商汇总' },
+  { title: '商机成交', desc: '商机与成交金额分析', text: '最近30天的商机和成交金额分析，按厂商展示' },
+  { title: '技术趋势', desc: '技术与产品发布', text: '最近30天各厂商的技术动态和产品发布情况' },
+  { title: '区域分布', desc: '各区域情报分布', text: '各区域最近30天的情报分布情况' },
+  { title: '行业概览', desc: '行业整体动态', text: '最近30天行业整体动态概览' }
+];
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', function() {
+  renderPresets();
   loadTemplates();
   loadOverview();
 });
 
-// ── Load enabled templates ──
-async function loadTemplates() {
+// ── Presets ──
+function renderPresets() {
+  var grid = document.getElementById('presetGrid');
+  grid.innerHTML = PRESETS.map(function(p, i) {
+    return '<div class="preset" data-idx="' + i + '" onclick="applyPreset(' + i + ')">'
+      + '<div class="p-title">' + p.title + '</div>'
+      + '<div class="p-desc">' + p.desc + '</div></div>';
+  }).join('');
+}
+function applyPreset(idx) {
+  var p = PRESETS[idx];
+  document.getElementById('intentInput').value = p.text;
+  // highlight
+  var cards = document.querySelectorAll('.preset');
+  cards.forEach(function(c) { c.classList.remove('active'); });
+  cards[idx].classList.add('active');
+}
+
+// ── Generate config (NL → structured) ──
+async function generateConfig() {
+  var intent = document.getElementById('intentInput').value.trim();
+  var lookback = document.querySelector('input[name="lookback"]:checked').value;
+  var domain = document.getElementById('domainSelect').value;
+  var btn = document.getElementById('genBtn');
+  var fb = document.getElementById('genFeedback');
+
+  if (!intent) { showGenFeedback('请先描述你想要的报告', 'err'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 生成中...';
+  document.getElementById('configPreview').style.display = 'none';
+  document.getElementById('saveWrap').style.display = 'none';
+
+  // ── 阶段式进度提示 ──
+  var startTs = Date.now();
+  setGenProgress(1, '正在解析你的描述...');
+  var timer = setInterval(function() {
+    var sec = Math.floor((Date.now() - startTs) / 1000);
+    if (sec >= 8) setGenProgress(2, '正在生成抽取规则与报告模板...（' + sec + 's）');
+    else if (sec >= 3) setGenProgress(2, '正在生成抽取规则与报告模板...（' + sec + 's）');
+    else setGenProgress(1, '正在解析你的描述...（' + sec + 's）');
+  }, 1000);
+
   try {
-    var res = await fetch('/api/reports/templates?enabled=1', {
-      headers: { 'Authorization': getAuthHeader() }
+    var res = await apiFetch(APP_API_BASE + '/api/ai/generate-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent: intent, lookback_days: parseInt(lookback), domain: domain })
     });
     var data = await res.json();
+
+    if (data.ok && data.config) {
+      // 覆盖 domain（用户选择的域优先）
+      data.config.extraction_rule.domain = domain;
+      data.config.report_template.domain = domain;
+      generatedConfig = data.config;
+      setGenProgress(3, '配置已生成');
+      renderConfigPreview(generatedConfig);
+      showGenFeedback('配置已生成（耗时 ' + Math.floor((Date.now() - startTs) / 1000) + 's），可编辑后保存', 'ok');
+    } else {
+      showGenFeedback(data.error || '生成失败', 'err');
+    }
+  } catch (e) {
+    // 兜底：非 JSON 响应（如网关超时返回 HTML）给出可读错误
+    showGenFeedback('请求失败：' + (e.message || '网络异常'), 'err');
+  } finally {
+    clearInterval(timer);
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> AI 生成配置';
+  }
+}
+
+function setGenProgress(step, text) {
+  var fb = document.getElementById('genFeedback');
+  fb.style.display = 'block';
+  fb.className = 'feedback prog';
+  fb.innerHTML = '<span class="spinner" style="width:13px;height:13px;border-color:rgba(59,79,140,0.3);border-top-color:var(--accent);display:inline-block;vertical-align:middle;margin-right:8px"></span><span style="color:var(--gray-600)">' + text + '</span>';
+}
+
+function showGenFeedback(msg, type) {
+  var fb = document.getElementById('genFeedback');
+  if (!msg) { fb.style.display = 'none'; return; }
+  fb.style.display = 'block';
+  fb.className = 'feedback ' + type;
+  fb.textContent = msg;
+}
+
+// ── Render config preview (editable) ──
+function renderConfigPreview(cfg) {
+  var rule = cfg.extraction_rule;
+  var tpl = cfg.report_template;
+  var container = document.getElementById('configPreview');
+
+  // Field type options
+  var typeOpts = Object.keys(FIELD_TYPES).map(function(k) {
+    return '<option value="' + k + '"' + (rule.fields[0] && k === rule.fields[0].field_type ? '' : '') + '>' + FIELD_TYPES[k] + '</option>';
+  }).join('');
+  var aggOpts = Object.keys(AGG_TYPES).map(function(k) {
+    return '<option value="' + k + '">' + AGG_TYPES[k] + '</option>';
+  }).join('');
+  var chartTypeOpts = Object.keys(CHART_TYPES).map(function(k) {
+    return '<option value="' + k + '">' + CHART_TYPES[k] + '</option>';
+  }).join('');
+
+  var html = '';
+
+  // Section: 抽取规则
+  html += '<div class="config-section">';
+  html += '<div class="config-section-head"><span>抽取规则</span><span class="tag">' + escapeHtml(rule.name || '') + '</span></div>';
+  html += '<div class="config-section-body">';
+  html += '<div class="cfg-row-grid" style="margin-bottom:10px">';
+  html += '<div class="form-group" style="margin:0"><label class="form-label">规则名称</label><input class="form-input" id="cfg_rule_name" value="' + escapeHtml(rule.name || '') + '"></div>';
+  html += '<div class="form-group" style="margin:0"><label class="form-label">说明</label><input class="form-input" id="cfg_rule_desc" value="' + escapeHtml(rule.description || '') + '"></div>';
+  html += '</div>';
+  html += '<label class="form-label">抽取字段</label>';
+  html += '<div id="cfgFields">';
+  (rule.fields || []).forEach(function(f, i) {
+    html += renderFieldRow(f, i);
+  });
+  html += '</div>';
+  html += '<button class="add-row-btn" onclick="addFieldRow()">+ 添加字段</button>';
+  html += '</div></div>';
+
+  // Section: 报告模板
+  html += '<div class="config-section">';
+  html += '<div class="config-section-head"><span>报告模板</span><span class="tag">' + escapeHtml(tpl.name || '') + '</span></div>';
+  html += '<div class="config-section-body">';
+  html += '<div class="cfg-row-grid" style="margin-bottom:10px">';
+  html += '<div class="form-group" style="margin:0"><label class="form-label">报告名称</label><input class="form-input" id="cfg_tpl_name" value="' + escapeHtml(tpl.name || '') + '"></div>';
+  html += '<div class="form-group" style="margin:0"><label class="form-label">说明</label><input class="form-input" id="cfg_tpl_desc" value="' + escapeHtml(tpl.description || '') + '"></div>';
+  html += '</div>';
+
+  // group_by + schedule
+  html += '<div class="cfg-row-grid" style="margin-bottom:10px">';
+  html += '<div class="form-group" style="margin:0"><label class="form-label">聚合维度</label><select class="form-select" id="cfg_group_by">';
+  Object.keys(GROUP_TYPES).forEach(function(k) {
+    html += '<option value="' + k + '"' + (k === (tpl.group_by || 'entity_name') ? ' selected' : '') + '>' + GROUP_TYPES[k] + '</option>';
+  });
+  html += '</select></div>';
+  html += '<div class="form-group" style="margin:0"><label class="form-label">调度间隔</label><select class="form-select" id="cfg_schedule">';
+  html += '<option value="1440"' + ((tpl.schedule_minutes||1440)==1440?' selected':'') + '>每天</option>';
+  html += '<option value="2880"' + ((tpl.schedule_minutes||1440)==2880?' selected':'') + '>每 2 天</option>';
+  html += '<option value="4320"' + ((tpl.schedule_minutes||1440)==4320?' selected':'') + '>每 3 天</option>';
+  html += '</select></div>';
+  html += '</div>';
+
+  // metrics
+  html += '<label class="form-label">指标（从抽取字段聚合）</label>';
+  html += '<div id="cfgMetrics">';
+  (tpl.metrics || []).forEach(function(m) {
+    html += renderMetricRow(m);
+  });
+  html += '</div>';
+  html += '<button class="add-row-btn" onclick="addMetricRow()">+ 添加指标</button>';
+  html += '<div style="height:12px"></div>';
+
+  // charts
+  html += '<label class="form-label">图表</label>';
+  html += '<div id="cfgCharts">';
+  (tpl.chart_config || []).forEach(function(ch) {
+    html += renderChartRow(ch);
+  });
+  html += '</div>';
+  html += '<button class="add-row-btn" onclick="addChartRow()">+ 添加图表</button>';
+
+  html += '</div></div>';
+
+  container.innerHTML = html;
+  container.style.display = 'block';
+  document.getElementById('saveWrap').style.display = 'block';
+}
+
+function renderFieldRow(f, i) {
+  f = f || { field_key: '', field_label: '', field_type: 'text', is_required: false, sort_order: i };
+  var typeOpts = Object.keys(FIELD_TYPES).map(function(k) {
+    return '<option value="' + k + '"' + (k === f.field_type ? ' selected' : '') + '>' + FIELD_TYPES[k] + '</option>';
+  }).join('');
+  return '<div class="cfg-field">'
+    + '<input class="cf-lbl" data-cfg="label" value="' + escapeHtml(f.field_label) + '" placeholder="中文名称">'
+    + '<input class="cf-key" data-cfg="key" value="' + escapeHtml(f.field_key) + '" placeholder="英文标识">'
+    + '<select data-cfg="type">' + typeOpts + '</select>'
+    + '<span class="cf-req"><input type="checkbox" data-cfg="required"' + (f.is_required ? ' checked' : '') + ' title="必填"></span>'
+    + '<button class="cf-del" onclick="removeRow(this)" title="删除">&times;</button>'
+    + '</div>';
+}
+function addFieldRow() {
+  var idx = document.querySelectorAll('#cfgFields .cfg-field').length;
+  document.getElementById('cfgFields').insertAdjacentHTML('beforeend', renderFieldRow({ field_key: '', field_label: '', field_type: 'text', is_required: false, sort_order: idx }, idx));
+}
+
+function renderMetricRow(m) {
+  m = m || { field: '', agg: 'avg', label: '', unit: '' };
+  // field options = 当前抽取字段的 key
+  var cfg = generatedConfig;
+  var fieldOpts = '<option value="">— 选择字段 —</option>';
+  (cfg.extraction_rule.fields || []).forEach(function(f) {
+    fieldOpts += '<option value="' + escapeHtml(f.field_key) + '"' + (f.field_key === m.field ? ' selected' : '') + '>' + escapeHtml(f.field_label || f.field_key) + '</option>';
+  });
+  var aggOpts = Object.keys(AGG_TYPES).map(function(k) {
+    return '<option value="' + k + '"' + (k === m.agg ? ' selected' : '') + '>' + AGG_TYPES[k] + '</option>';
+  }).join('');
+  return '<div class="cfg-metric">'
+    + '<select data-cfg="field">' + fieldOpts + '</select>'
+    + '<select data-cfg="agg">' + aggOpts + '</select>'
+    + '<input data-cfg="label" value="' + escapeHtml(m.label) + '" placeholder="显示名">'
+    + '<input data-cfg="unit" value="' + escapeHtml(m.unit) + '" placeholder="单位">'
+    + '<button class="cm-del" onclick="removeRow(this)" title="删除">&times;</button>'
+    + '</div>';
+}
+function addMetricRow() {
+  document.getElementById('cfgMetrics').insertAdjacentHTML('beforeend', renderMetricRow({ field: '', agg: 'avg', label: '', unit: '' }));
+}
+
+function renderChartRow(ch) {
+  ch = ch || { chart_type: 'bar', title: '', name_field: 'entity_name', value_field: '' };
+  var cfg = generatedConfig;
+  var fieldOpts = '<option value="">— 选择数值字段 —</option>';
+  (cfg.extraction_rule.fields || []).forEach(function(f) {
+    fieldOpts += '<option value="' + escapeHtml(f.field_key) + '"' + (f.field_key === ch.value_field ? ' selected' : '') + '>' + escapeHtml(f.field_label || f.field_key) + '</option>';
+  });
+  var typeOpts = Object.keys(CHART_TYPES).map(function(k) {
+    return '<option value="' + k + '"' + (k === ch.chart_type ? ' selected' : '') + '>' + CHART_TYPES[k] + '</option>';
+  }).join('');
+  return '<div class="cfg-chart">'
+    + '<select data-cfg="type">' + typeOpts + '</select>'
+    + '<input data-cfg="title" value="' + escapeHtml(ch.title) + '" placeholder="图表标题">'
+    + '<input data-cfg="name" value="' + escapeHtml(ch.name_field) + '" placeholder="名称字段">'
+    + '<select data-cfg="value">' + fieldOpts + '</select>'
+    + '<button class="cc-del" onclick="removeRow(this)" title="删除">&times;</button>'
+    + '</div>';
+}
+function addChartRow() {
+  document.getElementById('cfgCharts').insertAdjacentHTML('beforeend', renderChartRow({ chart_type: 'bar', title: '', name_field: 'entity_name', value_field: '' }));
+}
+
+function removeRow(btn) { btn.closest('.cfg-field, .cfg-metric, .cfg-chart').remove(); }
+
+// ── Collect edited config from preview ──
+function collectConfig() {
+  var rule = {
+    name: document.getElementById('cfg_rule_name').value.trim(),
+    domain: generatedConfig.extraction_rule.domain,
+    description: document.getElementById('cfg_rule_desc').value.trim(),
+    scope: 'full',
+    max_fields: 20,
+    enabled: true,
+    fields: []
+  };
+  document.querySelectorAll('#cfgFields .cfg-field').forEach(function(row) {
+    var label = row.querySelector('[data-cfg="label"]').value.trim();
+    var key = row.querySelector('[data-cfg="key"]').value.trim();
+    var type = row.querySelector('[data-cfg="type"]').value;
+    var required = row.querySelector('[data-cfg="required"]').checked;
+    if (label || key) {
+      rule.fields.push({ field_label: label, field_key: key, field_type: type, is_required: required, sort_order: rule.fields.length });
+    }
+  });
+
+  var tpl = {
+    name: document.getElementById('cfg_tpl_name').value.trim(),
+    domain: generatedConfig.report_template.domain,
+    description: document.getElementById('cfg_tpl_desc').value.trim(),
+    group_by: document.getElementById('cfg_group_by').value,
+    schedule_minutes: parseInt(document.getElementById('cfg_schedule').value),
+    lookback_days: generatedConfig.report_template.lookback_days,
+    enabled: true,
+    metrics: [],
+    filters: [],
+    chart_config: []
+  };
+  document.querySelectorAll('#cfgMetrics .cfg-metric').forEach(function(row) {
+    var field = row.querySelector('[data-cfg="field"]').value;
+    if (!field) return;
+    tpl.metrics.push({
+      field: field,
+      agg: row.querySelector('[data-cfg="agg"]').value,
+      label: row.querySelector('[data-cfg="label"]').value.trim(),
+      unit: row.querySelector('[data-cfg="unit"]').value.trim()
+    });
+  });
+  document.querySelectorAll('#cfgCharts .cfg-chart').forEach(function(row) {
+    tpl.chart_config.push({
+      chart_type: row.querySelector('[data-cfg="type"]').value,
+      title: row.querySelector('[data-cfg="title"]').value.trim(),
+      name_field: row.querySelector('[data-cfg="name"]').value.trim() || 'entity_name',
+      value_field: row.querySelector('[data-cfg="value"]').value
+    });
+  });
+
+  return { extraction_rule: rule, report_template: tpl };
+}
+
+// ── Save config (create rule + template) ──
+async function saveConfig() {
+  var btn = document.getElementById('saveBtn');
+  var cfg = collectConfig();
+  var rule = cfg.extraction_rule;
+  var tpl = cfg.report_template;
+
+  if (!rule.name) { showGenFeedback('规则名称不能为空', 'err'); return; }
+  if (!rule.fields.length) { showGenFeedback('至少需要一个抽取字段', 'err'); return; }
+  if (!tpl.name) { showGenFeedback('报告名称不能为空', 'err'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 正在保存...';
+  showGenFeedback('', 'ok');
+
+  try {
+    // 1. Create extraction rule
+    var res = await apiFetch(APP_API_BASE + '/api/extract/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rule)
+    });
+    var ruleData = await res.json();
+    if (!res.ok || !ruleData.ok) {
+      throw new Error(ruleData.error || '创建抽取规则失败');
+    }
+
+    // 2. Create report template with rule_id
+    tpl.rule_id = ruleData.id;
+    var res2 = await apiFetch(APP_API_BASE + '/api/reports/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tpl)
+    });
+    var tplData = await res2.json();
+    if (!res2.ok || !tplData.ok) {
+      throw new Error(tplData.error || '创建报告模板失败');
+    }
+
+    showGenFeedback('配置已保存，报告将按设定间隔自动生成', 'ok');
+    // Refresh
+    loadTemplates();
+    loadOverview();
+    // Reset wizard
+    setTimeout(function() {
+      document.getElementById('intentInput').value = '';
+      document.getElementById('configPreview').style.display = 'none';
+      document.getElementById('saveWrap').style.display = 'none';
+      document.querySelectorAll('.preset').forEach(function(c) { c.classList.remove('active'); });
+      generatedConfig = null;
+    }, 1500);
+  } catch (e) {
+    showGenFeedback(e.message || '保存失败', 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> 保存并开始定时生成';
+  }
+}
+
+// ── Load enabled templates (快速执行) ──
+async function loadTemplates() {
+  try {
+    var res = await apiFetch(APP_API_BASE + '/api/reports/templates?enabled=1');
+    var data = await res.json();
+    var list = Array.isArray(data) ? data : (data.templates || []);
     var select = document.getElementById('templateSelect');
     select.innerHTML = '';
-    if (data.templates && data.templates.length > 0) {
-      data.templates.forEach(function(t) {
+    if (list.length > 0) {
+      list.forEach(function(t) {
         var opt = document.createElement('option');
         opt.value = t.id;
         opt.textContent = t.name + ' (' + (t.domain || '-') + ')';
         select.appendChild(opt);
       });
-      // Update meta for first template
-      updateMeta(data.templates[0]);
+      updateMeta(list[0]);
     } else {
-      select.innerHTML = '<option value="">暂无可用模板，请先在「报告模板」页创建</option>';
+      select.innerHTML = '<option value="">暂无可用模板，请先在上方「新建报告」配置</option>';
       document.getElementById('execBtn').disabled = true;
     }
   } catch (e) {
@@ -242,18 +738,68 @@ function updateMeta(t) {
 document.getElementById('templateSelect').addEventListener('change', function() {
   var id = this.value;
   if (!id) { document.getElementById('templateMeta').innerHTML = ''; return; }
-  // Find template data from overview
-  apiFetch('/api/reports/overview', { headers: { 'Authorization': getAuthHeader() } })
+  apiFetch(APP_API_BASE + '/api/reports/overview')
     .then(function(r) { return r.json(); })
     .then(function(list) {
       for (var i = 0; i < list.length; i++) {
         if (list[i].template_id == id) { updateMeta(list[i]); break; }
       }
-    })
-    .catch(function() {});
+    }).catch(function() {});
 });
 
-// ── Run Now ──
+// ── 立即抽取（独立于报告生成）──
+var extractPollTimer = null;
+async function triggerExtractNow() {
+  var btn = document.getElementById('extractBtn');
+  var statusEl = document.getElementById('extractStatus');
+  btn.disabled = true;
+  statusEl.textContent = '已触发，抽取中...';
+  try {
+    var res = await apiFetch(APP_API_BASE + '/api/extract/trigger', { method: 'POST' });
+    var data = await res.json();
+    if (!data.ok) {
+      statusEl.textContent = '触发失败: ' + (data.error || '');
+      btn.disabled = false;
+      return;
+    }
+    pollExtractStatus();
+  } catch (e) {
+    statusEl.textContent = '网络错误: ' + (e.message || '');
+    btn.disabled = false;
+  }
+}
+
+function pollExtractStatus() {
+  if (extractPollTimer) clearInterval(extractPollTimer);
+  var statusEl = document.getElementById('extractStatus');
+  var btn = document.getElementById('extractBtn');
+  var startPending = null;
+  extractPollTimer = setInterval(async function() {
+    try {
+      var res = await apiFetch(APP_API_BASE + '/api/extract/stats');
+      var s = await res.json();
+      var pending = s.pending_extract || 0;
+      if (startPending === null) startPending = pending;
+      if (pending > 0) {
+        statusEl.textContent = '抽取中... 剩余 ' + pending + ' 条';
+      } else {
+        clearInterval(extractPollTimer); extractPollTimer = null;
+        statusEl.textContent = '抽取完成（新增 ' + (startPending || 0) + ' 条已处理）';
+        btn.disabled = false;
+        setTimeout(function() { statusEl.textContent = ''; }, 8000);
+      }
+    } catch (e) { /* ignore */ }
+  }, 3000);
+  // 兜底：60 秒后无论状态如何恢复按钮
+  setTimeout(function() {
+    if (extractPollTimer) {
+      clearInterval(extractPollTimer); extractPollTimer = null;
+      btn.disabled = false;
+    }
+  }, 60000);
+}
+
+// ── Run Now (快速执行) ──
 async function runNow() {
   var templateId = document.getElementById('templateSelect').value;
   var lookback = document.querySelector('input[name="lookback"]:checked').value;
@@ -263,16 +809,12 @@ async function runNow() {
   document.getElementById('execBtn').disabled = true;
 
   try {
-    var res = await fetch('/api/reports/run/' + templateId, {
+    var res = await apiFetch(APP_API_BASE + '/api/reports/run/' + templateId, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': getAuthHeader()
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lookback_days: parseInt(lookback) })
     });
     var data = await res.json();
-
     if (data.ok) {
       currentRunId = data.run_id;
       startPolling(templateId);
@@ -296,83 +838,101 @@ function showProgress() {
   document.getElementById('stepDone').className = 'progress-step';
   document.getElementById('progressFill').style.width = '10%';
 }
-
 function hideProgress() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   document.getElementById('progressCard').style.display = 'none';
 }
 
-// ── Poll execution status ──
+// ── Poll ──
 function startPolling(templateId) {
+  var startTime = Date.now();
   pollTimer = setInterval(async function() {
     try {
-      var res = await fetch('/api/reports/runs/' + templateId + '?limit=1', {
-        headers: { 'Authorization': getAuthHeader() }
-      });
+      var res = await apiFetch(APP_API_BASE + '/api/reports/runs?template_id=' + templateId + '&limit=1');
       var data = await res.json();
       if (!data.runs || data.runs.length === 0) return;
-
       var latest = data.runs[0];
-      document.getElementById('progressFill').style.width = '45%';
 
+      // 时间感知进度（5s 检索 → 30s LLM → 完成）
+      var elapsed = (Date.now() - startTime) / 1000;
       if (latest.status === 'running') {
-        document.getElementById('stepQuery').className = 'progress-step done';
-        document.getElementById('stepAI').className = 'progress-step active';
-        document.getElementById('progressFill').style.width = '70%';
+        var pct = elapsed < 5 ? Math.min(40, 10 + elapsed * 6) : Math.min(85, 40 + (elapsed - 5) * 1.5);
+        document.getElementById('progressFill').style.width = pct + '%';
+        if (elapsed >= 5) {
+          document.getElementById('stepQuery').className = 'progress-step done';
+          document.getElementById('stepAI').className = 'progress-step active';
+        } else {
+          document.getElementById('stepQuery').className = 'progress-step active';
+          document.getElementById('stepAI').className = 'progress-step';
+        }
       } else if (latest.status === 'completed') {
         clearInterval(pollTimer);
-        hideProgress();
-        showResult(latest.id);
+        document.getElementById('progressFill').style.width = '100%';
+        document.getElementById('stepQuery').className = 'progress-step done';
+        document.getElementById('stepAI').className = 'progress-step done';
+        document.getElementById('stepDone').className = 'progress-step active';
+        setTimeout(function() { hideProgress(); showResult(latest.id); }, 500);
+      } else if (latest.status === 'no_data') {
+        clearInterval(pollTimer);
+        document.getElementById('progressFill').style.width = '100%';
+        document.getElementById('stepQuery').className = 'progress-step done';
+        setTimeout(function() { hideProgress(); showNoData(latest.error_msg || '所选时间范围内没有已抽取的事实数据。请先执行抽取，再运行报告。'); }, 300);
       } else if (latest.status === 'failed') {
         clearInterval(pollTimer);
         hideProgress();
-        var errMsg = latest.error_msg || latest.error || '执行失败';
-        showError(errMsg);
+        showError(latest.error_msg || latest.error || '执行失败');
       }
-    } catch (e) {
-      // Ignore poll errors
-    }
+    } catch (e) { /* ignore */ }
   }, 3000);
 }
 
-// ── Error display ──
 function showError(msg) {
   document.getElementById('errorCard').style.display = 'block';
   document.getElementById('errorMsg').textContent = msg;
   document.getElementById('execBtn').disabled = false;
 }
 
-// ── Result display ──
+function showNoData(msg) {
+  document.getElementById('noDataCard').style.display = 'block';
+  document.getElementById('noDataMsg').textContent = msg || '所选时间范围内没有已抽取的事实数据。';
+  document.getElementById('execBtn').disabled = false;
+}
+function hideNoData() {
+  document.getElementById('noDataCard').style.display = 'none';
+}
+
+// ── Result ──
 async function showResult(runId) {
   document.getElementById('resultCard').style.display = 'block';
   document.getElementById('execBtn').disabled = false;
   currentRunId = runId;
-
   try {
-    var res = await fetch('/api/reports/runs/' + runId, {
-      headers: { 'Authorization': getAuthHeader() }
-    });
+    var res = await apiFetch(APP_API_BASE + '/api/reports/runs/' + runId);
     var run = await res.json();
-
-    // Header
-    var statusClass = run.status === 'completed' ? 'success' : 'error';
-    var statusText = run.status === 'completed' ? '✓ 执行完成' : '✗ 执行失败';
+    // 如果返回的是列表（旧路由），取第一条
+    if (run.runs) run = run.runs[0] || run;
+    var isFailed = run.status === 'failed';
+    var isCompleted = run.status === 'completed';
+    var statusClass = isFailed ? 'error' : 'success';
+    var statusText = isFailed ? '✗ 执行失败' : (isCompleted ? '✓ 执行完成' : run.status);
     var header = '<div class="result-status ' + statusClass + '">' + statusText + '</div>';
     header += '<div class="result-meta">涉及 <strong>' + (run.fact_count || 0) + '</strong> 条事实 ｜ 耗时 <strong>' + formatDuration(run.duration_sec) + '</strong></div>';
+    // 失败时展示具体原因
+    if (isFailed && (run.error_msg || run.error)) {
+      header += '<div style="margin-top:8px;padding:10px 14px;background:#fceef0;border-radius:var(--radius);color:var(--red);font-size:13px;white-space:pre-wrap;word-break:break-all">失败原因：' + (run.error_msg || run.error) + '</div>';
+    }
+    // 0 条事实提示
+    if (isCompleted && !run.fact_count) {
+      header += '<div style="margin-top:8px;padding:8px 12px;background:var(--amber-light);border-radius:var(--radius);color:var(--amber);font-size:12px">提示：当前没有已抽取的事实数据（intel_fact 为空）。请先执行抽取，再运行报告。</div>';
+    }
     document.getElementById('resultHeader').innerHTML = header;
-
-    // Markdown
     var mdContent = run.output_analysis || run.result_markdown || '';
     document.getElementById('resultMarkdown').innerHTML = marked.parse(mdContent || '暂无内容');
-
-    // Charts
     if (run.output_charts && run.output_charts.length > 0) {
       renderCharts(run.output_charts, 'resultCharts');
     } else {
       document.getElementById('resultCharts').innerHTML = '';
     }
-
-    // Summary
     var summary = run.output_summary || run.result_summary || '';
     if (summary) {
       document.getElementById('resultSummary').style.display = 'block';
@@ -380,7 +940,6 @@ async function showResult(runId) {
     } else {
       document.getElementById('resultSummary').style.display = 'none';
     }
-
     document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth' });
     loadOverview();
   } catch (e) {
@@ -417,12 +976,10 @@ function renderCharts(charts, containerId) {
   });
 }
 
-// ── Overview / Recent Reports ──
+// ── Overview ──
 async function loadOverview() {
   try {
-    var res = await fetch('/api/reports/overview', {
-      headers: { 'Authorization': getAuthHeader() }
-    });
+    var res = await apiFetch(APP_API_BASE + '/api/reports/overview');
     var list = await res.json();
     renderOverview(list);
   } catch (e) {
@@ -440,7 +997,7 @@ function renderOverview(list) {
   list.forEach(function(item) {
     var title = item.name || '未命名';
     var time = item.last_time ? item.last_time.slice(0, 16) : '-';
-    var statusClass = item.last_status === 'completed' ? 'completed' : (item.last_status === 'failed' ? 'failed' : (item.last_status === 'running' ? 'running' : 'pending'));
+    var statusClass = item.last_status === 'completed' ? 'completed' : (item.last_status === 'failed' ? 'failed' : (item.last_status === 'running' ? 'running' : (item.last_status === 'no_data' ? 'no_data' : 'pending')));
     var duration = item.last_duration ? formatDuration(item.last_duration) : '-';
     html += '<div class="report-item" onclick="viewTemplateReports(' + item.template_id + ')">';
     html += '<span class="report-title">' + escapeHtml(title) + '</span>';
@@ -448,8 +1005,7 @@ function renderOverview(list) {
     html += '<span class="status-badge ' + statusClass + '">' + (item.last_status || '-') + '</span>';
     html += '<span>' + time + '</span>';
     html += '<span>' + duration + '</span>';
-    html += '</div>';
-    html += '</div>';
+    html += '</div></div>';
   });
   html += '</div>';
   container.innerHTML = html;
@@ -457,19 +1013,13 @@ function renderOverview(list) {
 
 async function viewTemplateReports(templateId) {
   try {
-    var res = await fetch('/api/reports/runs/' + templateId + '?limit=5', {
-      headers: { 'Authorization': getAuthHeader() }
-    });
+    var res = await apiFetch(APP_API_BASE + '/api/reports/runs/' + templateId + '?limit=5');
     var data = await res.json();
-    if (!data.runs || data.runs.length === 0) {
-      alert('该模板暂无执行记录');
-      return;
-    }
-    // Open the latest run
-    showResult(data.runs[0].id);
-  } catch (e) {
-    alert('加载失败: ' + (e.message || ''));
-  }
+    if (!data.runs || data.runs.length === 0) { alert('该模板暂无执行记录'); return; }
+    var latest = data.runs[0];
+    if (latest.status === 'no_data') { showNoData(latest.error_msg || ''); return; }
+    showResult(latest.id);
+  } catch (e) { alert('加载失败: ' + (e.message || '')); }
 }
 </script>
 </body>

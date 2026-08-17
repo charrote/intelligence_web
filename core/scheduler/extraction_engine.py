@@ -78,33 +78,69 @@ def _get_rule_fields(conn, rule_id: int) -> list:
 
 
 def _extract_single(intel_id: int, rule_id: int, rule_name: str,
-                     fields: list, intel_title: str, intel_content: str,
-                     conn) -> dict:
-    """Extract facts for a single intel x single rule."""
+                    fields: list, intel_title: str, intel_content: str,
+                    conn) -> dict:
+    """Extract facts for a single intel x single rule.
+
+    Hybrid strategy:
+      1. Regex fast path handles numeric-ish fields (number/pct/currency/
+         currency_code/date/year) — deterministic, zero LLM cost.
+      2. LLM only processes the remaining fields (company/location/text,
+         plus regex-missed numerics as fallback).
+      3. If there is nothing left for the LLM, skip the call entirely.
+    """
+    from core.scheduler.field_extractor import extract_fields_regex
+
     db_path = _get_db_path()
-    timeout = int(get_setting(db_path, "llm.extract_timeout")) if get_setting(db_path, "llm.extract_timeout") else 60
 
-    system_prompt, user_prompt = render_extraction_prompt(
-        rule_name, fields, intel_title, intel_content
+    # Step 1: regex fast path
+    regex_values, remaining_fields = extract_fields_regex(
+        fields, intel_title, intel_content
     )
 
-    result = call_llm(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=0.1,
-        max_tokens=500,
-        timeout=timeout
-    )
+    # Step 2: LLM for the rest (entity/text fields + regex misses)
+    llm_values: dict = {}
+    if remaining_fields:
+        timeout = int(get_setting(db_path, "llm.extract_timeout") or 60)
 
-    if not result.get("ok"):
-        return {"ok": False, "error": result.get("error", "LLM call failed")}
+        system_prompt, user_prompt = render_extraction_prompt(
+            rule_name, remaining_fields, intel_title, intel_content
+        )
 
-    parsed, json_ok = parse_json_from_response(result["raw"])
-    if not json_ok:
-        return {"ok": False, "error": f"JSON parse failed. Raw: {result['raw'][:200]}"}
+        result = call_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.1,
+            max_tokens=500,
+            timeout=timeout
+        )
 
-    fact_count = _save_facts(conn, intel_id, rule_id, fields, parsed)
-    return {"ok": True, "fact_count": fact_count}
+        if not result.get("ok"):
+            # Preserve pre-hybrid semantics: LLM failure → row marked failed
+            return {"ok": False, "error": result.get("error", "LLM call failed")}
+
+        parsed, json_ok = parse_json_from_response(result["raw"])
+        if not json_ok:
+            return {"ok": False,
+                    "error": f"JSON parse failed. Raw: {result['raw'][:200]}"}
+        llm_values = parsed if isinstance(parsed, dict) else {}
+
+    # Step 3: merge (regex wins; LLM fills the gaps) and save
+    merged: dict = {}
+    for f in fields:
+        fk = f.get("field_key", "")
+        if fk in regex_values:
+            merged[fk] = regex_values[fk]
+        elif fk in llm_values and llm_values[fk] is not None:
+            merged[fk] = llm_values[fk]
+
+    fact_count = _save_facts(conn, intel_id, rule_id, fields, merged)
+    return {
+        "ok": True,
+        "fact_count": fact_count,
+        "regex_count": len(regex_values),
+        "llm_count": len(remaining_fields),
+    }
 
 
 def _get_db_path() -> str:

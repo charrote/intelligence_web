@@ -16,6 +16,9 @@ meili_data/
 backups/
 crawler_cache/
 
+# Local LLM config (contains API key — never commit)
+config/llm.json
+
 # Database files
 *.db
 *.db-journal

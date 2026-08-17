@@ -4,14 +4,27 @@ import requests
 
 
 def get_llm_config():
-    """Read LLM config from settings table."""
-    from core.db import get_setting
-    return {
-        "provider": get_setting("model.provider", "openai"),
-        "api_base_url": get_setting("model.api_base_url", "https://api.openai.com"),
-        "api_key": get_setting("model.api_key", ""),
-        "model_name": get_setting("model.name", "gpt-4"),
-    }
+    """读取平台级 LLM 配置（config/llm.json）。
+
+    平台级配置，与具体域无关——一个模型服务对应所有域。
+    """
+    from config import get_llm_config as _get_llm
+    return _get_llm()
+
+
+def _build_base_url(base_url: str, versioned_path: str) -> str:
+    """智能拼接 API 端点，避免 double /v1。
+
+    如果 base_url 已含 /v1 则直接拼 versioned_path，否则先补 /v1。
+    例：
+      base_url="http://host/v1", path="/chat/completions" → http://host/v1/chat/completions
+      base_url="http://host",   path="/chat/completions" → http://host/v1/chat/completions
+    """
+    base = base_url.rstrip('/')
+    # 如果 base 已以 /v1 结尾，不再重复
+    if base.endswith('/v1') or base.endswith('/v1/'):
+        return base + versioned_path
+    return base + '/v1' + versioned_path
 
 
 def call_openai_compatible(system_prompt: str, user_prompt: str,
@@ -20,7 +33,7 @@ def call_openai_compatible(system_prompt: str, user_prompt: str,
     """Call OpenAI-compatible API."""
     config = get_llm_config()
     response = requests.post(
-        url=f"{config['api_base_url'].rstrip('/')}/v1/chat/completions",
+        url=_build_base_url(config['api_base_url'], '/chat/completions'),
         headers={
             "Authorization": f"Bearer {config['api_key']}",
             "Content-Type": "application/json"
@@ -33,6 +46,8 @@ def call_openai_compatible(system_prompt: str, user_prompt: str,
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
+            # 关闭 reasoning/thinking（Qwen3 系列通过 chat_template_kwargs 控制）
+            "chat_template_kwargs": {"enable_thinking": False},
         },
         timeout=timeout
     )
@@ -48,7 +63,7 @@ def call_anthropic(system_prompt: str, user_prompt: str,
     """Call Anthropic Messages API."""
     config = get_llm_config()
     response = requests.post(
-        url=f"{config['api_base_url'].rstrip('/')}/v1/messages",
+        url=_build_base_url(config['api_base_url'], '/messages'),
         headers={
             "x-api-key": config["api_key"],
             "anthropic-version": "2023-06-01",

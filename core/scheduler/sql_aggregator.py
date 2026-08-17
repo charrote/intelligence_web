@@ -22,13 +22,13 @@ def aggregate(db_path: str, template: dict) -> dict:
     try:
         with get_db(db_path) as conn:
             # 1. Build WHERE clause
-            where_clause = f"WHERE f.rule_id = {template['rule_id']}"
+            where_clause = f"WHERE main.rule_id = ?"
             params = [template['rule_id']]
 
             # Time filter
             lookback = template.get("lookback_days", 30)
             cutoff = datetime.now(timezone.utc) - timedelta(days=lookback)
-            where_clause += f" AND f.created_at >= '{cutoff.isoformat()}'"
+            where_clause += f" AND main.created_at >= '{cutoff.isoformat()}'"
 
             # Custom filter conditions
             filters = json.loads(template.get("filters", "[]"))
@@ -39,7 +39,7 @@ def aggregate(db_path: str, template: dict) -> dict:
 
             # 2. Build GROUP BY
             group_field = _map_group_field(template.get("group_by", "entity_name"))
-            group_clause = f"GROUP BY f.{group_field}"
+            group_clause = f"GROUP BY main.{group_field}"
 
             # 3. Build SELECT with metrics
             metrics = json.loads(template.get("metrics", "[]"))

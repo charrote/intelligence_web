@@ -38,9 +38,12 @@ def run_scheduled_reports(db_path: str) -> dict:
             template_dict = dict(tmpl)
             executed += 1
 
-            result = run_single_report_internal(template_dict, conn)
+            result = run_single_report_internal(db_path, template_dict, conn)
             if result.get("ok"):
                 success += 1
+                _update_template_success(conn, template_dict["id"])
+            elif result.get("no_data"):
+                # 空数据不是失败：不清零也不累计 fail_count，仅刷新 next_run
                 _update_template_success(conn, template_dict["id"])
             else:
                 failed += 1
@@ -49,17 +52,24 @@ def run_scheduled_reports(db_path: str) -> dict:
     return {"executed": executed, "success": success, "failed": failed}
 
 
-def run_single_report_internal(template_dict: dict, conn) -> dict:
-    """Execute a single report (no retry)."""
+def _execute_report_steps(db_path: str, conn, run_id: int, template_dict: dict) -> dict:
+    """Execute aggregation → charts → LLM → write results for an existing run_id."""
     now = datetime.now(timezone.utc).isoformat()
-    run_id = _create_run_record(conn, template_dict["id"], now)
-
     try:
         # Step 1: SQL aggregation
-        agg_result = aggregate(template_dict)
+        agg_result = aggregate(db_path, template_dict)
         if agg_result.get("error"):
             _update_run_status(conn, run_id, "failed", error_msg=agg_result["error"])
             return {"ok": False, "error": f"Aggregation failed: {agg_result['error']}"}
+
+        # Step 1.5: 空数据兜底 — 聚合无事实时跳过 LLM，明确标记 no_data
+        if not agg_result.get("rows") and not agg_result.get("fact_count"):
+            msg = (
+                "所选时间范围内没有已抽取的事实数据（intel_fact 为空）。"
+                "请先执行抽取，再运行报告。"
+            )
+            _update_run_status(conn, run_id, "no_data", error_msg=msg)
+            return {"ok": False, "error": msg, "no_data": True}
 
         # Step 2: Build chart data
         chart_data = _build_charts(template_dict, agg_result["rows"])
@@ -85,12 +95,13 @@ def run_single_report_internal(template_dict: dict, conn) -> dict:
             max_tokens=1500,
             timeout=timeout,
         )
-
         if not llm_result.get("ok"):
+            _update_run_status(conn, run_id, "failed", error_msg=llm_result.get("error") or "LLM call failed")
             return {"ok": False, "error": llm_result.get("error")}
 
         parsed, json_ok = parse_json_from_response(llm_result["raw"])
         if not json_ok:
+            _update_run_status(conn, run_id, "failed", error_msg="Report LLM JSON parse failed")
             return {"ok": False, "error": "Report LLM JSON parse failed"}
 
         # Step 5: Write report_run
@@ -101,51 +112,72 @@ def run_single_report_internal(template_dict: dict, conn) -> dict:
             "output_summary": parsed.get("summary", ""),
             "fact_count": agg_result["fact_count"],
         })
-
         return {"ok": True}
 
     except Exception as e:
         logger.error(f"Report execution error template={template_dict['id']}: {e}")
+        try:
+            _update_run_status(conn, run_id, "failed", error_msg=str(e))
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
 
 
-def run_single_report(db_path: str, template_id: int) -> dict:
-    """Manually trigger single report (with retry)."""
-    max_retries = int(get_setting(db_path, "report.max_retries") or "1")
-    retry_delay = int(get_setting(db_path, "report.retry_delay_sec") or "60")
+def run_single_report_internal(db_path: str, template_dict: dict, conn) -> dict:
+    """Execute a single report (no retry) — used by the scheduler (blocking is fine there)."""
+    now = datetime.now(timezone.utc).isoformat()
+    run_id = _create_run_record(conn, template_dict["id"], now, template_dict.get("domain") or "research")
+    return _execute_report_steps(db_path, conn, run_id, template_dict)
 
+
+def run_single_report(db_path: str, template_id: int) -> dict:
+    """Manually trigger single report (async).
+
+    Creates the run record, returns run_id immediately, then executes the
+    report in a background thread so the frontend can poll status via
+    /api/reports/runs/<template_id>.
+    """
+    import threading
+    now = datetime.now(timezone.utc).isoformat()
     with get_db(db_path) as conn:
         template = conn.execute(
             "SELECT * FROM intel_aggregate WHERE id = ?", (template_id,)
         ).fetchone()
-
         if not template:
             return {"ok": False, "error": "Template not found"}
-
         template_dict = dict(template)
+        run_id = _create_run_record(
+            conn, template_dict["id"], now, template_dict.get("domain") or "research"
+        )
 
-        for attempt in range(1 + max_retries):
-            result = run_single_report_internal(template_dict, conn)
-            if result.get("ok"):
-                return {"ok": True, "attempt": attempt + 1}
+    def _worker():
+        try:
+            with get_db(db_path) as wconn:
+                _execute_report_steps(db_path, wconn, run_id, template_dict)
+        except Exception as e:
+            # Defensive: any unhandled error in the worker thread must mark
+            # the run as failed, otherwise it stays 'running' forever.
+            logger.error(f"report worker crashed template={template_id}: {e}")
+            try:
+                with get_db(db_path) as wconn:
+                    _update_run_status(wconn, run_id, "failed", error_msg=f"Worker error: {e}")
+            except Exception:
+                pass
 
-            if attempt < max_retries:
-                import time as _time
-                _time.sleep(retry_delay)
-
-        return {"ok": False, "error": result.get("error"), "attempt": max_retries + 1}
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"ok": True, "run_id": run_id}
 
 
 # ─── Helpers ──────────────────────────────────────────────────
 
-def _create_run_record(conn, template_id: int, scheduled_time: str) -> int:
+def _create_run_record(conn, template_id: int, scheduled_time: str, domain: str = 'research') -> int:
     """Create a report_run record, return run_id."""
     now = datetime.now(timezone.utc).isoformat()
     cursor = conn.execute(
         """INSERT INTO report_run
-           (template_id, scheduled_time, status, started_at, created_at)
-           VALUES (?, ?, 'running', ?, ?)""",
-        (template_id, scheduled_time, now, now)
+           (template_id, domain, scheduled_time, status, started_at, created_at)
+           VALUES (?, ?, ?, 'running', ?, ?)""",
+        (template_id, domain, scheduled_time, now, now)
     )
     conn.commit()
     return cursor.lastrowid
@@ -156,32 +188,42 @@ def _update_run_status(conn, run_id: int, status: str, error_msg: str = None):
     now = datetime.now(timezone.utc).isoformat()
     if error_msg:
         conn.execute(
-            "UPDATE report_run SET status = ?, completed_at = ?, error_msg = ?, started_at = ? WHERE id = ?",
+            "UPDATE report_run SET status = ?, completed_at = ?, error_msg = ? WHERE id = ?",
             (status, now, error_msg, run_id)
         )
     else:
         conn.execute(
-            "UPDATE report_run SET status = ?, completed_at = ?, started_at = ? WHERE id = ?",
+            "UPDATE report_run SET status = ?, completed_at = ? WHERE id = ?",
             (status, now, run_id)
         )
     conn.commit()
 
 
-def _update_run_result(conn, run_id: int, data: dict):
+def _update_run_result(conn, run_id: int, data: dict) -> None:
     """Update run to completed with results."""
     now = datetime.now(timezone.utc).isoformat()
+    # Calculate duration from started_at
+    row = conn.execute("SELECT started_at FROM report_run WHERE id = ?", (run_id,)).fetchone()
+    duration = 0
+    if row and row["started_at"]:
+        try:
+            start = datetime.fromisoformat(row["started_at"])
+            end = datetime.fromisoformat(now)
+            duration = max(0, int((end - start).total_seconds()))
+        except (ValueError, TypeError):
+            duration = 0
     conn.execute(
         """UPDATE report_run SET
            status = 'completed',
            completed_at = ?,
+           duration_sec = ?,
            aggregated_data = ?,
            output_analysis = ?,
            output_charts = ?,
            output_summary = ?,
-           fact_count = ?,
-           started_at = ?
+           fact_count = ?
            WHERE id = ?""",
-        (now, data.get("aggregated_data"), data.get("output_analysis"),
+        (now, duration, data.get("aggregated_data"), data.get("output_analysis"),
          data.get("output_charts"), data.get("output_summary"),
          data.get("fact_count"), run_id)
     )

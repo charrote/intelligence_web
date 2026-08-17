@@ -148,6 +148,29 @@ def trigger_extract_once():
     return extract_all_pending(db_path)
 
 
+def trigger_extract_async():
+    """Manually trigger one extraction cycle in the background (called from API).
+
+    Returns immediately with {"ok": True, "started": True}; the extraction
+    runs in a daemon thread. Progress is observable via /api/extract/stats
+    (pending_extract count) and report_scheduler.last_extract_time.
+    """
+    import threading
+    from core.scheduler.extraction_engine import extract_all_pending
+    db_path = _get_db_path()
+
+    def _worker():
+        try:
+            result = extract_all_pending(db_path)
+            logger.info(f"[manual_extract] Done: {result}")
+            _update_scheduler("last_extract_time", _now_iso())
+        except Exception as e:
+            logger.error(f"[manual_extract] Error: {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"ok": True, "started": True}
+
+
 def trigger_report_once(template_id: int):
     """Manually trigger one report execution (called from API)."""
     from core.scheduler.report_engine import run_single_report

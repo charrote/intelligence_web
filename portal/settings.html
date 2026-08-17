@@ -106,6 +106,7 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
   <div class="settings-tabs">
     <div class="settings-tab active" data-tab="personal" onclick="switchSettingsTab('personal')">个人设置</div>
     <div class="settings-tab" data-tab="system" onclick="switchSettingsTab('system')">模型设置</div>
+    <div class="settings-tab" data-tab="scheduler" onclick="switchSettingsTab('scheduler')">调度器</div>
     <div class="settings-tab" data-tab="mcp" onclick="switchSettingsTab('mcp')">MCP 服务</div>
     <div class="settings-tab" data-tab="infra" onclick="switchSettingsTab('infra')">基础设施</div>
     <div class="settings-tab" data-tab="domains" onclick="switchSettingsTab('domains')">域控制器</div>
@@ -194,9 +195,11 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
           <label>模型提供商</label>
           <select id="modelProvider">
             <option value="openai">OpenAI</option>
+            <option value="uantek-ai">UANTEKQ1 (uantek-ai)</option>
             <option value="anthropic">Anthropic</option>
             <option value="custom">自定义（兼容 OpenAI 格式）</option>
           </select>
+          <div class="hint">非 OpenAI 的兼容端点选"自定义"或对应项；真正生效的是下方 API 地址</div>
         </div>
         <div class="form-group">
           <label>API 地址</label>
@@ -209,7 +212,7 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
             <input type="password" id="apiKey" placeholder="sk-..." style="flex:1">
             <button class="btn btn-ghost" onclick="toggleApiKey()" id="toggleKeyBtn" title="显示/隐藏">👁</button>
           </div>
-          <div class="hint">用于 AI Agent 调用的 API 密钥，加密存储。加载时显示脱敏值，需重新输入完整 Key 才能更新</div>
+          <div class="hint">用于 AI 调用的密钥。此处显示为脱敏值（如 <code>gpu***860</code>，长度比原始短是正常的安全展示，并非被截断）。如需修改，请重新输入完整的 Key，否则保持原值</div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -342,44 +345,89 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
   </div>
 
   <!-- ===== Scheduler Configuration ===== -->
-  <div class="settings-pane active" id="pane-scheduler">
-    <div class="form-section">
-      <h3>调度器配置</h3>
-      <div class="form-group">
-        <label>抽取开关</label>
-        <input type="checkbox" id="sched_extract_enabled" data-key="scheduler.extract_enabled">
+  <div class="settings-pane" id="pane-scheduler">
+
+    <!-- Scheduler Status & Toggles -->
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>调度器状态</h2>
+      <div class="section-body">
+        <div class="form-group">
+          <label>数据抽取调度</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sched_extract_enabled" style="width:18px;height:18px">
+            <span style="font-size:13px;color:var(--gray-600)">启用定时抽取（按间隔自动扫描新情报并抽取字段）</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>报告生成调度</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sched_report_enabled" style="width:18px;height:18px">
+            <span style="font-size:13px;color:var(--gray-600)">启用定时报告生成（按间隔自动聚合数据并调用 LLM 生成报告）</span>
+          </label>
+        </div>
       </div>
-      <div class="form-group">
-        <label>报告开关</label>
-        <input type="checkbox" id="sched_report_enabled" data-key="scheduler.report_enabled">
+    </div>
+
+    <!-- Intervals -->
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>执行间隔</h2>
+      <div class="section-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>抽取间隔（分钟）</label>
+            <input type="number" id="sched_extract_interval" data-key="scheduler.extract_interval_min" min="1" max="1440" value="10">
+            <div class="hint">两次自动抽取之间的最短间隔</div>
+          </div>
+          <div class="form-group">
+            <label>报告间隔（分钟）</label>
+            <input type="number" id="sched_report_interval" data-key="scheduler.report_interval_min" min="1" max="1440" value="5">
+            <div class="hint">两次自动报告生成之间的最短间隔</div>
+          </div>
+        </div>
       </div>
-      <div class="form-group">
-        <label>抽取间隔（分钟）</label>
-        <input type="number" id="sched_extract_interval" data-key="scheduler.extract_interval_min" min="1" max="1440" value="10">
+    </div>
+
+    <!-- LLM Timeout & Retry -->
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>LLM 调用策略</h2>
+      <div class="section-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>抽取超时（秒）</label>
+            <input type="number" id="sched_llm_extract_timeout" data-key="llm.extract_timeout" min="10" max="300" value="60">
+          </div>
+          <div class="form-group">
+            <label>报告超时（秒）</label>
+            <input type="number" id="sched_llm_report_timeout" data-key="llm.report_timeout" min="10" max="600" value="120">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>失败重试次数</label>
+            <input type="number" id="sched_report_max_retries" data-key="report.max_retries" min="0" max="5" value="1">
+            <div class="hint">单次报告生成失败后的自动重试次数</div>
+          </div>
+          <div class="form-group">
+            <label>熔断阈值</label>
+            <input type="number" id="sched_fuse_threshold" data-key="report.fuse_threshold" min="1" max="10" value="3">
+            <div class="hint">连续失败达到此次数后自动暂停该模板</div>
+          </div>
+        </div>
       </div>
-      <div class="form-group">
-        <label>报告间隔（分钟）</label>
-        <input type="number" id="sched_report_interval" data-key="scheduler.report_interval_min" min="1" max="1440" value="5">
-      </div>
-      <div class="form-group">
-        <label>LLM 抽取超时（秒）</label>
-        <input type="number" id="sched_llm_extract_timeout" data-key="llm.extract_timeout" min="10" max="300" value="60">
-      </div>
-      <div class="form-group">
-        <label>LLM 报告超时（秒）</label>
-        <input type="number" id="sched_llm_report_timeout" data-key="llm.report_timeout" min="10" max="600" value="120">
-      </div>
-      <div class="form-group">
-        <label>报告重试次数</label>
-        <input type="number" id="sched_report_max_retries" data-key="report.max_retries" min="0" max="5" value="1">
-      </div>
-      <div class="form-group">
-        <label>熔断阈值</label>
-        <input type="number" id="sched_fuse_threshold" data-key="report.fuse_threshold" min="1" max="10" value="3">
-      </div>
-      <div class="form-group">
-        <label>报告保留天数</label>
-        <input type="number" id="sched_retention_days" data-key="report.retention_days" min="1" max="365" value="30">
+    </div>
+
+    <!-- Data Retention -->
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg></span>数据保留</h2>
+      <div class="section-body">
+        <div class="form-group">
+          <label>报告保留天数</label>
+          <input type="number" id="sched_retention_days" data-key="report.retention_days" min="1" max="365" value="30">
+          <div class="hint">超过保留天数的历史报告将自动清理</div>
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn btn-primary" onclick="saveSchedulerSettings()">保存调度器配置</button>
+        </div>
       </div>
     </div>
   </div>
@@ -413,6 +461,7 @@ function switchSettingsTab(tab) {
   // 所有 pane 先移除 active
   document.getElementById('pane-personal').classList.remove('active');
   document.getElementById('pane-system').classList.remove('active');
+  document.getElementById('pane-scheduler').classList.remove('active');
   document.getElementById('pane-mcp').classList.remove('active');
   document.getElementById('pane-infra').classList.remove('active');
   document.getElementById('pane-domains').classList.remove('active');
@@ -423,7 +472,10 @@ function switchSettingsTab(tab) {
     loadUser();
   } else if (tab === 'system') {
     document.getElementById('pane-system').classList.add('active');
-    loadSystemSettings();
+    loadLlmSettings();
+  } else if (tab === 'scheduler') {
+    document.getElementById('pane-scheduler').classList.add('active');
+    loadSchedulerSettings();
   } else if (tab === 'mcp') {
     document.getElementById('pane-mcp').classList.add('active');
     loadMcpInfo();
@@ -516,69 +568,95 @@ function toggleApiKey() {
   document.getElementById('toggleKeyBtn').textContent = apiKeyVisible ? '🔒' : '👁';
 }
 
-async function loadSystemSettings() {
+async function loadLlmSettings() {
   try {
-    var r = await apiFetch(apiBase() + '/api/system/settings');
+    var r = await apiFetch(systemApiBase() + '/api/system/llm');
     if (!r.ok) return;
-    var settings = await r.json();
+    var cfg = await r.json();
 
-    // AI Model
-    document.getElementById('modelProvider').value = settings['model.provider'] || 'openai';
-    document.getElementById('apiBaseUrl').value = settings['model.api_base_url'] || '';
-    document.getElementById('apiKey').value = settings['model.api_key'] || '';
-    document.getElementById('modelName').value = settings['model.name'] || '';
-    var temp = settings['model.temperature'];
-    if (temp !== undefined) document.getElementById('modelTemp').value = temp;
-    var maxTok = settings['model.max_tokens'];
-    if (maxTok !== undefined) document.getElementById('modelMaxTokens').value = maxTok;
-
-    // MCP - 使用自动检测信息
-    // 注意：MCP 配置不再通过 /api/system/settings 管理，而是通过 /api/system/mcp/info
-
-    // Settings updated time
-    var updated = settings['system.last_updated'];
-    document.getElementById('settingsUpdated').textContent = updated ? new Date(updated).toLocaleString('zh-CN') : '-';
+    // AI Model（平台级）
+    document.getElementById('modelProvider').value = cfg.provider || 'openai';
+    document.getElementById('apiBaseUrl').value = cfg.api_base_url || '';
+    document.getElementById('apiKey').value = cfg.api_key_masked || '';
+    document.getElementById('modelName').value = cfg.model_name || '';
+    if (cfg.temperature !== undefined) document.getElementById('modelTemp').value = cfg.temperature;
+    if (cfg.max_tokens !== undefined) document.getElementById('modelMaxTokens').value = cfg.max_tokens;
   } catch(e) {
-    console.error('加载系统设置失败:', e);
+    console.error('加载模型配置失败:', e);
+  }
+}
+
+async function loadSchedulerSettings() {
+  try {
+    var r = await apiFetch(apiBase() + '/api/reports/scheduler');
+    if (!r.ok) return;
+    var d = await r.json();
+    if (!d) return;
+    document.getElementById('sched_extract_enabled').checked = d.extract_enabled !== 0;
+    document.getElementById('sched_report_enabled').checked = d.report_enabled !== 0;
+    if (d.extract_interval_min) document.getElementById('sched_extract_interval').value = d.extract_interval_min;
+    if (d.report_interval_min) document.getElementById('sched_report_interval').value = d.report_interval_min;
+  } catch(e) {
+    console.error('加载调度器配置失败:', e);
+  }
+}
+
+async function saveSchedulerSettings() {
+  try {
+    // 开关（抽取/报告）走 scheduler/toggle（component/action 协议）
+    var extractOn = document.getElementById('sched_extract_enabled').checked;
+    var reportOn = document.getElementById('sched_report_enabled').checked;
+    await apiFetch(apiBase() + '/api/reports/scheduler/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ action: extractOn ? 'enable' : 'disable', component: 'extract' })
+    });
+    await apiFetch(apiBase() + '/api/reports/scheduler/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ action: reportOn ? 'enable' : 'disable', component: 'report' })
+    });
+    // 间隔等参数走 settings
+    var data = {
+      'scheduler.extract_interval_min': document.getElementById('sched_extract_interval').value,
+      'scheduler.report_interval_min': document.getElementById('sched_report_interval').value,
+      'llm.extract_timeout': document.getElementById('sched_llm_extract_timeout').value,
+      'llm.report_timeout': document.getElementById('sched_llm_report_timeout').value,
+      'report.max_retries': document.getElementById('sched_report_max_retries').value,
+      'report.fuse_threshold': document.getElementById('sched_fuse_threshold').value,
+      'report.retention_days': document.getElementById('sched_retention_days').value,
+    };
+    await apiFetch(apiBase() + '/api/system/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+    showToast('调度器配置已保存', 'success');
+  } catch(e) {
+    showToast('保存失败: ' + (e.message || ''), 'error');
   }
 }
 
 async function saveModelSettings() {
   var apiKeyValue = document.getElementById('apiKey').value.trim();
-  // 如果 API Key 包含脱敏标记 ***，说明是加载时的脱敏值，不保存
-  if (apiKeyValue.includes('***')) {
-    // 只保存其他字段，不更新 API Key
-    var data = {
-      'model.provider': document.getElementById('modelProvider').value,
-      'model.api_base_url': document.getElementById('apiBaseUrl').value.trim(),
-      'model.name': document.getElementById('modelName').value.trim(),
-      'model.temperature': parseFloat(document.getElementById('modelTemp').value) || 0.7,
-      'model.max_tokens': parseInt(document.getElementById('modelMaxTokens').value) || 4096,
-      'system.last_updated': new Date().toISOString(),
-    };
-    showToast('提示：API Key 未更改（显示为脱敏值，需重新输入完整 Key 才能更新）', 'warning');
-  } else {
-    var data = {
-      'model.provider': document.getElementById('modelProvider').value,
-      'model.api_base_url': document.getElementById('apiBaseUrl').value.trim(),
-      'model.api_key': apiKeyValue,
-      'model.name': document.getElementById('modelName').value.trim(),
-      'model.temperature': parseFloat(document.getElementById('modelTemp').value) || 0.7,
-      'model.max_tokens': parseInt(document.getElementById('modelMaxTokens').value) || 4096,
-      'system.last_updated': new Date().toISOString(),
-    };
+  var data = {
+    provider: document.getElementById('modelProvider').value,
+    api_base_url: document.getElementById('apiBaseUrl').value.trim(),
+    model_name: document.getElementById('modelName').value.trim(),
+    temperature: parseFloat(document.getElementById('modelTemp').value) || 0.7,
+    max_tokens: parseInt(document.getElementById('modelMaxTokens').value) || 4096,
+  };
+  // API Key：脱敏值（含***）说明未更改，不更新
+  if (apiKeyValue && !apiKeyValue.includes('***')) {
+    data.api_key = apiKeyValue;
   }
   try {
-    var r = await apiFetch(apiBase() + '/api/system/settings', {
+    var r = await apiFetch(systemApiBase() + '/api/system/llm', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
-    var res = await r.json();
     if (r.ok) {
-      showToast('模型配置已保存', 'success');
-      loadSystemSettings();
+      showToast('模型配置已保存（平台级，所有域共享）', 'success');
+      loadLlmSettings();
     } else {
-      showToast(res.error || '保存失败', 'error');
+      showToast('保存失败', 'error');
     }
   } catch(e) {
     showToast('网络错误', 'error');
@@ -588,27 +666,15 @@ async function saveModelSettings() {
 async function testModelConnection() {
   var btn = document.getElementById('testModelBtn');
   var origText = btn.textContent;
-  var apiKey = document.getElementById('apiKey').value.trim();
-  var modelName = document.getElementById('modelName').value.trim();
-  if (!apiKey) {
-    showToast('请先填写 API Key', 'warning');
-    document.getElementById('apiKey').focus();
-    return;
-  }
-  if (!modelName) {
-    showToast('请先填写模型名称', 'warning');
-    document.getElementById('modelName').focus();
-    return;
-  }
   btn.textContent = '测试中...';
   btn.disabled = true;
   try {
-    var r = await apiFetch(apiBase() + '/api/system/model/test', {
+    var r = await apiFetch(systemApiBase() + '/api/system/llm/test', {
       method: 'POST',
     });
     var res;
     try { res = await r.json(); } catch(e) { res = {}; }
-    if (r.ok) {
+    if (r.ok && res.ok) {
       showToast('连接成功！模型: ' + (res.model || '已连通'), 'success');
     } else {
       showToast(res.error || ('HTTP ' + r.status + ' 连接失败'), 'error');
