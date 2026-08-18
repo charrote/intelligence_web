@@ -120,5 +120,20 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+# Daily SQLite backup (reuses research python image — no new image pull)
+  # Startup takes an immediate consistency snapshot of both domain DBs, then
+  # repeats every 24h; rolling retention (default 14 days). See scripts/backup_db.py
+  backup:
+    image: intelligence_web-research:latest
+    volumes:
+      - ./intelligence_web/data:/data/research
+      - ./intelligence_sales/data:/data/sales
+      - ./backups:/backups
+      - ./scripts/backup_db.py:/app/backup_db.py:ro
+    command: python /app/backup_db.py
+    environment:
+      - BACKUP_RETENTION_DAYS=14
+    restart: unless-stopped
+
 volumes:
   meili_data:
