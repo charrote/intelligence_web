@@ -80,7 +80,7 @@ async function loadNotifs(unreadOnly) {
   try {
     let url = apiBase() + '/api/notifications?limit=100';
     if (unreadOnly !== undefined && unreadOnly) url += '&unread_only=true';
-    const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+    const r = await apiFetch(url);
     const d = await r.json();
     allNotifs = d.items || [];
     unreadCount = d.unread || 0;
@@ -93,7 +93,7 @@ async function loadNotifs(unreadOnly) {
 
 async function loadUnreadCount() {
   try {
-    const r = await fetch(apiBase() + '/api/notifications/unread-count', { headers: { 'Authorization': 'Bearer ' + token } });
+    const r = await apiFetch(apiBase() + '/api/notifications/unread-count');
     const d = await r.json();
     unreadCount = d.unread || 0;
     updateBadge();

@@ -125,7 +125,55 @@ function switchToTab(tabId) {
     mainEl.innerHTML = '';
     mainEl.appendChild(iframe);
     tab.iframe = iframe;
+
+    // 加载动效：iframe 未加载完 或 数据请求在途 时显示
+    _tabIframeLoaded = false;
+    _tabDataLoading = false;
+    _showTabLoading(true);
+    var onIframeLoad = function () {
+      _tabIframeLoaded = true;
+      _updateTabLoading();
+    };
+    iframe.addEventListener('load', onIframeLoad);
+    // 兜底：若 load 永不触发（离线/被拦截），15s 后强制收起
+    setTimeout(function () { _tabIframeLoaded = true; _updateTabLoading(); }, 15000);
   }
+}
+
+// ---- 加载动效状态机（由 tabs.js + shell postMessage 信号共同驱动） ----
+var _tabIframeLoaded = true;   // 当前 iframe 是否已加载完
+var _tabDataLoading = false;   // 是否还有数据请求在途
+var _tabLoadingTimer = null;
+
+function _updateTabLoading() {
+  _showTabLoading(!(_tabIframeLoaded && !_tabDataLoading));
+}
+
+function _showTabLoading(show) {
+  var overlay = document.getElementById('tabLoading');
+  if (!overlay) return;
+  if (show) {
+    // 最小展示时长 120ms，避免快速切换时闪现
+    clearTimeout(_tabLoadingTimer);
+    overlay.classList.remove('hidden');
+    overlay.style.display = 'flex';
+  } else {
+    clearTimeout(_tabLoadingTimer);
+    _tabLoadingTimer = setTimeout(function () {
+      overlay.classList.add('hidden');
+      setTimeout(function () { if (overlay) overlay.style.display = 'none'; }, 260);
+    }, 120);
+  }
+}
+
+// 监听子页面（iframe 内 auth.js 的 apiFetch）发来的数据加载信号
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'qm-loading') return;
+    _tabDataLoading = !!d.loading;
+    _updateTabLoading();
+  });
 }
 
 function setActiveSidebar(hash) {

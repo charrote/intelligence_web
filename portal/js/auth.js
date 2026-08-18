@@ -49,6 +49,17 @@ function systemApiBase() {
 
 var APP_API_BASE = apiBase();
 
+// 在途 GET 请求计数（用于向父窗口发加载信号）
+var __inflight = 0;
+
+function _loadingNotify() {
+  if (window.parent && window.parent !== window) {
+    try {
+      window.parent.postMessage({ type: 'qm-loading', loading: __inflight > 0 }, '*');
+    } catch (e) {}
+  }
+}
+
 function apiFetch(url, options) {
   options = options || {};
   options.headers = options.headers || {};
@@ -60,12 +71,21 @@ function apiFetch(url, options) {
     }
     options.headers['Authorization'] = 'Bearer ' + token;
   }
-  return fetch(url, options).then(function(response) {
+  // 加载信号：仅 GET（数据拉取）计入在途请求；POST/PUT/DELETE 是用户操作，不触发加载动效
+  var isGet = !(options.method && String(options.method).toUpperCase() !== 'GET');
+  var p = fetch(url, options);
+  if (isGet) __inflight++;
+  return p.then(function(response) {
     if (response.status === 401) {
       console.warn('[auth] 401 Unauthorized — redirecting to login');
       doLogout();
     }
     return response;
+  }).finally(function() {
+    if (isGet) {
+      __inflight = Math.max(0, __inflight - 1);
+      _loadingNotify();
+    }
   });
 }
 
