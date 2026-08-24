@@ -18,6 +18,10 @@ from core.db import (
     get_all_settings, get_setting, set_setting,
     authenticate_user, get_user_by_id, get_user_by_id_full,
     list_users, create_user, update_user, update_user_password, delete_user,
+    list_roles, get_role, create_role, update_role, delete_role,
+    get_role_permissions, set_role_permissions, list_permissions,
+    get_user_role_ids, get_user_role_names, set_user_roles,
+    get_user_effective_role, get_user_permission_codes,
     get_db,
     get_ai_analysis_configs, get_ai_analysis_config_by_id,
     save_ai_analysis_config, delete_ai_analysis_config, enable_ai_analysis_config,
@@ -582,6 +586,71 @@ def create_app(project_root, spec):
         return jsonify({'ok': True})
 
     # ========================================================================
+    # Auth / RBAC helpers
+    # Defined early so @require_auth / @require_permission are available to the
+    # Projects / Datasources / Target-Types endpoints below.
+    # ========================================================================
+
+    JWT_SECRET = os.environ.get('JWT_SECRET', 'default-dev-secret-change-in-production')
+    JWT_ALGORITHM = 'HS256'
+    JWT_EXPIRY_HOURS = 24
+
+    def _generate_token(user):
+        """Generate a JWT token for the given user."""
+        payload = {
+            'user_id': user['id'],
+            'username': user['username'],
+            'role': user['role'],
+            'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+            'iat': datetime.utcnow(),
+        }
+        return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    def _verify_token(token):
+        """Verify a JWT token and return the payload, or None if invalid."""
+        try:
+            return pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError):
+            return None
+
+    def require_auth(f):
+        """Decorator to require JWT auth."""
+        from functools import wraps
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            auth_header = request.headers.get('Authorization', '')
+            token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+            user = _verify_token(token) if token else None
+            if not user:
+                return jsonify({'error': 'Unauthorized'}), 401
+            return f(*args, **kwargs)
+        return decorated
+
+    def require_permission(code):
+        """Decorator factory: require a specific permission code (RBAC).
+        Usage: @require_permission('roles.manage')
+        admin always passes; others must have the code in their role's permissions."""
+        from functools import wraps
+        def decorator(f):
+            @wraps(f)
+            def decorated(*args, **kwargs):
+                auth_header = request.headers.get('Authorization', '')
+                token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+                user = _verify_token(token) if token else None
+                if not user:
+                    return jsonify({'error': 'Unauthorized'}), 401
+                role = user.get('role')
+                if role == 'admin':
+                    return f(*args, **kwargs)
+                user_id = user.get('user_id')
+                codes = get_user_permission_codes(db_path, user_id, role)
+                if code not in codes:
+                    return jsonify({'error': '没有权限执行此操作'}), 403
+                return f(*args, **kwargs)
+            return decorated
+        return decorator
+
+    # ========================================================================
     # Projects API
     # ========================================================================
 
@@ -597,6 +666,7 @@ def create_app(project_root, spec):
         })
 
     @app.route('/api/projects', methods=['POST'])
+    @require_permission('projects.manage')
     def create_project():
         data = request.json
         if not data.get('name') or not data.get('target_type'):
@@ -629,6 +699,7 @@ def create_app(project_root, spec):
         return jsonify({"project": project})
 
     @app.route('/api/projects/<int:id>', methods=['PUT'])
+    @require_permission('projects.manage')
     def update_project_endpoint(id):
         project = projlib.update_project(db_path, id, request.json)
         if project is None:
@@ -636,6 +707,7 @@ def create_app(project_root, spec):
         return jsonify(project)
 
     @app.route('/api/projects/<int:id>/toggle', methods=['POST'])
+    @require_permission('projects.manage')
     def toggle_project_status(id):
         data = request.json
         enabled = data.get('enabled', True)
@@ -652,6 +724,7 @@ def create_app(project_root, spec):
         return jsonify({"datasources": project.get('datasources', [])})
 
     @app.route('/api/projects/<int:id>/datasources', methods=['PUT'])
+    @require_permission('projects.manage')
     def set_project_datasources(id):
         data = request.json
         datasource_ids = data.get('datasource_ids', [])
@@ -661,6 +734,7 @@ def create_app(project_root, spec):
         return jsonify(project)
 
     @app.route('/api/projects/<int:id>', methods=['DELETE'])
+    @require_permission('projects.manage')
     def delete_project_endpoint(id):
         projlib.delete_project(db_path, id)
         return jsonify({'ok': True})
@@ -694,6 +768,7 @@ def create_app(project_root, spec):
         return jsonify(items)
 
     @app.route('/api/datasources', methods=['POST'])
+    @require_permission('datasources.manage')
     def create_datasource():
         data = request.json
         if not data.get('name') or not data.get('url'):
@@ -724,6 +799,7 @@ def create_app(project_root, spec):
         return jsonify(source)
 
     @app.route('/api/datasources/<int:id>', methods=['PUT'])
+    @require_permission('datasources.manage')
     def update_datasource_endpoint(id):
         source = dslib.update_source(db_path, id, request.json)
         if source is None:
@@ -731,6 +807,7 @@ def create_app(project_root, spec):
         return jsonify(source)
 
     @app.route('/api/datasources/<int:id>/status', methods=['PUT'])
+    @require_permission('datasources.manage')
     def toggle_datasource_status(id):
         data = request.json
         enabled = data.get('status') == 'active'
@@ -740,6 +817,7 @@ def create_app(project_root, spec):
         return jsonify(source)
 
     @app.route('/api/datasources/<int:id>', methods=['DELETE'])
+    @require_permission('datasources.manage')
     def delete_datasource_endpoint(id):
         dslib.delete_source(db_path, id)
         return jsonify({'ok': True})
@@ -756,6 +834,7 @@ def create_app(project_root, spec):
         return jsonify(items)
 
     @app.route('/api/target_types', methods=['POST'])
+    @require_permission('target_types.manage')
     def create_target_type():
         data = request.json
         if not data.get('slug') or not data.get('label'):
@@ -782,6 +861,7 @@ def create_app(project_root, spec):
         return jsonify(tt)
 
     @app.route('/api/target_types/<int:id>', methods=['PUT'])
+    @require_permission('target_types.manage')
     def update_target_type_endpoint(id):
         tt = ttslib.update_target_type(db_path, id, request.json)
         if tt is None:
@@ -789,6 +869,7 @@ def create_app(project_root, spec):
         return jsonify(tt)
 
     @app.route('/api/target_types/<int:id>/toggle', methods=['POST'])
+    @require_permission('target_types.manage')
     def toggle_target_type_status(id):
         data = request.json
         enabled = data.get('enabled', True)
@@ -798,6 +879,7 @@ def create_app(project_root, spec):
         return jsonify(tt)
 
     @app.route('/api/target_types/<int:id>', methods=['DELETE'])
+    @require_permission('target_types.manage')
     def delete_target_type_endpoint(id):
         ttslib.delete_target_type(db_path, id)
         return jsonify({'ok': True})
@@ -807,40 +889,144 @@ def create_app(project_root, spec):
     # ========================================================================
 
     @app.route('/api/roles', methods=['GET'])
-    def list_roles():
-        import sqlite3 as _sqlite3
-        _conn = _sqlite3.connect(db_path)
-        _conn.row_factory = _sqlite3.Row
-        rows = _conn.execute('''
-            SELECT role, COUNT(*) as user_count FROM users
-            GROUP BY role ORDER BY role
-        ''').fetchall()
-        _conn.close()
-        roles = [{'id': i+1, 'name': r['role'], 'user_count': r['user_count']} for i, r in enumerate(rows)]
+    def list_roles_endpoint():
+        """List all roles with user_count. Admin only."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        roles = list_roles(db_path)
+        # Attach the permission set for each role
+        for r in roles:
+            r['permissions'] = get_role_permissions(db_path, r['id'])
         return jsonify(roles)
 
     @app.route('/api/roles', methods=['POST'])
-    def create_role():
-        data = request.json
-        if not data or not data.get('name'):
+    def create_role_endpoint():
+        """Create a role. Admin only."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        data = request.json or {}
+        name = (data.get('name') or '').strip()
+        if not name:
             return jsonify({'error': '角色名称不能为空'}), 400
-        role_name = data['name'].strip()
-        import sqlite3 as _sqlite3
-        _conn = _sqlite3.connect(db_path)
-        existing = _conn.execute('SELECT COUNT(*) FROM users WHERE role = ?', (role_name,)).fetchone()[0]
-        _conn.close()
-        return jsonify({'id': 1, 'name': role_name, 'user_count': existing})
+        if any(r['name'] == name for r in list_roles(db_path)):
+            return jsonify({'error': '角色名称已存在'}), 409
+        role_id = create_role(db_path, name, label=data.get('label', ''), description=data.get('description', ''))
+        if role_id is None:
+            return jsonify({'error': '创建失败'}), 500
+        # Optional initial permissions
+        perms = data.get('permissions')
+        if isinstance(perms, list):
+            set_role_permissions(db_path, role_id, perms)
+        r = get_role(db_path, role_id)
+        r['user_count'] = 0
+        r['permissions'] = get_role_permissions(db_path, role_id)
+        return jsonify(r), 201
 
     @app.route('/api/roles/<int:id>', methods=['PUT'])
     def update_role_endpoint(id):
-        data = request.json
-        if not data or not data.get('name'):
-            return jsonify({'error': '角色名称不能为空'}), 400
-        return jsonify({'id': id, 'name': data['name'].strip()})
+        """Update a role's label/description/permissions. Admin only."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        role = get_role(db_path, id)
+        if role is None:
+            return jsonify({'error': '角色不存在'}), 404
+        data = request.json or {}
+        if 'label' in data or 'description' in data:
+            update_role(db_path, id, label=data.get('label'), description=data.get('description'))
+        if 'permissions' in data and isinstance(data.get('permissions'), list):
+            set_role_permissions(db_path, id, data['permissions'])
+        r = get_role(db_path, id)
+        # user_count comes from list_roles (computes it via user_roles)
+        for lr in list_roles(db_path):
+            if lr['id'] == id:
+                r['user_count'] = lr['user_count']
+                break
+        r['permissions'] = get_role_permissions(db_path, id)
+        return jsonify(r)
 
     @app.route('/api/roles/<int:id>', methods=['DELETE'])
     def delete_role_endpoint(id):
+        """Delete a role (non-system only). Admin only."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        role = get_role(db_path, id)
+        if role is None:
+            return jsonify({'error': '角色不存在'}), 404
+        if role.get('is_system'):
+            return jsonify({'error': '内置角色不能删除'}), 403
+        if not delete_role(db_path, id):
+            return jsonify({'error': '删除失败'}), 500
         return jsonify({'ok': True})
+
+    # Permission catalog endpoint (read-only)
+    @app.route('/api/permissions', methods=['GET'])
+    def list_permissions_endpoint():
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        return jsonify(list_permissions(db_path))
+
+    # User-role association
+    @app.route('/api/users/<int:user_id>/roles', methods=['GET'])
+    def get_user_roles_endpoint(user_id):
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        return jsonify({'role_ids': get_user_role_ids(db_path, user_id),
+                        'role_names': get_user_role_names(db_path, user_id)})
+
+    @app.route('/api/users/<int:user_id>/roles', methods=['PUT'])
+    def set_user_roles_endpoint(user_id):
+        """Assign one or more roles to a user. Admin only."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': '需要管理员权限'}), 403
+        data = request.json or {}
+        role_ids = data.get('role_ids') or []
+        if isinstance(role_ids, int):
+            role_ids = [role_ids]
+        if not isinstance(role_ids, list):
+            return jsonify({'error': 'role_ids 必须是数组'}), 400
+        result = set_user_roles(db_path, user_id, role_ids)
+        if result is None:
+            return jsonify({'error': '更新失败'}), 500
+        return jsonify({'role_ids': result,
+                        'role_names': get_user_role_names(db_path, user_id)})
+
+    # Current user's own permissions (used by frontend to gate menus)
+    @app.route('/api/me/permissions', methods=['GET'])
+    def me_permissions_endpoint():
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        codes = get_user_permission_codes(db_path, user['user_id'], user.get('role'))
+        # Map codes back to full permission objects for the frontend
+        perms = list_permissions(db_path)
+        code_to_perm = {p['code']: p for p in perms}
+        return jsonify({
+            'role': user.get('role'),
+            'permissions': sorted(codes),
+            'permission_objects': [code_to_perm[c] for c in sorted(codes) if c in code_to_perm],
+        })
+
 
     # ========================================================================
     # System Settings
@@ -1329,22 +1515,39 @@ def create_app(project_root, spec):
             fields['username'] = data['username']
         if data.get('display_name'):
             fields['display_name'] = data['display_name']
-        if data.get('role_id') is not None:
-            # Map numeric role_id back to role name
-            id_to_role = {1: 'admin', 2: 'power_user', 3: 'user', 4: 'agent'}
-            fields['role'] = id_to_role.get(int(data['role_id']), 'user')
         if data.get('domains'):
             domains = data['domains']
             if isinstance(domains, list):
                 fields['domains'] = ','.join([str(d) for d in domains if d])
             elif isinstance(domains, str):
                 fields['domains'] = domains
+        # Role handling: support multi-role via role_ids, or single legacy role_id
+        if data.get('role_ids') is not None:
+            role_ids = data['role_ids']
+            if isinstance(role_ids, int):
+                role_ids = [role_ids]
+            if not isinstance(role_ids, list):
+                return jsonify({'error': 'role_ids 必须是数组'}), 400
+            # Persist legacy role (highest privilege) + user_roles together
+            set_user_roles(db_path, user_id, role_ids)
+        elif data.get('role_id') is not None:
+            # Legacy single-role path: map numeric role_id to name and sync both
+            id_to_role = {1: 'admin', 2: 'power_user', 3: 'user', 4: 'agent'}
+            role_name = id_to_role.get(int(data['role_id']), 'user')
+            role_id_map = {r['name']: r['id'] for r in list_roles(db_path)}
+            if role_name in role_id_map:
+                set_user_roles(db_path, user_id, [role_id_map[role_name]])
         updated = update_user(db_path, user_id, fields)
+        if updated is None:
+            # If only role changed (fields empty), update_user returns None; reload
+            updated = get_user_by_id_full(db_path, user_id)
         if updated is None:
             return jsonify({'error': '更新失败'}), 500
         # Handle password update separately
         if data.get('password') and len(data['password']) >= 6:
             update_user_password(db_path, user_id, data['password'])
+        updated['role_ids'] = get_user_role_ids(db_path, user_id)
+        updated['role_names'] = get_user_role_names(db_path, user_id)
         return jsonify(updated)
 
     @app.route('/api/users', methods=['POST'])
@@ -1367,14 +1570,29 @@ def create_app(project_root, spec):
             return jsonify({'error': '用户名和显示名称不能为空'}), 400
         if not password or len(password) < 6:
             return jsonify({'error': '密码至少6位'}), 400
-        id_to_role = {1: 'admin', 2: 'power_user', 3: 'user', 4: 'agent'}
-        role = id_to_role.get(role_id, 'user')
+        # Role handling: prefer multi-role role_ids, fall back to legacy single role_id
+        role_ids = data.get('role_ids')
+        if role_ids is None:
+            role_ids = [role_id]
+        elif isinstance(role_ids, int):
+            role_ids = [role_ids]
+        if not isinstance(role_ids, list) or not all(isinstance(r, (int, float)) for r in role_ids):
+            return jsonify({'error': 'role_ids 必须是数字数组'}), 400
+        if not role_ids:
+            role_ids = [3]  # default to 'user'
         if isinstance(domains, str):
             domains = [d.strip() for d in domains.split(',') if d.strip()]
-        uid = create_user(db_path, username, display_name, password, role=role, domains=domains)
+        # create_user sets a placeholder role; set_user_roles below re-syncs
+        # users.role to the highest-privilege assigned role.
+        uid = create_user(db_path, username, display_name, password, role='user', domains=domains)
         if uid is None:
             return jsonify({'error': '创建失败（用户名可能已存在）'}), 409
+        set_user_roles(db_path, uid, role_ids)
         u = get_user_by_id_full(db_path, uid)
+        if u is None:
+            return jsonify({'error': '创建后读取失败'}), 500
+        u['role_ids'] = get_user_role_ids(db_path, uid)
+        u['role_names'] = get_user_role_names(db_path, uid)
         return jsonify(u), 201
 
     @app.route('/api/users/<int:user_id>', methods=['DELETE'])
@@ -1394,28 +1612,6 @@ def create_app(project_root, spec):
     # ========================================================================
     # Authentication
     # ========================================================================
-
-    JWT_SECRET = os.environ.get('JWT_SECRET', 'default-dev-secret-change-in-production')
-    JWT_ALGORITHM = 'HS256'
-    JWT_EXPIRY_HOURS = 24
-
-    def _generate_token(user):
-        """Generate a JWT token for the given user."""
-        payload = {
-            'user_id': user['id'],
-            'username': user['username'],
-            'role': user['role'],
-            'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
-            'iat': datetime.utcnow(),
-        }
-        return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-    def _verify_token(token):
-        """Verify a JWT token and return the payload, or None if invalid."""
-        try:
-            return pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError):
-            return None
 
     @app.route('/api/auth/login', methods=['POST'])
     def auth_login():
@@ -1795,21 +1991,6 @@ def create_app(project_root, spec):
     def _now_iso():
         from datetime import datetime, timezone
         return datetime.now(timezone.utc).isoformat()
-
-
-    def require_auth(f):
-        """Decorator to require JWT auth."""
-        from functools import wraps
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            auth_header = request.headers.get('Authorization', '')
-            token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
-            user = _verify_token(token) if token else None
-            if not user:
-                return jsonify({'error': 'Unauthorized'}), 401
-            return f(*args, **kwargs)
-        return decorated
-
 
     # ─── 平台级 LLM 配置（所有域共享） ─────────────────────────
 

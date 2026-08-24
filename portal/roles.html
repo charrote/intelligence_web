@@ -17,15 +17,47 @@
 <script src="js/tabs.js"></script>
 <style>
 .role-name{font-weight:600;color:var(--gray-800)}
+.role-label{color:var(--gray-600);font-size:12px;margin-left:8px}
 .role-user-count{color:var(--gray-600);font-weight:500}
+.sys-badge{display:inline-block;padding:1px 6px;border-radius:8px;background:var(--gray-100);color:var(--gray-500);font-size:11px;margin-left:6px}
+.perm-count{color:var(--gray-500);font-size:12px}
 /* 图标按钮 */
 .btn-icon{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:var(--radius);background:transparent;color:var(--gray-500);cursor:pointer;transition:all 0.12s;padding:0;position:relative}
 .btn-icon:hover{background:var(--gray-100);color:var(--gray-700)}
 .btn-icon::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:6px;padding:4px 8px;background:#1a1a1a;color:#fff;font-size:11px;border-radius:4px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.15s;z-index:10}
 .btn-icon:hover::after{opacity:1}
+.btn-icon.btn-danger:hover{background:var(--red-light);color:var(--red)}
 /* 操作列固定 */
-.action-cell{position:sticky;right:0;background:#fff;z-index:1;min-width:60px;text-align:right;padding:10px 12px!important}
+.action-cell{position:sticky;right:0;background:#fff;z-index:1;min-width:70px;text-align:right;padding:10px 12px!important}
 .action-btns{display:flex;gap:4px;justify-content:flex-end;align-items:center}
+/* 面板 */
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}
+.panel{display:none;position:fixed;top:0;right:0;width:520px;max-width:94vw;height:100vh;background:#fff;box-shadow:var(--shadow-lg);z-index:201;flex-direction:column;overflow:hidden}
+.panel.open{display:flex}.panel.open+.panel-overlay{display:block}
+.panel-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--gray-200);flex-shrink:0}
+.panel-head h2{font-size:15px;font-weight:600;color:var(--gray-800);flex:1;line-height:1.4;padding-right:8px}
+.panel-close{width:28px;height:28px;border:none;border-radius:var(--radius);background:var(--gray-100);color:var(--gray-500);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-close:hover{background:var(--gray-200);color:var(--gray-700)}
+.panel-body{padding:20px;overflow-y:auto;flex:1}
+.panel-foot{padding:12px 20px;border-top:1px solid var(--gray-200);display:flex;gap:6px;flex-shrink:0}
+.panel-foot .btn{padding:7px 14px;border:none;border-radius:var(--radius);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.12s}
+.panel-foot .btn-primary{background:var(--accent);color:#fff}
+.panel-foot .btn-primary:hover{background:#2f3f70}
+.panel-foot .btn-ghost{background:var(--gray-100);color:var(--gray-600)}
+.panel-foot .btn-ghost:hover{background:var(--gray-200)}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px}
+.form-group input,.form-group textarea{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff;font-family:inherit}
+.form-group input:focus,.form-group textarea:focus{border-color:var(--accent);outline:none}
+.form-hint{font-size:11px;color:var(--gray-400);margin-top:4px}
+/* 权限分组 */
+.perm-group{margin-bottom:12px}
+.perm-group-title{font-size:12px;font-weight:600;color:var(--gray-700);margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--gray-100)}
+.perm-item{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;color:var(--gray-700);cursor:pointer}
+.perm-item input{width:15px;height:15px;cursor:pointer;accent-color:var(--accent)}
+.perm-item .perm-code{color:var(--gray-400);font-size:11px;margin-left:auto;font-family:monospace}
+.readonly-note{font-size:11px;color:var(--gray-400);margin-top:6px}
+@media(max-width:768px){.panel{width:100vw;max-width:100vw}}
 </style>
 </head>
 <body>
@@ -33,7 +65,7 @@
   <h1>角色管理</h1>
   <p class="sub">管理系统角色与权限分配</p>
   <div class="toolbar">
-    <input type="text" id="searchInput" placeholder="搜索角色..." oninput="loadRoles()">
+    <input type="text" id="searchInput" placeholder="搜索角色...">
     <span class="spacer"></span>
     <button class="btn btn-primary" onclick="openCreate()">+ 新建角色</button>
   </div>
@@ -42,14 +74,15 @@
       <thead>
         <tr>
           <th style="width:40px">#</th>
-          <th>角色名称</th>
+          <th>角色</th>
+          <th>权限数</th>
           <th>用户数</th>
-          <th>创建时间</th>
+          <th>说明</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody id="roleList">
-        <tr><td colspan="5" class="empty">加载中...</td></tr>
+        <tr><td colspan="6" class="empty">加载中...</td></tr>
       </tbody>
     </table>
   </div>
@@ -60,9 +93,22 @@
   <div class="panel-head"><h2 id="panelTitle">新建角色</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
   <div class="panel-body">
     <div class="form-group">
-      <label>角色名称 *</label>
-      <input type="text" id="editRoleName" placeholder="如：admin, editor, viewer">
-      <div style="font-size:11px;color:var(--gray-400);margin-top:4px">角色名称用于权限控制</div>
+      <label>角色标识 *</label>
+      <input type="text" id="editRoleName" placeholder="如：editor, auditor（唯一，不可重复）">
+      <div class="form-hint">角色标识用于权限控制，创建后不可修改</div>
+    </div>
+    <div class="form-group">
+      <label>显示名称</label>
+      <input type="text" id="editRoleLabel" placeholder="如：编辑（用于界面展示）">
+    </div>
+    <div class="form-group">
+      <label>说明</label>
+      <textarea id="editRoleDesc" rows="2" placeholder="角色用途说明（可选）"></textarea>
+    </div>
+    <div class="form-group">
+      <label>权限配置</label>
+      <div id="permGroups"></div>
+      <div class="readonly-note" id="permNote">勾选该角色拥有的权限</div>
     </div>
     <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
   </div>
@@ -78,72 +124,127 @@ var token = getToken();
 if (!token) { window.location.href = '/portal/login.html'; }
 
 var editingRoleId = null;
+var allPermissions = [];   // [{code, label, group}]
+var allRoles = [];
 
-function formatDate(iso){if(!iso)return'-';var d=new Date(iso);if(isNaN(d))return iso;return d.getFullYear()+'-'+(d.getMonth()+1).toString().padStart(2,'0')+'-'+d.getDate().toString().padStart(2,'0')}
+function escapeHtml(s){if(!s)return'';return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 
 function loadRoles(){
   apiFetch(apiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
-    var search = document.getElementById('searchInput').value.toLowerCase();
-    var filtered = search ? roles.filter(function(r){ return r.name.toLowerCase().includes(search); }) : roles;
-    var tbody = document.getElementById('roleList');
-    if(!filtered.length){tbody.innerHTML='<tr><td colspan="5" class="empty">暂无角色</td></tr>';return;}
-    tbody.innerHTML = filtered.map(function(role, i){
-      return '<tr>'
-        +'<td style="color:var(--gray-400)">'+(i+1).toString().padStart(2,'0')+'</td>'
-        +'<td><span class="role-name">'+escapeHtml(role.name)+'</span></td>'
-        +'<td><span class="role-user-count">'+(role.user_count||0)+' 人</span></td>'
-        +'<td>-</td>'
-        +'<td class="action-cell"><div class="action-btns">'
-          + '<button class="btn-icon" onclick="openEdit('+role.id+')" data-tip="编辑"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
-        +'</div></td>'
-        +'</tr>';
-    }).join('');
+    allRoles = roles;
+    renderRoles();
   }).catch(function(){
-    document.getElementById('roleList').innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
+    document.getElementById('roleList').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:30px">加载失败（需要管理员权限）</td></tr>';
   });
+}
+
+function renderRoles(){
+  var search = document.getElementById('searchInput').value.toLowerCase();
+  var filtered = search ? allRoles.filter(function(r){
+    return (r.name||'').toLowerCase().includes(search) || (r.label||'').toLowerCase().includes(search);
+  }) : allRoles;
+  var tbody = document.getElementById('roleList');
+  if(!filtered.length){tbody.innerHTML='<tr><td colspan="6" class="empty">暂无角色</td></tr>';return;}
+  tbody.innerHTML = filtered.map(function(role, i){
+    var permCount = (role.permissions||[]).length;
+    var isSys = role.is_system ? '<span class="sys-badge">内置</span>' : '';
+    var desc = role.description ? escapeHtml(role.description) : '-';
+    return '<tr>'
+      +'<td style="color:var(--gray-400)">'+(i+1).toString().padStart(2,'0')+'</td>'
+      +'<td><span class="role-name">'+escapeHtml(role.label||role.name)+'</span><span class="role-label">'+escapeHtml(role.name)+'</span>'+isSys+'</td>'
+      +'<td><span class="perm-count">'+permCount+' 项</span></td>'
+      +'<td><span class="role-user-count">'+(role.user_count||0)+' 人</span></td>'
+      +'<td style="color:var(--gray-500);font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+desc+'">'+desc+'</td>'
+      +'<td class="action-cell"><div class="action-btns">'
+        +'<button class="btn-icon" onclick="openEdit('+role.id+')" data-tip="编辑/权限"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'
+        +(role.is_system ? '' : '<button class="btn-icon btn-danger" onclick="deleteRole('+role.id+')" data-tip="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>')
+      +'</div></td>'
+      +'</tr>';
+  }).join('');
+}
+
+// Build permission checkboxes grouped by 'group'
+function renderPermGroups(selectedCodes){
+  selectedCodes = selectedCodes || [];
+  var groups = {};
+  allPermissions.forEach(function(p){
+    var g = p.group || '其他';
+    if(!groups[g]) groups[g] = [];
+    groups[g].push(p);
+  });
+  var html = '';
+  Object.keys(groups).forEach(function(g){
+    html += '<div class="perm-group"><div class="perm-group-title">'+escapeHtml(g)+'</div>';
+    groups[g].forEach(function(p){
+      var checked = selectedCodes.indexOf(p.code) >= 0 ? 'checked' : '';
+      html += '<label class="perm-item"><input type="checkbox" value="'+p.code+'" '+checked+'>'
+        +'<span>'+escapeHtml(p.label)+'</span><span class="perm-code">'+escapeHtml(p.code)+'</span></label>';
+    });
+    html += '</div>';
+  });
+  document.getElementById('permGroups').innerHTML = html;
+}
+
+function loadPermissions(){
+  apiFetch(apiBase()+'/api/permissions').then(function(r){return r.json()}).then(function(perms){
+    allPermissions = perms;
+  }).catch(function(){});
 }
 
 function openCreate(){
   editingRoleId = null;
   document.getElementById('panelTitle').textContent = '新建角色';
   document.getElementById('editRoleName').value = '';
+  document.getElementById('editRoleName').disabled = false;
+  document.getElementById('editRoleLabel').value = '';
+  document.getElementById('editRoleDesc').value = '';
+  document.getElementById('permNote').textContent = '勾选该角色拥有的权限';
+  renderPermGroups([]);
   document.getElementById('panelFeedback').style.display = 'none';
   document.getElementById('createPanel').classList.add('open');
   document.getElementById('editRoleName').focus();
 }
 
 function openEdit(id){
+  var role = allRoles.find(function(r){ return r.id === id; });
+  if(!role) return;
   editingRoleId = id;
   document.getElementById('panelTitle').textContent = '编辑角色';
-  // Fetch role details to pre-fill
-  apiFetch(apiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
-    var role = roles.find(function(r){ return r.id === id; });
-    if(role){
-      document.getElementById('editRoleName').value = role.name;
-    }
-    document.getElementById('panelFeedback').style.display = 'none';
-    document.getElementById('createPanel').classList.add('open');
-    document.getElementById('editRoleName').focus();
-  });
+  document.getElementById('editRoleName').value = role.name;
+  document.getElementById('editRoleName').disabled = true;  // 标识不可改
+  document.getElementById('editRoleLabel').value = role.label || '';
+  document.getElementById('editRoleDesc').value = role.description || '';
+  document.getElementById('permNote').textContent = '勾选该角色拥有的权限';
+  renderPermGroups(role.permissions || []);
+  document.getElementById('panelFeedback').style.display = 'none';
+  document.getElementById('createPanel').classList.add('open');
 }
 
 function closePanel(){
   document.getElementById('createPanel').classList.remove('open');
 }
 
+function selectedPermCodes(){
+  var boxes = document.querySelectorAll('#permGroups input[type=checkbox]:checked');
+  var codes = [];
+  boxes.forEach(function(b){ codes.push(b.value); });
+  return codes;
+}
+
 function saveRole(){
   var name = document.getElementById('editRoleName').value.trim();
+  var label = document.getElementById('editRoleLabel').value.trim();
+  var description = document.getElementById('editRoleDesc').value.trim();
   var fb = document.getElementById('panelFeedback');
   if(!name){
-    fb.style.display = 'block';
-    fb.style.background = '#fceef0';
-    fb.style.color = 'var(--red)';
-    fb.textContent = '角色名称不能为空';
-    return;
+    fb.style.display='block'; fb.style.background='#fceef0'; fb.style.color='var(--red)';
+    fb.textContent='角色标识不能为空'; return;
   }
-  var payload = { name: name };
+  var perms = selectedPermCodes();
   var method = editingRoleId ? 'PUT' : 'POST';
   var urlPath = editingRoleId ? apiBase()+'/api/roles/'+editingRoleId : apiBase()+'/api/roles';
+  var payload = { label: label, description: description, permissions: perms };
+  if(!editingRoleId) payload.name = name;
   apiFetch(urlPath, {
     method: method,
     headers: {'Content-Type':'application/json'},
@@ -151,30 +252,34 @@ function saveRole(){
   }).then(function(r){
     return r.json().then(function(e){
       if(r.ok){
-        fb.style.display = 'block';
-        fb.style.background = 'var(--green-light)';
-        fb.style.color = 'var(--green)';
-        fb.textContent = '保存成功';
-        setTimeout(function(){
-          closePanel();
-          loadRoles();
-        }, 800);
+        fb.style.display='block'; fb.style.background='var(--green-light)'; fb.style.color='var(--green)';
+        fb.textContent='保存成功';
+        setTimeout(function(){ closePanel(); loadRoles(); }, 600);
       } else {
-        fb.style.display = 'block';
-        fb.style.background = '#fceef0';
-        fb.style.color = 'var(--red)';
-        fb.textContent = e.error || '保存失败';
+        fb.style.display='block'; fb.style.background='#fceef0'; fb.style.color='var(--red)';
+        fb.textContent=e.error || '保存失败';
       }
     });
   }).catch(function(e){
-    fb.style.display = 'block';
-    fb.style.background = '#fceef0';
-    fb.style.color = 'var(--red)';
-    fb.textContent = '网络错误: '+e.message;
+    fb.style.display='block'; fb.style.background='#fceef0'; fb.style.color='var(--red)';
+    fb.textContent='网络错误: '+e.message;
   });
 }
 
-document.getElementById('searchInput').oninput = loadRoles;
+function deleteRole(id){
+  var role = allRoles.find(function(r){ return r.id === id; });
+  var msg = '确认删除角色「'+(role?role.label||role.name:'')+'」？该角色下已分配的用户将失去此角色权限。';
+  if(!confirm(msg)) return;
+  apiFetch(apiBase()+'/api/roles/'+id, { method:'DELETE' }).then(function(r){
+    return r.json().then(function(e){
+      if(r.ok){ loadRoles(); }
+      else { alert(e.error || '删除失败'); }
+    });
+  }).catch(function(){ alert('网络错误'); });
+}
+
+document.getElementById('searchInput').oninput = renderRoles;
+loadPermissions();
 loadRoles();
 </script>
 </body>

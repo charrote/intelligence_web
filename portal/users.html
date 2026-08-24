@@ -90,13 +90,9 @@
       <input type="password" id="mu_password" placeholder="至少6位">
     </div>
     <div class="form-group">
-      <label>角色</label>
-      <select id="mu_role">
-        <option value="3">viewer</option>
-        <option value="2">power_user</option>
-        <option value="1">admin</option>
-        <option value="4">agent</option>
-      </select>
+      <label>角色（可多选）</label>
+      <div id="mu_roles" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;max-height:160px;overflow-y:auto"></div>
+      <div style="font-size:11px;color:var(--gray-400);margin-top:4px">可分配多个角色，权限取所有角色的并集</div>
     </div>
     <div class="form-group">
       <label>所属域 (逗号分隔)</label>
@@ -116,6 +112,47 @@
 var token = getToken();
 if (!token) { window.location.href = '/portal/login.html'; }
 
+var allRoles = []; // [{id, name, label, is_system}]
+
+function escapeHtml(s){if(!s)return'';return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+
+function loadRolesForUsers(){
+  apiFetch(apiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
+    allRoles = roles;
+  }).catch(function(){});
+}
+
+// Render role checkboxes into #mu_roles, pre-checking given role_ids
+function renderRoleCheckboxes(roleIds){
+  roleIds = roleIds || [];
+  var box = document.getElementById('mu_roles');
+  if(!box) return;
+  if(!allRoles.length){ box.innerHTML = '<span style="font-size:12px;color:var(--gray-400)">角色加载中...</span>'; return; }
+  box.innerHTML = allRoles.map(function(r){
+    var checked = roleIds.indexOf(r.id) >= 0 ? 'checked' : '';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;color:var(--gray-700);cursor:pointer">'
+      +'<input type="checkbox" class="mu-role-cb" value="'+r.id+'" '+checked+'>"
+      +'<span>'+escapeHtml(r.label||r.name)+'</span>'
+      +'<span style="color:var(--gray-400);font-size:11px;font-family:monospace">'+escapeHtml(r.name)+'</span>'
+      +(r.is_system?'<span style="margin-left:auto;font-size:10px;color:var(--gray-400);background:var(--gray-100);padding:1px 5px;border-radius:8px">内置</span>':'')
+      +'</label>';
+  }).join('');
+}
+
+function selectedRoleIds(){
+  var boxes = document.querySelectorAll('.mu-role-cb:checked');
+  var ids = [];
+  boxes.forEach(function(b){ ids.push(parseInt(b.value)); });
+  return ids;
+}
+
+function roleTagClass(name){
+  if(name==='admin') return 'admin';
+  if(name==='power_user') return 'power_user';
+  if(name==='agent') return 'agent';
+  return 'viewer';
+}
+
 function openCreate() {
   document.getElementById('panelTitle').textContent = '新建用户';
   document.getElementById('mu_user_id').value = '';
@@ -124,7 +161,9 @@ function openCreate() {
   document.getElementById('mu_display').value = '';
   document.getElementById('mu_password').value = '';
   document.getElementById('mu_password').placeholder = '至少6位';
-  document.getElementById('mu_role').value = '3';
+  // default: select the 'user' role
+  var defaultRoleId = (allRoles.find(function(r){return r.name==='user';})||{}).id || (allRoles[0]||{}).id;
+  renderRoleCheckboxes(defaultRoleId ? [defaultRoleId] : []);
   document.getElementById('mu_domains').value = '';
   document.getElementById('panelFeedback').style.display = 'none';
   document.getElementById('panel').classList.add('open');
@@ -140,7 +179,7 @@ function openEdit(id) {
     document.getElementById('mu_display').value = u.display_name || '';
     document.getElementById('mu_password').value = '';
     document.getElementById('mu_password').placeholder = '留空不修改';
-    document.getElementById('mu_role').value = u.role_id || '3';
+    renderRoleCheckboxes(u.role_ids || []);
     document.getElementById('mu_domains').value = Array.isArray(u.domains) ? u.domains.join(', ') : '';
     document.getElementById('panelFeedback').style.display = 'none';
     document.getElementById('panel').classList.add('open');
@@ -157,7 +196,7 @@ function saveUser() {
   var username = document.getElementById('mu_username').value.trim();
   var display = document.getElementById('mu_display').value.trim();
   var password = document.getElementById('mu_password').value;
-  var role_id = parseInt(document.getElementById('mu_role').value);
+  var role_ids = selectedRoleIds();
   var domains_raw = document.getElementById('mu_domains').value.trim();
   var domains = domains_raw ? domains_raw.split(',').map(function(d){return d.trim()}).filter(Boolean) : [];
   var fb = document.getElementById('panelFeedback');
@@ -169,18 +208,26 @@ function saveUser() {
     fb.textContent = '用户名和显示名称不能为空';
     return;
   }
+  if (!role_ids.length) {
+    fb.style.display = 'block';
+    fb.style.background = '#fceef0';
+    fb.style.color = 'var(--red)';
+    fb.textContent = '请至少分配一个角色';
+    return;
+  }
 
-  var body = { username: username, display_name: display, role_id: role_id, domains: domains };
+  var body = { username: username, display_name: display, role_ids: role_ids, domains: domains };
   if (id) {
     if (password) body.password = password;
     apiFetch(apiBase()+'/api/users/'+id, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
-    }).then(function(){
+    }).then(function(r){
+      if(!r.ok) return r.json().then(function(e){ alert(e.error||'保存失败'); });
       closePanel();
       loadUsers();
-    });
+    }).catch(function(){ alert('网络错误'); });
   } else {
     if (!password || password.length < 6) {
       fb.style.display = 'block';
@@ -194,10 +241,11 @@ function saveUser() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
-    }).then(function(){
+    }).then(function(r){
+      if(!r.ok) return r.json().then(function(e){ alert(e.error||'创建失败'); });
       closePanel();
       loadUsers();
-    });
+    }).catch(function(){ alert('网络错误'); });
   }
 }
 
@@ -213,14 +261,18 @@ function loadUsers() {
   apiFetch(apiBase()+'/api/users?search='+encodeURIComponent(search)+'&limit=100').then(function(r){return r.json()}).then(function(data){
     var tbody = document.getElementById('userList');
     tbody.innerHTML = data.items.map(function(u){
-      var roleClass = u.role_name || '';
       var domains = Array.isArray(u.domains) ? u.domains.join(', ') : '-';
+      // Multi-role tags
+      var roleNames = Array.isArray(u.role_names) && u.role_names.length ? u.role_names : [u.role_name || 'viewer'];
+      var roleTags = roleNames.map(function(n){
+        return '<span class="tag '+roleTagClass(n)+'" style="margin-right:4px">'+escapeHtml(n)+'</span>';
+      }).join('');
       return '<tr>'
         +'<td>'+u.id+'</td>'
-        +'<td>'+u.username+'</td>'
-        +'<td>'+(u.display_name || '-')+'</td>'
-        +'<td><span class="tag '+roleClass+'">'+(u.role_name || 'viewer')+'</span></td>'
-        +'<td>'+domains+'</td>'
+        +'<td>'+escapeHtml(u.username)+'</td>'
+        +'<td>'+escapeHtml(u.display_name || '-')+'</td>'
+        +'<td>'+roleTags+'</td>'
+        +'<td>'+escapeHtml(domains)+'</td>'
         +'<td>'+(u.created_at ? new Date(u.created_at).toLocaleDateString() : '-')+'</td>'
         +'<td class="action-cell">'
           +'<div class="action-btns">'
@@ -236,6 +288,7 @@ function loadUsers() {
   });
 }
 
+loadRolesForUsers();
 loadUsers();
 </script>
 </body>

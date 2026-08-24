@@ -63,20 +63,20 @@
     <div class="sidebar-item" data-route="dashboard" onclick="openTab('dashboard')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>数据看板</div>
     <div class="sidebar-divider"></div>
     <div class="sidebar-label">系统</div>
-    <div class="sidebar-item" data-route="projects" onclick="openTab('projects')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M9 14l2 2 4-4"/></svg></span>采集项目</div>
-    <div class="sidebar-item" data-route="datasources" onclick="openTab('datasources')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>数据源管理</div>
-    <div class="sidebar-item" data-route="target_types" onclick="openTab('target_types')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>目标类型</div>
+    <div class="sidebar-item" data-route="projects" data-perm="projects.manage" onclick="openTab('projects')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M9 14l2 2 4-4"/></svg></span>采集项目</div>
+    <div class="sidebar-item" data-route="datasources" data-perm="datasources.manage" onclick="openTab('datasources')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>数据源管理</div>
+    <div class="sidebar-item" data-route="target_types" data-perm="target_types.manage" onclick="openTab('target_types')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>目标类型</div>
     <div class="sidebar-item" data-route="analyst" onclick="openTab('analyst')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20z"/><path d="M12 8v4l3 3"/></svg></span>AI 分析师</div>
-    <div class="sidebar-item" data-route="intel-extract" onclick="openTab('intel-extract')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></span>抽取规则</div>
-    <div class="sidebar-item" data-route="reports" onclick="openTab('reports')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>报告模板</div>
-    <div class="sidebar-item" data-route="import" onclick="openTab('import')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>批量导入</div>
+    <div class="sidebar-item" data-route="intel-extract" data-perm="rules.manage" onclick="openTab('intel-extract')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></span>抽取规则</div>
+    <div class="sidebar-item" data-route="reports" data-perm="reports.manage" onclick="openTab('reports')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>报告模板</div>
+    <div class="sidebar-item" data-route="import" data-perm="intel.import" onclick="openTab('import')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>批量导入</div>
     <div class="sidebar-item" data-route="notifications" onclick="openTab('notifications')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>通知中心</div>
     <div class="sidebar-divider"></div>
     <div class="sidebar-label">其他</div>
-    <div class="sidebar-item" data-route="users" onclick="openTab('users')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>用户管理</div>
-    <div class="sidebar-item" data-route="roles" onclick="openTab('roles')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>角色管理</div>
-    <div class="sidebar-item" data-route="audit" onclick="openTab('audit')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>操作日志</div>
-    <div class="sidebar-item" data-route="sys-settings" onclick="openTab('sys-settings')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/><circle cx="12" cy="12" r="4"/></svg></span>系统设置</div>
+    <div class="sidebar-item" data-route="users" data-perm="users.manage" onclick="openTab('users')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>用户管理</div>
+    <div class="sidebar-item" data-route="roles" data-perm="roles.manage" onclick="openTab('roles')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>角色管理</div>
+    <div class="sidebar-item" data-route="audit" data-perm="audit.view" onclick="openTab('audit')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>操作日志</div>
+    <div class="sidebar-item" data-route="sys-settings" data-perm="settings.manage" onclick="openTab('sys-settings')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/><circle cx="12" cy="12" r="4"/></svg></span>系统设置</div>
     <div id="sidebarCats"></div>
   </aside>
   <div class="tab-content-wrapper">
@@ -148,6 +148,26 @@ var currentIntel = null;
 function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;}
 function openPanel(){document.getElementById('detailPanel').classList.add('open');}
 
+// RBAC: hide sidebar items the current user has no permission for.
+// Items carry data-perm="code"; no data-perm = visible to all.
+// admin (or no token role info yet) keeps everything visible.
+function applyMenuPermissions() {
+  var u = getUser();
+  if (!u) return;
+  var perms = null;
+  try { perms = JSON.parse(localStorage.getItem('permissions') || 'null'); } catch (e) { perms = null; }
+  if (!perms) return; // not loaded yet — keep everything (don't hide admin)
+  var isAdmin = (u.role === 'admin') || (Array.isArray(perms) && perms.indexOf('*') >= 0);
+  if (isAdmin) return;
+  var items = document.querySelectorAll('.sidebar-item[data-perm]');
+  items.forEach(function(el) {
+    var code = el.getAttribute('data-perm');
+    if (code && perms.indexOf(code) < 0) {
+      el.style.display = 'none';
+    }
+  });
+}
+
 window.addEventListener('load', function() {
   if (!checkAuth()) return;
   var port = getDomainPort ? getDomainPort() : 8766;
@@ -155,6 +175,16 @@ window.addEventListener('load', function() {
   var sel = document.getElementById('domainSwitcher');
   if (sel) sel.value = port;
   loadEnabledDomains();
+  // Load the current user's permissions and gate the menu
+  apiFetch(systemApiBase() + '/api/me/permissions')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      localStorage.setItem('permissions', JSON.stringify(data.permissions || []));
+      applyMenuPermissions();
+    })
+    .catch(function() {
+      applyMenuPermissions();
+    });
   loadDomainConfig().then(function() {
     updateAvatar();
     initTabs();

@@ -578,6 +578,14 @@ def list_users(db_path, search=None, limit=100):
             u = dict(r)
             u['role_name'] = _role_to_label(u.get('role', 'user'))
             u['role_id'] = _role_to_id(u.get('role', 'user'))
+            # Multi-role associations (RBAC)
+            u['role_ids'] = [x['role_id'] for x in conn.execute(
+                'SELECT role_id FROM user_roles WHERE user_id=? ORDER BY role_id', (u['id'],)
+            ).fetchall()]
+            u['role_names'] = [x['name'] for x in conn.execute(
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+                "WHERE ur.user_id=? ORDER BY r.id", (u['id'],)
+            ).fetchall()]
             u['domains'] = u.get('domains') or ''
             if isinstance(u.get('domains'), str):
                 u['domains'] = [d.strip() for d in u['domains'].split(',') if d.strip()] if u['domains'] else []
@@ -606,6 +614,13 @@ def get_user_by_id_full(db_path, user_id):
         u = dict(row)
         u['role_name'] = _role_to_label(u.get('role', 'user'))
         u['role_id'] = _role_to_id(u.get('role', 'user'))
+        u['role_ids'] = [x['role_id'] for x in conn.execute(
+            'SELECT role_id FROM user_roles WHERE user_id=? ORDER BY role_id', (u['id'],)
+        ).fetchall()]
+        u['role_names'] = [x['name'] for x in conn.execute(
+            "SELECT r.name FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+            "WHERE ur.user_id=? ORDER BY r.id", (u['id'],)
+        ).fetchall()]
         u['domains'] = u.get('domains') or ''
         if isinstance(u.get('domains'), str):
             u['domains'] = [d.strip() for d in u['domains'].split(',') if d.strip()] if u['domains'] else []
@@ -691,6 +706,321 @@ def delete_user(db_path, user_id):
         except Exception as e:
             print(f"[delete_user] ERROR: {e}")
             return False
+
+
+# =============================================================================
+# RBAC: Roles / Permissions / Associations
+# =============================================================================
+
+# Fixed permission catalog: (code, label, group). Codes are stable identifiers.
+PERMISSION_CATALOG = [
+    ('intel.view', '查看情报', '情报'),
+    ('intel.import', '批量导入', '情报'),
+    ('rules.manage', '抽取规则', '配置'),
+    ('reports.manage', '报告模板', '配置'),
+    ('projects.manage', '采集项目', '配置'),
+    ('datasources.manage', '数据源管理', '配置'),
+    ('target_types.manage', '目标类型', '配置'),
+    ('users.manage', '用户管理', '系统'),
+    ('roles.manage', '角色管理', '系统'),
+    ('audit.view', '操作日志', '系统'),
+    ('settings.manage', '系统设置', '系统'),
+]
+
+ALL_PERMISSION_CODES = {code for code, _, _ in PERMISSION_CATALOG}
+
+# Built-in roles: (name, label, description, permission codes or ['all']).
+BUILTIN_ROLES = [
+    ('admin', '管理员', '拥有全部权限', ['all']),
+    ('power_user', '高级用户', '日常运营与配置权限',
+     ['intel.view', 'intel.import', 'rules.manage', 'reports.manage',
+      'projects.manage', 'datasources.manage', 'target_types.manage', 'audit.view']),
+    ('user', '普通用户', '只读查看情报', ['intel.view']),
+    ('agent', '智能体', '系统智能体账号', ['intel.view']),
+]
+
+# Role privilege order (higher = more powerful). Used to derive effective role.
+ROLE_PRIORITY = {'admin': 4, 'power_user': 3, 'user': 2, 'agent': 1}
+
+
+def _seed_rbac(conn):
+    """Create RBAC tables, seed permission catalog + built-in roles, backfill
+    user_roles from legacy users.role. Idempotent — safe on every startup.
+    """
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            label TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            is_system INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            label TEXT DEFAULT '',
+            "group" TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS role_permissions (
+            role_id INTEGER NOT NULL,
+            permission_code TEXT NOT NULL,
+            PRIMARY KEY (role_id, permission_code),
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS user_roles (
+            user_id INTEGER NOT NULL,
+            role_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, role_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+        )
+    ''')
+
+    now = datetime.now().isoformat()
+    # Seed permission catalog (idempotent)
+    for code, label, group in PERMISSION_CATALOG:
+        conn.execute(
+            'INSERT OR IGNORE INTO permissions (code, label, "group", created_at) VALUES (?,?,?,?)',
+            (code, label, group, now)
+        )
+    # Built-in roles are kept in sync with the declared template on every
+    # startup (INSERT OR IGNORE = idempotent, self-healing). This ensures new
+    # permission codes in the catalog propagate to existing built-in roles.
+    for name, label, desc, perms in BUILTIN_ROLES:
+        existing = conn.execute('SELECT id FROM roles WHERE name=?', (name,)).fetchone()
+        if existing is None:
+            cur = conn.execute(
+                'INSERT INTO roles (name, label, description, is_system, created_at, updated_at) '
+                'VALUES (?,?,?,?,?,?)',
+                (name, label, desc, 1, now, now)
+            )
+            role_id = cur.lastrowid
+        else:
+            role_id = existing['id']
+        for p in perms:
+            codes = list(ALL_PERMISSION_CODES) if p == 'all' else [p]
+            for code in codes:
+                conn.execute(
+                    'INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES (?,?)',
+                    (role_id, code)
+                )
+    # Backfill user_roles from legacy users.role, only for users with no role yet
+    role_name_to_id = {r['name']: r['id'] for r in conn.execute('SELECT id, name FROM roles').fetchall()}
+    for u in conn.execute('SELECT id, role FROM users').fetchall():
+        has = conn.execute('SELECT COUNT(*) FROM user_roles WHERE user_id=?', (u['id'],)).fetchone()[0]
+        if has == 0:
+            rid = role_name_to_id.get(u['role'])
+            if rid:
+                conn.execute(
+                    'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?,?)',
+                    (u['id'], rid)
+                )
+    conn.commit()
+
+
+def list_roles(db_path):
+    """List all roles with user_count. Returns list of dicts."""
+    with get_db(db_path) as conn:
+        rows = conn.execute('''
+            SELECT r.id, r.name, r.label, r.description, r.is_system, r.created_at,
+                   (SELECT COUNT(*) FROM user_roles ur WHERE ur.role_id = r.id) AS user_count
+            FROM roles r ORDER BY r.id ASC
+        ''').fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_role(db_path, role_id):
+    with get_db(db_path) as conn:
+        row = conn.execute('SELECT * FROM roles WHERE id=?', (role_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def create_role(db_path, name, label='', description=''):
+    """Create a role. Returns new role id or None on error (e.g. duplicate)."""
+    now = datetime.now().isoformat()
+    with get_db(db_path) as conn:
+        try:
+            cur = conn.execute(
+                'INSERT INTO roles (name, label, description, is_system, created_at, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                (name.strip(), label, description, 0, now, now)
+            )
+            conn.commit()
+            return cur.lastrowid
+        except Exception as e:
+            print(f"[create_role] ERROR: {e}")
+            return None
+
+
+def update_role(db_path, role_id, label=None, description=None):
+    """Update a role's label/description. Returns updated role dict or None."""
+    now = datetime.now().isoformat()
+    with get_db(db_path) as conn:
+        try:
+            sets, params = ['updated_at=?'], [now]
+            if label is not None:
+                sets.append('label=?'); params.append(label)
+            if description is not None:
+                sets.append('description=?'); params.append(description)
+            if len(sets) == 1:
+                return get_role(db_path, role_id)
+            params.append(role_id)
+            conn.execute(f'UPDATE roles SET {", ".join(sets)} WHERE id=?', params)
+            conn.commit()
+            return get_role(db_path, role_id)
+        except Exception as e:
+            print(f"[update_role] ERROR: {e}")
+            return None
+
+
+def delete_role(db_path, role_id):
+    """Delete a role. Refuses system roles. Returns True on success."""
+    with get_db(db_path) as conn:
+        try:
+            row = conn.execute('SELECT is_system FROM roles WHERE id=?', (role_id,)).fetchone()
+            if row is None:
+                return False
+            if row['is_system']:
+                return False
+            conn.execute('DELETE FROM roles WHERE id=?', (role_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[delete_role] ERROR: {e}")
+            return False
+
+
+def get_role_permissions(db_path, role_id):
+    """Return list of permission codes granted to a role."""
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            'SELECT permission_code FROM role_permissions WHERE role_id=? ORDER BY permission_code',
+            (role_id,)
+        ).fetchall()
+        return [r['permission_code'] for r in rows]
+
+
+def set_role_permissions(db_path, role_id, codes):
+    """Replace a role's permission set. codes is a list of permission codes."""
+    valid = [c for c in codes if c in ALL_PERMISSION_CODES]
+    with get_db(db_path) as conn:
+        try:
+            conn.execute('DELETE FROM role_permissions WHERE role_id=?', (role_id,))
+            for code in valid:
+                conn.execute(
+                    'INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES (?,?)',
+                    (role_id, code)
+                )
+            conn.commit()
+            return get_role_permissions(db_path, role_id)
+        except Exception as e:
+            print(f"[set_role_permissions] ERROR: {e}")
+            return None
+
+
+def list_permissions(db_path):
+    """Return the full permission catalog as list of dicts, grouped."""
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            'SELECT code, label, "group" FROM permissions ORDER BY "group" ASC, code ASC'
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_user_role_ids(db_path, user_id):
+    """Return list of role ids assigned to a user."""
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            'SELECT role_id FROM user_roles WHERE user_id=? ORDER BY role_id',
+            (user_id,)
+        ).fetchall()
+        return [r['role_id'] for r in rows]
+
+
+def get_user_role_names(db_path, user_id):
+    """Return list of role names assigned to a user."""
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            'SELECT r.name FROM user_roles ur JOIN roles r ON r.id=ur.role_id '
+            'WHERE ur.user_id=? ORDER BY r.id',
+            (user_id,)
+        ).fetchall()
+        return [r['name'] for r in rows]
+
+
+def set_user_roles(db_path, user_id, role_ids):
+    """Replace a user's role assignments. Also updates the legacy users.role
+    to the highest-privilege role for backward compatibility.
+    Returns the list of assigned role ids or None on error.
+    """
+    valid = [int(r) for r in role_ids if r is not None]
+    with get_db(db_path) as conn:
+        try:
+            conn.execute('DELETE FROM user_roles WHERE user_id=?', (user_id,))
+            for rid in valid:
+                conn.execute(
+                    'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?,?)',
+                    (user_id, rid)
+                )
+            # Sync legacy users.role to the highest-privilege assigned role
+            names = [r['name'] for r in conn.execute(
+                'SELECT r.name FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=?',
+                (user_id,)
+            ).fetchall()]
+            primary = max(names, key=lambda n: ROLE_PRIORITY.get(n, 0), default='user')
+            conn.execute(
+                'UPDATE users SET role=?, updated_at=? WHERE id=?',
+                (primary, datetime.now().isoformat(), user_id)
+            )
+            conn.commit()
+            return get_user_role_ids(db_path, user_id)
+        except Exception as e:
+            print(f"[set_user_roles] ERROR: {e}")
+            return None
+
+
+def get_user_effective_role(db_path, user_id):
+    """Return the highest-privilege role name a user has (for the token claim)."""
+    names = get_user_role_names(db_path, user_id)
+    if not names:
+        # Fallback to legacy users.role
+        with get_db(db_path) as conn:
+            row = conn.execute('SELECT role FROM users WHERE id=?', (user_id,)).fetchone()
+            return row['role'] if row else 'user'
+    return max(names, key=lambda n: ROLE_PRIORITY.get(n, 0))
+
+
+def get_user_permission_codes(db_path, user_id, primary_role=None):
+    """Return the set of permission codes a user effectively has (union of all
+    their roles). A user with the admin role gets every permission.
+    """
+    if primary_role == 'admin':
+        return set(ALL_PERMISSION_CODES)
+    with get_db(db_path) as conn:
+        # admin via any assigned role
+        admin = conn.execute(
+            "SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+            "WHERE ur.user_id=? AND r.name='admin' LIMIT 1",
+            (user_id,)
+        ).fetchone()
+        if admin:
+            return set(ALL_PERMISSION_CODES)
+        rows = conn.execute(
+            'SELECT DISTINCT rp.permission_code FROM user_roles ur '
+            'JOIN role_permissions rp ON rp.role_id=ur.role_id '
+            'WHERE ur.user_id=?',
+            (user_id,)
+        ).fetchall()
+        return {r['permission_code'] for r in rows}
 
 
 # =============================================================================
@@ -1261,6 +1591,14 @@ def migrate_db(db_path):
                     'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     ('user', h, s, '普通用户', 'user', 1, now, now)
                 )
+
+            # ── RBAC: roles / permissions / associations ──
+            # Idempotent: creates tables, seeds permission catalog + built-in
+            # roles, and backfills user_roles from legacy users.role.
+            try:
+                _seed_rbac(conn)
+            except Exception as e:
+                print(f"[migrate_db] RBAC seed warning: {e}")
 
             # ── Layer 2/3/4: Extraction Rules + Facts + Aggregates ──
             # init_db no longer seeds these. migrate_db seeds on first run only.
