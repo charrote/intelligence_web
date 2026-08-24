@@ -163,9 +163,21 @@ tr:hover td{background:var(--gray-50)}
 .comment-section h3{font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:10px}
 .comment{padding:10px 14px;background:var(--gray-50);border-radius:var(--radius);margin-bottom:6px}
 .comment-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
-.comment-name{font-weight:500;font-size:12px;color:var(--accent)}
+.comment-name{font-weight:500;font-size:12px;color:var(--gray-600)}
+.comment-name .cbadge{margin-right:6px}
 .comment-time{font-size:11px;color:var(--gray-400)}
 .comment-text{font-size:12px;color:var(--gray-600);line-height:1.5}
+/* Human / AI badges — restrained, no color bars */
+.cbadge{display:inline-block;font-size:10px;font-weight:600;line-height:1;padding:2px 5px;border-radius:3px;border:1px solid transparent;vertical-align:middle}
+.cbadge-ai{color:var(--gray-500);background:var(--gray-100);border-color:var(--gray-200)}
+.cbadge-human{color:var(--gray-700);background:#fff;border-color:var(--gray-300)}
+.comment-self{font-size:11px;color:var(--accent);margin-left:2px}
+.comment-self-card{background:var(--accent-light);border:1px solid var(--gray-200)}
+/* Composer */
+.comment-composer{border:1px solid var(--gray-200);border-radius:var(--radius);background:#fff;padding:10px}
+.comment-composer textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:60px;border:1px solid var(--gray-200);border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;color:var(--gray-600);line-height:1.5}
+.comment-composer textarea:focus{outline:none;border-color:var(--accent)}
+.comment-composer-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
 
 /* Modal (Center) */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:200}

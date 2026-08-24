@@ -232,6 +232,42 @@ def create_app(project_root, spec):
         cid = add_comment(db_path, id, agent_name, data['content'], agent_id)
         return jsonify({'id': cid}), 201
 
+    @app.route('/api/intelligence/<int:id>/human-comment', methods=['POST'])
+    def add_intel_human_comment(id):
+        """Add a human (logged-in user) comment to an intelligence record.
+
+        Any authenticated user may post. The commenter's identity is taken
+        from the verified JWT (never from the request body).
+        """
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': '未登录或登录已过期'}), 401
+
+        intel = get_intelligence_by_id(db_path, id)
+        if intel is None:
+            return jsonify({'error': 'not found'}), 404
+
+        data = request.get_json(silent=True) or {}
+        content = (data.get('content') or '').strip()
+        if not content:
+            return jsonify({'error': '评论内容不能为空'}), 400
+        if len(content) > 2000:
+            return jsonify({'error': '评论内容不能超过 2000 字'}), 400
+
+        # Resolve the real display name from the DB (falls back to username)
+        db_user = get_user_by_id(db_path, user.get('user_id'))
+        display_name = (db_user or {}).get('display_name') or user.get('username') or '用户'
+
+        cid = add_comment(db_path, id, display_name, content, '', user_id=user.get('user_id'))
+        return jsonify({
+            'id': cid,
+            'intelligence_id': id,
+            'user_id': user.get('user_id'),
+            'agent_name': display_name,
+            'content': content,
+            'created_at': datetime.now().isoformat(),
+        }), 201
+
     @app.route('/api/intelligence/<int:id>/history', methods=['GET'])
     def get_intel_history(id):
         return jsonify(get_history(db_path, id))

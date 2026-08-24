@@ -844,12 +844,17 @@ def get_intelligence_count_for_project(db_path, project_id):
         return row['c'] if row else 0
 
 
-def add_comment(db_path, intelligence_id, agent_name, content, agent_id=''):
+def add_comment(db_path, intelligence_id, agent_name, content, agent_id='', user_id=None):
+    """Add a comment to an intelligence record.
+
+    Human comments set user_id (the commenter's user id); agent comments
+    leave it NULL. agent_name holds the display name for both kinds.
+    """
     with get_db(db_path) as conn:
         now = datetime.now().isoformat()
         cursor = conn.execute(
-            'INSERT INTO comments (intelligence_id, agent_name, agent_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
-            (intelligence_id, agent_name, agent_id, content, now)
+            'INSERT INTO comments (intelligence_id, agent_name, agent_id, user_id, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            (intelligence_id, agent_name, agent_id, user_id, content, now)
         )
         conn.commit()
         return cursor.lastrowid
@@ -1235,6 +1240,12 @@ def migrate_db(db_path):
             except Exception:
                 pass  # column already exists
 
+            # Migration: add user_id to comments table if missing (human comments)
+            try:
+                c.execute('ALTER TABLE comments ADD COLUMN user_id INTEGER')
+            except Exception:
+                pass  # column already exists
+
             # Ensure default users exist
             now = datetime.now().isoformat()
             existing_users = {r['username'] for r in c.execute('SELECT username FROM users').fetchall()}
@@ -1422,6 +1433,12 @@ def migrate_db(db_path):
                     )
 
                 conn.commit()
+
+            # Always commit schema changes (DDL) even when the rule-seeding
+            # block above is skipped on non-first runs. Without this, ALTER
+            # TABLE statements issued outside the `if _rule_count == 0` block
+            # would be rolled back when the connection closes (no commit).
+            conn.commit()
 
         # Step 3: Verify data integrity after migration
         post_counts = _record_counts(db_path)

@@ -243,7 +243,17 @@ function renderDetail() {
     +'</div>'
     +'<div id="attachmentsList" style="font-size:13px">加载中...</div>'
     +'</div>'
-    +'<div class="comment-section"><h3>Agent 评论</h3><div id="commentsContainer">加载中...</div></div>';
+    +'<div class="comment-section"><h3>评论</h3>'
+    +'<div id="commentsContainer" style="margin-bottom:12px">加载中...</div>'
+    +'<div class="comment-composer" id="commentComposer">'
+    +'<textarea id="commentInput" rows="3" maxlength="2000" placeholder="写下你的看法（最多 2000 字）" '
+    +'onkeydown="if(event.key===\'Enter\'&&(event.ctrlKey||event.metaKey))submitHumanComment()"></textarea>'
+    +'<div class="comment-composer-foot">'
+    +'<span id="commentCount" style="font-size:11px;color:var(--gray-400)"></span>'
+    +'<button class="btn btn-primary btn-sm" id="commentSubmitBtn" onclick="submitHumanComment()">发表评论</button>'
+    +'</div>'
+    +'</div>'
+    +'</div>';
   var btns='';
   if(d.status==='pending')btns+='<button class="btn btn-success" onclick="updateStatus(\'approved\')">建议跟进</button><button class="btn btn-danger" onclick="updateStatus(\'rejected\')">不建议</button>';
   else if(d.status==='approved')btns+='<button class="btn btn-primary" onclick="updateStatus(\'active\')">激活项目</button>';
@@ -251,6 +261,7 @@ function renderDetail() {
   btns+='<span class="spacer"></span><button class="btn btn-ghost" onclick="updateStatus(\'discarded\')">废止</button>';
   if(isAdmin){btns+='<button class="btn btn-danger" onclick="deleteIntel('+currentIntel.id+')" style="margin-left:4px;background:#b33a3a;color:#fff">删除</button>';}
   foot.innerHTML=btns;
+  bindCommentInput();
 }
 
 async function updateStatus(status) {
@@ -273,13 +284,69 @@ async function deleteIntel(id) {
   } catch(e) { alert('删除失败'); }
 }
 
+function updateCommentCharCount() {
+  var ta=document.getElementById('commentInput');
+  var el=document.getElementById('commentCount');
+  if(!ta||!el)return;
+  el.textContent=ta.value.length+' / 2000';
+}
+
 async function loadComments(id) {
   try {
-    var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+id+'/comments?limit=20');var comments=await r.json();
+    var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+id+'/comments?limit=50');var comments=await r.json();
     var c=document.getElementById('commentsContainer');if(!c)return;
     if(!comments.length){c.innerHTML='<div style="color:var(--gray-400);font-size:13px;">暂无评论</div>';return;}
-    c.innerHTML=comments.map(function(co){return '<div class="comment"><div class="comment-head"><span class="comment-name">'+escapeHtml(co.agent_name)+'</span><span class="comment-time">'+formatDate(co.created_at)+'</span></div><div class="comment-text">'+escapeHtml(co.content||'')+'</div></div>'}).join('');
+    var me=(getUser()||{}).id;
+    c.innerHTML=comments.map(function(co){
+      var isHuman=co.user_id!=null;
+      var badge,isSelf=false;
+      if(isHuman){
+        badge='<span class="cbadge cbadge-human">人</span>';
+        if(me!=null&&co.user_id===me)isSelf=true;
+      }else{
+        badge='<span class="cbadge cbadge-ai">AI</span>';
+      }
+      var name=escapeHtml(co.agent_name||'');
+      var selfTag=isSelf?'<span class="comment-self">（我）</span>':'';
+      return '<div class="comment '+(isSelf?'comment-self-card':'')+'"><div class="comment-head">'
+        +'<span class="comment-name">'+badge+name+selfTag+'</span>'
+        +'<span class="comment-time">'+formatDate(co.created_at)+'</span>'
+        +'</div><div class="comment-text">'+escapeHtml(co.content||'')+'</div></div>';
+    }).join('');
   }catch(e){}
+}
+
+function bindCommentInput() {
+  var ta=document.getElementById('commentInput');
+  if(!ta||ta.__bound)return;
+  ta.__bound=true;
+  ta.addEventListener('input',updateCommentCharCount);
+  updateCommentCharCount();
+}
+
+async function submitHumanComment() {
+  if(!currentIntel)return;
+  var ta=document.getElementById('commentInput');
+  var btn=document.getElementById('commentSubmitBtn');
+  if(!ta)return;
+  var text=ta.value.trim();
+  if(!text){ta.focus();return;}
+  if(text.length>2000){alert('评论内容不能超过 2000 字');return;}
+  if(btn)btn.disabled=true;
+  try {
+    var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+currentIntel.id+'/human-comment',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})
+    });
+    if(!r.ok){
+      var d={};try{d=await r.json();}catch(e2){}
+      alert(d.error||'评论发表失败');
+    }else{
+      ta.value='';
+      updateCommentCharCount();
+      await loadComments(currentIntel.id);
+    }
+  }catch(e){alert('评论发表失败');}
+  finally{if(btn)btn.disabled=false;}
 }
 
 async function uploadAttachment(intelId) {
