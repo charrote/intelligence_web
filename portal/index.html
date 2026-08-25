@@ -24,36 +24,41 @@
 .row-index{width:36px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--gray-400);flex-shrink:0}
 .row-body{flex:1;padding:12px 16px 12px 0;overflow:hidden;display:flex;flex-direction:column;gap:6px}
 .row-title{font-size:14px;font-weight:500;color:var(--gray-800);line-height:1.5}
+.row-title.read{color:var(--gray-400)}
 .row-meta{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--gray-400);flex-wrap:wrap}
 .row-meta .tag{display:inline-flex;padding:1px 6px;border-radius:2px;font-size:11px;font-weight:500;color:var(--gray-600);background:var(--gray-100)}
 .row-meta .tag-company{color:var(--accent);background:var(--accent-light)}
 .row-meta .deal{color:var(--green);font-weight:500}
-.stat-num.gold{color:var(--amber)}.stat-num.green{color:var(--green)}.stat-num.accent{color:var(--accent)}
+.stat-num.gold{color:var(--amber)}.stat-num.green{color:var(--green)}.stat-num.accent{color:var(--accent)}.stat-num.blue{color:var(--blue)}
+.pager{display:flex;align-items:center;justify-content:center;gap:6px;margin:20px 0 8px;flex-wrap:wrap}
+.pg-info{font-size:12px;color:var(--gray-400);margin-right:8px}
+.pg-btn{min-width:30px;height:30px;padding:0 8px;border:1px solid var(--gray-200);background:#fff;border-radius:4px;font-size:13px;color:var(--gray-600);cursor:pointer;line-height:28px;text-align:center}
+.pg-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.pg-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.pg-btn:disabled{opacity:.4;cursor:not-allowed}
+.pg-dots{color:var(--gray-400);padding:0 2px}
 #sidebarCats{}</style>
 </head>
 <body>
 <main class="main">
   <div class="stats" id="statsRow">
     <div class="stat"><div class="stat-num accent" id="statTotal">-</div><div class="stat-label">全部情报</div></div>
-    <div class="stat"><div class="stat-num gold" id="statPending">-</div><div class="stat-label">待处理</div></div>
-    <div class="stat"><div class="stat-num accent" id="statActive">-</div><div class="stat-label">处理中</div></div>
-    <div class="stat"><div class="stat-num green" id="statDone">-</div><div class="stat-label">已完成</div></div>
+    <div class="stat"><div class="stat-num gold" id="statUnread">-</div><div class="stat-label">未读</div></div>
+    <div class="stat"><div class="stat-num blue" id="statRecent">-</div><div class="stat-label">近7天新增</div></div>
+    <div class="stat"><div class="stat-num green" id="statCats">-</div><div class="stat-label">分类</div></div>
   </div>
   <div class="toolbar">
-    <input type="text" id="searchInput" placeholder="搜索情报..." oninput="filterCards()">
-    <select id="statusFilter" onchange="filterCards()">
-      <option value="">全部状态</option>
-    </select>
-    <select id="catFilter" onchange="filterCards()">
+    <input type="text" id="searchInput" placeholder="搜索情报..." oninput="onFilterChange()">
+    <select id="catFilter" onchange="onFilterChange()">
       <option value="">全部分类</option>
     </select>
-    <select id="projFilter" onchange="filterCards()">
+    <select id="projFilter" onchange="onProjChange()">
       <option value="">全部项目</option>
     </select>
     <span class="spacer"></span>
-    <span style="font-size:12px;color:var(--gray-400)">共 <strong id="feedCount" style="color:var(--gray-700)">0</strong> 条</span>
   </div>
   <div class="feed" id="feed"></div>
+  <div class="pager" id="pager"></div>
 </main>
 <div class="panel" id="detailPanel">
   <div class="panel-head"><h2 id="panelTitle">详情</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -65,6 +70,9 @@
 console.log("[TEST] Script loaded");
 var currentIntel = null;
 var allItems = [];
+var currentPage = 1;       // 当前页码（1 起）
+var PAGE_SIZE = 20;        // 每页条数
+var currentFiltered = [];  // 当前筛选后的全量列表（翻页用）
 var domainConfig = null, statusMap = {};
 var domainPort = parseInt(window.location.port) || (location.protocol === 'https:' ? 443 : 80);
 var allProjects = [];
@@ -75,6 +83,15 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c) {
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c];
   });
+}
+
+// 稳健时间解析：created_at 是微秒精度无时区（2026-07-22T04:22:38.690408），
+// Safari 对带微秒的非标准 ISO 会返回 NaN → 截断到秒后解析，全浏览器可用
+function parseDate(iso) {
+  if (!iso) return null;
+  var s = String(iso).replace(/(\.\d+).*/, '').replace(' ', 'T');
+  var d = new Date(s);
+  return isNaN(d) ? null : d;
 }
 
 function renderMarkdown(text) {
@@ -91,19 +108,7 @@ function renderMarkdown(text) {
   }
 }
 
-function statusColor(s) {
-  if (!s) return 'var(--gray-100)';
-  var colors = {'pending':'var(--amber-light)','active':'var(--blue-light)','done':'var(--green-light)'};
-  return colors[s] || 'var(--gray-100)';
-}
-
-function statusTextColor(s) {
-  if (!s) return 'var(--gray-600)';
-  var colors = {'pending':'var(--amber)','active':'var(--blue)','done':'var(--green)'};
-  return colors[s] || 'var(--gray-600)';
-}
-
-function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;filterCards()}
+function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;applyFilters()}
 
 async function init() {
   await loadDomainConfig();
@@ -111,6 +116,12 @@ async function init() {
   await loadData();
   render();
   buildSidebarCats();
+  // 聚焦消费：从工作台跳转来，定位到指定情报详情
+  var focusId = localStorage.getItem('qm_open_intel');
+  if (focusId) {
+    localStorage.removeItem('qm_open_intel');
+    openDetail(parseInt(focusId));
+  }
 }
 
 async function loadProjectsList() {
@@ -144,7 +155,7 @@ async function loadDomainConfig() {
 async function loadData() {
   try {
     var projFilter = document.getElementById('projFilter')?.value || '';
-    var url = APP_API_BASE + '/api/intelligence?limit=200';
+    var url = APP_API_BASE + '/api/intelligence?limit=500';
     if (projFilter) url += '&project_id=' + projFilter;
     var r = await apiFetch(url); var d = await r.json(); allItems = Array.isArray(d) ? d : (d.items || []); console.log('[DATA] loaded', allItems.length, 'items');
   } catch(e) { console.log('[DATA] error:', e); allItems = []; }
@@ -157,36 +168,60 @@ function buildSidebarCats() {
   for (var i = 0; i < allItems.length; i++) { if (allItems[i].category && cats.indexOf(allItems[i].category) === -1) cats.push(allItems[i].category); }
   cats.slice(0,12).forEach(function(c) {
     var d=document.createElement('div'); d.className='sidebar-item'; d.innerHTML='<span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>'+escapeHtml(c);
-    d.onclick=function(){document.getElementById('catFilter').value=c;filterCards()};
+    d.onclick=function(){document.getElementById('catFilter').value=c;onFilterChange()};
     list.appendChild(d);
   });
 }
 
 function render() {
-  var t=allItems.length, p=allItems.filter(function(i){return i.status==='pending'}).length, a=allItems.filter(function(i){return i.status==='active'}).length, c=allItems.filter(function(i){return i.status==='done'}).length;
-  document.getElementById('statTotal').textContent=t; document.getElementById('statPending').textContent=p; document.getElementById('statActive').textContent=a; document.getElementById('statDone').textContent=c;
-  var sel=document.getElementById('statusFilter'); sel.innerHTML='<option value="">全部状态</option>';
-  Object.entries(statusMap).forEach(function(e){var o=document.createElement('option');o.value=e[0];o.textContent=e[1];sel.appendChild(o)});
+  var t=allItems.length;
+  var unread=allItems.filter(function(i){return !isRead(i.id)}).length;
+  var now=Date.now(), W=7*86400000;
+  var recent=allItems.filter(function(i){var d=parseDate(i.created_at);return d&&(now-d.getTime())<W}).length;
+  var catset={};allItems.forEach(function(i){if(i.category)catset[i.category]=1});
+  document.getElementById('statTotal').textContent=t;
+  document.getElementById('statUnread').textContent=unread;
+  document.getElementById('statRecent').textContent=recent;
+  document.getElementById('statCats').textContent=Object.keys(catset).length;
+  // 状态维度已对用户隐藏，不再渲染状态筛选
   var cs=document.getElementById('catFilter'); var cats=[]; for(var i=0;i<allItems.length;i++){if(allItems[i].category&&cats.indexOf(allItems[i].category)===-1)cats.push(allItems[i].category)}
   cs.innerHTML='<option value="">全部分类</option>'; cats.forEach(function(c){var o=document.createElement('option');o.value=c;o.textContent=c;cs.appendChild(o)});
-  filterCards();
+  applyFilters();
 }
 
-function filterCards() {
+// 纯筛选+渲染当前页：按当前 UI 状态（搜索/分类）过滤 allItems，渲染 currentPage。
+// 不重置页码——供详情标记已读后刷新标题色用（保持当前页）。
+function applyFilters() {
   var s=document.getElementById('searchInput').value.toLowerCase();
-  var st=document.getElementById('statusFilter').value, cat=document.getElementById('catFilter').value, proj=document.getElementById('projFilter').value;
-  // Project filter requires server-side, others are client-side
-  if(proj){loadData();return;}
+  var cat=document.getElementById('catFilter').value;
   var items=allItems;
   if(s)items=items.filter(function(i){return (i.title||'').toLowerCase().includes(s)||(i.content||'').toLowerCase().includes(s)});
-  if(st)items=items.filter(function(i){return i.status===st}); if(cat)items=items.filter(function(i){return i.category===cat});
-  renderFeed(items); document.getElementById('feedCount').textContent=items.length+'条';
+  if(cat)items=items.filter(function(i){return i.category===cat});
+  currentFiltered=items;
+  renderFeed(items);
 }
+
+// 筛选条件变化（搜索/分类）：回第一页再渲染
+function onFilterChange(){currentPage=1;applyFilters();}
+
+// 项目筛选是服务端过滤：重载数据后回第一页再渲染
+async function onProjChange(){currentPage=1;await loadData();applyFilters();}
 
 function renderFeed(items) {
   var feed=document.getElementById('feed');
-  if(!items.length){feed.innerHTML='<div style="padding:40px;text-align:center;color:var(--gray-400);font-size:13px;">暂无匹配的情报</div>';return}
-  feed.innerHTML=items.map(function(item,i){
+  var total=items.length;
+  var totalPages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+  if(currentPage>totalPages)currentPage=totalPages;
+  if(currentPage<1)currentPage=1;
+  var start=(currentPage-1)*PAGE_SIZE;
+  var pageItems=items.slice(start,start+PAGE_SIZE);
+  if(!total){
+    feed.innerHTML='<div style="padding:40px;text-align:center;color:var(--gray-400);font-size:13px;">暂无匹配的情报</div>';
+    renderPager(0);
+    return;
+  }
+  feed.innerHTML=pageItems.map(function(item,pi){
+    var gi=start+pi;   // 全局连续编号（跨页不重排）
     var co=escapeHtml(item.company||''), de=item.deal_value?(item.deal_value>10000?'¥'+(item.deal_value/10000).toFixed(0)+'万':'¥'+item.deal_value):'';
     var ents=(item.entities||[]).map(function(e){return '<span class="tag" style="background:#f0e6ff;color:#722ed1">'+escapeHtml(e)+'</span>'}).join('');
     var projTag='';
@@ -195,29 +230,74 @@ function renderFeed(items) {
       if(proj) projTag='<span class="tag" style="background:var(--accent-light);color:var(--accent);font-size:10px">'+escapeHtml(proj.name)+'</span>';
     }
     return '<div class="row" onclick="openDetail('+item.id+')">'
-    +'<div class="row-index">'+(i+1).toString().padStart(2,'0')+'</div>'
-    +'<div class="row-body"><div class="row-title">'+escapeHtml(item.title||'')+'</div>'
+    +'<div class="row-index">'+(gi+1).toString().padStart(2,'0')+'</div>'
+    +'<div class="row-body"><div class="row-title'+(isRead(item.id)?' read':'')+'">'+escapeHtml(item.title||'')+'</div>'
     +'<div class="row-meta">'+(item.category?'<span class="tag">'+escapeHtml(item.category)+'</span>':'')
-    +(statusMap[item.status]?'<span class="tag" style="background:'+statusColor(item.status)+';color:'+statusTextColor(item.status)+'">'+escapeHtml(statusMap[item.status])+'</span>':'')
     +(co?'<span class="tag tag-company">'+co+'</span>':'')+(de?'<span class="deal">'+de+'</span>':'')
     +projTag+ents
     +'<span>'+formatDate(item.created_at)+'</span>'
     +(item.comment_count>0?'<span style="display:flex;align-items:center;gap:3px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'+item.comment_count+'</span>':'')
     +'</div></div></div>'
     }).join('');
+  renderPager(total);
 }
 
-function setFilter(s){document.getElementById('statusFilter').value=s;filterCards()}
-function resetFilter(){document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='';document.getElementById('catFilter').value='';filterCards()}
+// 分页控制条：上一页 / 页码（窗口化+省略号）/ 下一页
+function renderPager(total) {
+  var el=document.getElementById('pager'); if(!el)return;
+  if(!total){el.innerHTML='';return;}
+  var totalPages=Math.ceil(total/PAGE_SIZE);
+  var from=(currentPage-1)*PAGE_SIZE+1, to=Math.min(currentPage*PAGE_SIZE,total);
+  var h='<span class="pg-info">第 '+from+'–'+to+' 条 / 共 '+total+' 条</span>';
+  h+='<button class="pg-btn" '+(currentPage<=1?'disabled':'')+' onclick="goToPage('+(currentPage-1)+')">&laquo;</button>';
+  h+=pageButtons(totalPages);
+  h+='<button class="pg-btn" '+(currentPage>=totalPages?'disabled':'')+' onclick="goToPage('+(currentPage+1)+')">&raquo;</button>';
+  el.innerHTML=h;
+}
+
+// 窗口化页码：始终显示首尾页，当前页前后各 2，溢出用省略号
+function pageButtons(totalPages) {
+  var cur=currentPage;
+  if(totalPages<=7){
+    var all='';
+    for(var i=1;i<=totalPages;i++) all+='<button class="pg-btn'+(i===cur?' active':'')+'" onclick="goToPage('+i+')">'+i+'</button>';
+    return all;
+  }
+  var start=Math.max(1,cur-2), end=Math.min(totalPages,start+4);
+  if(end-start<4){start=Math.max(1,end-4);}
+  var h='';
+  if(start>1){
+    h+='<button class="pg-btn" onclick="goToPage(1)">1</button>';
+    if(start>2) h+='<span class="pg-dots">…</span>';
+  }
+  for(var i=start;i<=end;i++) h+='<button class="pg-btn'+(i===cur?' active':'')+'" onclick="goToPage('+i+')">'+i+'</button>';
+  if(end<totalPages){
+    if(end<totalPages-1) h+='<span class="pg-dots">…</span>';
+    h+='<button class="pg-btn" onclick="goToPage('+totalPages+')">'+totalPages+'</button>';
+  }
+  return h;
+}
+
+function goToPage(n){
+  var totalPages=Math.max(1,Math.ceil((currentFiltered.length||0)/PAGE_SIZE));
+  if(n<1||n>totalPages)return;
+  currentPage=n;
+  renderFeed(currentFiltered);
+  var f=document.getElementById('feed'); if(f)f.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function resetFilter(){document.getElementById('searchInput').value='';document.getElementById('catFilter').value='';onFilterChange()}
 
 async function openDetail(id) {
   try {
     var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+id);currentIntel=await r.json();
+    markRead(id);  // 点开即标记已读
     document.getElementById('panelTitle').textContent=currentIntel.title;
     renderDetail();loadComments(id);
     var panel = document.getElementById('detailPanel');
     panel.classList.add('open');
-    console.log('[OPEN] panel class:', panel.className);
+    // 刷新列表标题颜色（已读变浅），保持当前页
+    applyFilters();
   }catch(e){ console.log('[OPEN] error:', e); }
 }
 
@@ -225,7 +305,6 @@ function renderDetail() {
   var d=currentIntel; var body=document.getElementById('panelBody'); var foot=document.getElementById('panelFoot');
   var ents=(d.entities||[]).map(function(e){return '<span class="tag" style="background:#f0e6ff;color:#722ed1">'+escapeHtml(e)+'</span>'}).join('');
   body.innerHTML='<div class="detail-meta">'
-    +'<span class="tag tag-status '+d.status+'" style="background:'+statusColor(d.status)+';color:'+statusTextColor(d.status)+'">'+(statusMap[d.status]||d.status)+'</span>'
     +(d.category?'<span class="tag tag-cat">'+escapeHtml(d.category)+'</span>':'')
     +(d.company?'<span class="tag tag-company">'+escapeHtml(d.company)+'</span>':'')
     +'</div>'
@@ -254,26 +333,15 @@ function renderDetail() {
     +'</div>'
     +'</div>'
     +'</div>';
+  // 状态流转按钮已隐藏（状态模型未定），仅保留管理员删除
   var btns='';
-  if(d.status==='pending')btns+='<button class="btn btn-success" onclick="updateStatus(\'approved\')">建议跟进</button><button class="btn btn-danger" onclick="updateStatus(\'rejected\')">不建议</button>';
-  else if(d.status==='approved')btns+='<button class="btn btn-primary" onclick="updateStatus(\'active\')">激活项目</button>';
-  else if(d.status==='active')btns+='<button class="btn btn-primary" onclick="updateStatus(\'completed\')">标记完结</button>';
-  btns+='<span class="spacer"></span><button class="btn btn-ghost" onclick="updateStatus(\'discarded\')">废止</button>';
-  if(isAdmin){btns+='<button class="btn btn-danger" onclick="deleteIntel('+currentIntel.id+')" style="margin-left:4px;background:#b33a3a;color:#fff">删除</button>';}
-  foot.innerHTML=btns;
+  if(isAdmin){btns+='<button class="btn btn-danger" onclick="deleteIntel('+currentIntel.id+')" style="background:#b33a3a;color:#fff">删除</button>';}
+  if(btns){foot.style.display='';foot.innerHTML=btns;}else{foot.style.display='none';foot.innerHTML='';}
   bindCommentInput();
 }
 
-async function updateStatus(status) {
-  if(!currentIntel)return;
-  var opinion='';
-  if(status==='approved'){opinion=prompt('请输入跟进意见：');if(opinion===null)return;}
-  if(status==='discarded'){if(!confirm('确定废止？'))return;}
-  try {
-    var r=await apiFetch(APP_API_BASE+'/api/intelligence/'+currentIntel.id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status,opinion:opinion})});
-    if(r.ok){currentIntel.status=status;if(opinion)currentIntel.opinion=opinion;renderDetail();await loadData();render();}
-  }catch(e){}
-}
+// 状态流转（updateStatus）已随状态模型一起隐藏——情报流程态暂未确定，
+// 用户当前只需阅读 + 未读/已读。待"行动/价值"模型想清楚后再接回。
 
 async function deleteIntel(id) {
   if(!confirm('确定删除该情报？此操作不可恢复。')) return;

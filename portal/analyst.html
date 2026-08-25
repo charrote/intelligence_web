@@ -60,6 +60,8 @@
 .exec-wrap{display:flex;gap:8px;align-items:center;margin-top:4px}
 .btn-ghost{padding:7px 14px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:12px;color:var(--gray-600);cursor:pointer;transition:all 0.15s}
 .btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn-ghost:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost svg{width:14px;height:14px}
 
 /* ── Generated config preview ── */
 .config-preview{margin-top:16px;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden}
@@ -174,7 +176,7 @@
   <div class="card" id="wizardCard">
     <div class="card-head">
       <h2>新建报告</h2>
-      <span class="sub">描述需求，AI 自动生成配置</span>
+      <span class="sub">描述需求，AI 直接出报告</span>
     </div>
     <div class="card-body">
 
@@ -211,23 +213,29 @@
       </div>
 
       <div class="exec-wrap">
-        <button class="btn-exec" id="genBtn" onclick="generateConfig()">
+        <button class="btn-exec" id="quickBtn" onclick="quickReport()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          AI 生成配置
+          生成报告
         </button>
+        <button class="btn-ghost" id="advToggle" onclick="toggleAdv()">高级配置 ▾</button>
       </div>
 
       <div class="feedback" id="genFeedback"></div>
 
-      <!-- 生成的配置（可编辑） -->
-      <div class="config-preview" id="configPreview" style="display:none"></div>
-
-      <div id="saveWrap" style="display:none;margin-top:14px">
-        <div class="exec-wrap">
-          <button class="btn-exec" id="saveBtn" onclick="saveConfig()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-            保存并开始定时生成
-          </button>
+      <!-- 高级配置（默认折叠）：生成可编辑配置 / 保存并定时 -->
+      <div id="advWrap" style="display:none">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <button class="btn-ghost" id="genBtn" onclick="generateConfig()">AI 生成配置</button>
+          <span style="font-size:12px;color:var(--gray-400)">生成可编辑的抽取规则与报告模板，可调整字段 / 指标 / 图表后保存为定时任务</span>
+        </div>
+        <div class="config-preview" id="configPreview" style="display:none"></div>
+        <div id="saveWrap" style="display:none;margin-top:14px">
+          <div class="exec-wrap">
+            <button class="btn-exec" id="saveBtn" onclick="saveConfig()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              保存并开始定时生成
+            </button>
+          </div>
         </div>
       </div>
 
@@ -264,8 +272,8 @@
     <div class="card-head"><h2>执行进度</h2></div>
     <div class="card-body">
       <div class="progress-steps">
-        <div class="progress-step" id="stepQuery"><span class="step-icon"></span> 正在检索数据...</div>
-        <div class="progress-step" id="stepAI"><span class="step-icon"></span> 正在调用 AI 分析...</div>
+        <div class="progress-step" id="stepQuery"><span class="step-icon"></span> 正在准备数据...</div>
+        <div class="progress-step" id="stepAI"><span class="step-icon"></span> 正在生成报告...</div>
         <div class="progress-step" id="stepDone"><span class="step-icon"></span> 完成</div>
       </div>
       <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
@@ -350,6 +358,12 @@ document.addEventListener('DOMContentLoaded', function() {
   renderPresets();
   loadTemplates();
   loadOverview();
+  // 聚焦消费：从工作台"最近报告"跳转来，打开该模板最新报告
+  var focusRep = localStorage.getItem('qm_open_report');
+  if (focusRep) {
+    localStorage.removeItem('qm_open_report');
+    viewTemplateReports(parseInt(focusRep));
+  }
 });
 
 // ── Presets ──
@@ -368,6 +382,79 @@ function applyPreset(idx) {
   var cards = document.querySelectorAll('.preset');
   cards.forEach(function(c) { c.classList.remove('active'); });
   cards[idx].classList.add('active');
+}
+
+// ── 高级配置折叠 ──
+function toggleAdv() {
+  var wrap = document.getElementById('advWrap');
+  var btn = document.getElementById('advToggle');
+  var open = wrap.style.display !== 'none';
+  wrap.style.display = open ? 'none' : 'block';
+  btn.textContent = open ? '高级配置 ▾' : '高级配置 ▴';
+}
+
+// ── 零配置主流程：自然语言 → 直接出报告 ──
+// 后台自动 生成配置 → 建模板 → 执行，用户全程只看进度，不碰配置表
+async function quickReport() {
+  var intent = document.getElementById('intentInput').value.trim();
+  var lookback = document.querySelector('input[name="lookback"]:checked').value;
+  var domain = document.getElementById('domainSelect').value;
+  var btn = document.getElementById('quickBtn');
+  var fb = document.getElementById('genFeedback');
+
+  if (!intent) { showGenFeedback('请先描述你想要的报告', 'err'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 生成中...';
+  document.getElementById('configPreview').style.display = 'none';
+  document.getElementById('saveWrap').style.display = 'none';
+  showGenFeedback('', 'ok');
+
+  try {
+    // 1. 生成配置
+    var res = await apiFetch(APP_API_BASE + '/api/ai/generate-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent: intent, lookback_days: parseInt(lookback), domain: domain })
+    });
+    var data = await res.json();
+    if (!data.ok || !data.config) throw new Error(data.error || '生成配置失败');
+    data.config.extraction_rule.domain = domain;
+    data.config.report_template.domain = domain;
+    var cfg = data.config;
+
+    // 2. 创建抽取规则
+    var r1 = await apiFetch(APP_API_BASE + '/api/extract/rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg.extraction_rule)
+    });
+    var d1 = await r1.json();
+    if (!r1.ok || !d1.ok) throw new Error(d1.error || '创建抽取规则失败');
+
+    // 3. 创建报告模板
+    cfg.report_template.rule_id = d1.id;
+    var r2 = await apiFetch(APP_API_BASE + '/api/reports/templates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg.report_template)
+    });
+    var d2 = await r2.json();
+    if (!r2.ok || !d2.ok) throw new Error(d2.error || '创建报告模板失败');
+
+    // 4. 立即执行
+    showGenFeedback('', 'ok');
+    var r3 = await apiFetch(APP_API_BASE + '/api/reports/run/' + d2.id, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lookback_days: parseInt(lookback) })
+    });
+    var d3 = await r3.json();
+    if (!d3.ok) throw new Error(d3.error || '执行失败');
+
+    // 5. 轮询出结果
+    loadTemplates();
+    currentRunId = d3.run_id;
+    startPolling(d2.id);
+  } catch (e) {
+    showGenFeedback('生成失败：' + (e.message || '网络异常'), 'err');
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> 生成报告';
+  }
 }
 
 // ── Generate config (NL → structured) ──
@@ -890,21 +977,32 @@ function showError(msg) {
   document.getElementById('errorCard').style.display = 'block';
   document.getElementById('errorMsg').textContent = msg;
   document.getElementById('execBtn').disabled = false;
+  if (document.getElementById('quickBtn')) resetQuickBtn();
 }
 
 function showNoData(msg) {
   document.getElementById('noDataCard').style.display = 'block';
   document.getElementById('noDataMsg').textContent = msg || '所选时间范围内没有已抽取的事实数据。';
   document.getElementById('execBtn').disabled = false;
+  if (document.getElementById('quickBtn')) resetQuickBtn();
 }
 function hideNoData() {
   document.getElementById('noDataCard').style.display = 'none';
+}
+
+// 恢复「生成报告」按钮（零配置主流程用）
+function resetQuickBtn() {
+  var btn = document.getElementById('quickBtn');
+  if (!btn) return;
+  btn.disabled = false;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> 生成报告';
 }
 
 // ── Result ──
 async function showResult(runId) {
   document.getElementById('resultCard').style.display = 'block';
   document.getElementById('execBtn').disabled = false;
+  if (document.getElementById('quickBtn')) resetQuickBtn();
   currentRunId = runId;
   try {
     var res = await apiFetch(APP_API_BASE + '/api/reports/runs/' + runId);

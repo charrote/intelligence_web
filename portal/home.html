@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作台</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<style>
+.main{padding:24px 28px;overflow-y:auto}
+.stat-num.gold{color:var(--amber)}
+.stat-num.blue{color:var(--blue)}
+.stat-num.accent{color:var(--accent)}
+
+.work-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;align-items:start}
+@media(max-width:900px){.work-grid{grid-template-columns:1fr}}
+
+.panel2{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);overflow:hidden}
+.panel2 .ph{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--gray-100)}
+.panel2 .ph h3{font-size:14px;font-weight:600;color:var(--gray-800);margin:0;letter-spacing:-0.1px}
+.panel2 .ph .more{font-size:12px;color:var(--gray-400);cursor:pointer}
+.panel2 .ph .more:hover{color:var(--accent)}
+.panel2 .pb{padding:4px 0}
+
+.wrow{display:flex;align-items:center;gap:12px;padding:11px 18px;cursor:pointer;transition:background 0.12s}
+.wrow:hover{background:var(--gray-50)}
+.wrow .wx{flex:1;min-width:0}
+.wrow .wt{font-size:13.5px;font-weight:500;color:var(--gray-800);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wrow .wt.read{color:var(--gray-400)}
+.wrow .wm{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--gray-400);margin-top:3px;flex-wrap:wrap}
+.wrow .st{font-size:11px;padding:1px 8px;border-radius:3px;font-weight:500;flex-shrink:0}
+.st.pending{background:var(--amber-light);color:var(--amber)}
+.st.approved{background:var(--accent-light);color:var(--accent)}
+.st.active{background:var(--blue-light);color:var(--blue)}
+.tagc{display:inline-flex;padding:1px 7px;border-radius:3px;font-size:11px;font-weight:500;background:var(--gray-100);color:var(--gray-600)}
+.tagco{color:var(--accent);background:var(--accent-light)}
+
+.rep{display:flex;align-items:center;gap:10px;padding:11px 18px;cursor:pointer}
+.rep:hover{background:var(--gray-50)}
+.rep .rt{flex:1;min-width:0;font-size:13px;font-weight:500;color:var(--gray-800);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rep .rm{font-size:11.5px;color:var(--gray-400);flex-shrink:0}
+.badge{display:inline-flex;padding:1px 7px;border-radius:4px;font-size:10.5px;font-weight:600;flex-shrink:0}
+.badge.completed{background:var(--green-light);color:var(--green)}
+.badge.failed{background:var(--red-light);color:var(--red)}
+.badge.running{background:var(--amber-light);color:var(--amber)}
+.badge.no_data{background:var(--amber-light);color:var(--amber)}
+.badge.other{background:var(--gray-100);color:var(--gray-500)}
+
+.quick{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 18px;border-top:1px solid var(--gray-100)}
+.qbtn{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);background:#fff;font-size:12.5px;color:var(--gray-700);cursor:pointer;transition:all 0.14s}
+.qbtn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.qbtn svg{width:15px;height:15px;flex-shrink:0}
+
+.empty2{padding:32px;text-align:center;color:var(--gray-400);font-size:13px}
+
+/* ===== 侧滑预览面板（工作台内处理，不离开页面） ===== */
+.preview-panel{position:fixed;top:0;right:0;height:100vh;width:440px;max-width:92vw;background:#fff;box-shadow:-8px 0 28px rgba(0,0,0,0.10);transform:translateX(100%);transition:transform .24s ease;z-index:50;display:flex;flex-direction:column}
+.preview-panel.open{transform:translateX(0)}
+.preview-backdrop{position:fixed;inset:0;background:rgba(15,18,25,0.30);opacity:0;visibility:hidden;transition:opacity .2s;z-index:49}
+.preview-backdrop.open{opacity:1;visibility:visible}
+
+.pv-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:15px 20px 12px;border-bottom:1px solid var(--gray-100);flex-shrink:0}
+.pv-head .pv-title{font-size:15px;font-weight:600;color:var(--gray-800);line-height:1.4;word-break:break-word}
+.pv-close{width:28px;height:28px;border:none;background:transparent;color:var(--gray-400);cursor:pointer;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .15s,color .15s}
+.pv-close:hover{background:var(--gray-100);color:var(--gray-700)}
+.pv-body{flex:1;overflow-y:auto;padding:16px 20px}
+.pv-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:14px}
+.pv-content{font-size:13.5px;line-height:1.7;color:var(--gray-700);white-space:pre-wrap;word-break:break-word;max-height:42vh;overflow-y:auto;padding:12px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:var(--radius)}
+.pv-content.clamped::after{content:'…';display:block;color:var(--gray-400);text-align:right;font-size:12px;margin-top:4px}
+.pv-act{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.pv-act .btn{font-size:12.5px;padding:7px 14px;border-radius:var(--radius);border:1px solid var(--gray-200);background:#fff;color:var(--gray-700);cursor:pointer;transition:all .14s;font-weight:500}
+.pv-act .btn:hover{border-color:var(--accent);color:var(--accent)}
+.pv-act .btn-success{background:var(--green);border-color:var(--green);color:#fff}
+.pv-act .btn-success:hover{background:#157a46;color:#fff;border-color:#157a46}
+.pv-act .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.pv-act .btn-primary:hover{background:#2f3f70;color:#fff;border-color:#2f3f70}
+.pv-act .btn-danger{background:#fff;border-color:var(--red);color:var(--red)}
+.pv-act .btn-danger:hover{background:var(--red);color:#fff}
+.pv-foot{padding:12px 20px;border-top:1px solid var(--gray-100);flex-shrink:0}
+.pv-foot .pv-link{display:block;width:100%;text-align:center;font-size:13px;color:var(--accent);cursor:pointer;padding:8px 0;border:1px solid var(--gray-200);border-radius:var(--radius);background:#fff;transition:all .14s}
+.pv-foot .pv-link:hover{background:var(--accent-light);border-color:var(--accent)}
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="stats" id="statsRow">
+    <div class="stat"><div class="stat-num accent" id="kTotal">-</div><div class="stat-label">全部情报</div></div>
+    <div class="stat"><div class="stat-num gold" id="kUnread">-</div><div class="stat-label">未读</div></div>
+    <div class="stat"><div class="stat-num blue" id="kRecent">-</div><div class="stat-label">近7天新增</div></div>
+    <div class="stat"><div class="stat-num" id="kReports">-</div><div class="stat-label">报告模板</div></div>
+  </div>
+
+  <div class="work-grid">
+    <!-- 左：未读情报（本地未读/已读，不依赖状态模型） -->
+    <div class="panel2">
+      <div class="ph"><h3>未读情报</h3><span class="more" onclick="goList()">全部情报 →</span></div>
+      <div class="pb" id="todoList"><div class="empty2">加载中...</div></div>
+    </div>
+
+    <!-- 右：最近报告 + 快捷入口 -->
+    <div class="panel2">
+      <div class="ph"><h3>最近报告</h3><span class="more" onclick="openAnalyst()">AI 分析师 →</span></div>
+      <div class="pb" id="reportList"><div class="empty2">加载中...</div></div>
+      <div class="quick">
+        <div class="qbtn" onclick="openAnalyst()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg>新建分析</div>
+        <div class="qbtn" onclick="openTab('dashboard')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>数据看板</div>
+        <div class="qbtn" onclick="openTab('import')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>批量导入</div>
+        <div class="qbtn" onclick="goList()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>全部情报</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- 侧滑预览面板 -->
+<div class="preview-backdrop" id="pvBackdrop" onclick="closePanel()"></div>
+<div class="preview-panel" id="pvPanel">
+  <div class="pv-head">
+    <div class="pv-title" id="pvTitle">—</div>
+    <button class="pv-close" onclick="closePanel()" title="关闭 (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="pv-body" id="pvBody"><div class="empty2">加载中...</div></div>
+  <div class="pv-foot" id="pvFoot"></div>
+</div>
+
+<script>
+var allItems = [];
+var repList = [];
+var currentPv = { type: null, id: null };
+// 状态维度已对用户隐藏（状态模型未定），工作台只按"未读/已读"组织。
+// isRead / markRead / parseDate 来自 js/dom.js
+
+// 稳健时间解析：created_at 是微秒精度无时区（2026-07-22T04:22:38.690408），
+// Safari 对带微秒的非标准 ISO 会返回 NaN → 截断到秒后解析，全浏览器可用
+function parseDate(iso) {
+  if (!iso) return null;
+  var s = String(iso).replace(/(\.\d+).*/, '').replace(' ', 'T');
+  var d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+function relTime(iso) {
+  var d = parseDate(iso);
+  if (!d) return '-';
+  var diff = Date.now() - d.getTime();
+  var m = Math.floor(diff / 60000);
+  if (m < 1) return '刚刚';
+  if (m < 60) return m + '分前';
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + '小时前';
+  var dd = Math.floor(h / 24);
+  if (dd < 7) return dd + '天前';
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+}
+
+async function loadIntel() {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/intelligence?limit=200');
+    var d = await r.json();
+    allItems = Array.isArray(d) ? d : (d.items || []);
+  } catch (e) { allItems = []; }
+}
+
+async function loadReports() {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/reports/overview');
+    var d = await r.json();
+    repList = Array.isArray(d) ? d : (d.templates || []);
+  } catch (e) { repList = []; }
+}
+
+function renderKpis() {
+  var t = allItems.length;
+  var unread = allItems.filter(function(i){ return !isRead(i.id); }).length;
+  var now = Date.now(), W = 7 * 86400000;
+  var recent = allItems.filter(function(i){ var d = parseDate(i.created_at); return d && (now - d.getTime()) < W; }).length;
+  document.getElementById('kTotal').textContent = t;
+  document.getElementById('kUnread').textContent = unread;
+  document.getElementById('kRecent').textContent = recent;
+  document.getElementById('kReports').textContent = repList.length;
+}
+
+function renderTodo() {
+  var el = document.getElementById('todoList');
+  var items = allItems
+    .filter(function(i){ return !isRead(i.id); })
+    .sort(function(x, y){
+      var dx = parseDate(x.created_at) || new Date(0);
+      var dy = parseDate(y.created_at) || new Date(0);
+      return dy - dx;
+    })
+    .slice(0, 8);
+  if (!items.length) { el.innerHTML = '<div class="empty2">暂无未读情报，都看过了</div>'; return; }
+  el.innerHTML = items.map(function(item) {
+    var co = item.company ? '<span class="tagc tagco">' + escapeHtml(item.company) + '</span>' : '';
+    var cat = item.category ? '<span class="tagc">' + escapeHtml(item.category) + '</span>' : '';
+    return '<div class="wrow" onclick="previewIntel(' + item.id + ')">'
+      + '<div class="wx"><div class="wt">' + escapeHtml(item.title || '') + '</div>'
+      + '<div class="wm">' + co + cat + '<span>' + relTime(item.created_at) + '</span></div></div></div>';
+  }).join('');
+}
+
+function renderReports() {
+  var el = document.getElementById('reportList');
+  if (!repList.length) { el.innerHTML = '<div class="empty2">暂无报告模板</div>'; return; }
+  var stMap = { completed: '完成', failed: '失败', running: '运行中', no_data: '无数据' };
+  el.innerHTML = repList.slice(0, 5).map(function(r) {
+    var st = r.last_status || 'other';
+    var stTxt = stMap[st] || '待运行';
+    var cls = (stMap[st]) ? st : 'other';
+    var time = r.last_time ? relTime(r.last_time) : '-';
+    return '<div class="rep" onclick="previewReport(' + r.template_id + ')">'
+      + '<span class="rt">' + escapeHtml(r.name || '未命名') + '</span>'
+      + '<span class="badge ' + cls + '">' + stTxt + '</span>'
+      + '<span class="rm">' + time + '</span></div>';
+  }).join('');
+}
+
+// ===== 侧滑预览面板（工作台内处理，不离开页面） =====
+function openPanel() {
+  document.getElementById('pvPanel').classList.add('open');
+  document.getElementById('pvBackdrop').classList.add('open');
+}
+function closePanel() {
+  document.getElementById('pvPanel').classList.remove('open');
+  document.getElementById('pvBackdrop').classList.remove('open');
+  currentPv = { type: null, id: null };
+}
+
+async function previewIntel(id) {
+  currentPv = { type: 'intel', id: id };
+  openPanel();
+  document.getElementById('pvTitle').textContent = '加载中...';
+  document.getElementById('pvBody').innerHTML = '<div class="empty2">加载中...</div>';
+  document.getElementById('pvFoot').innerHTML = '';
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/intelligence/' + id);
+    var d = await r.json();
+    markRead(id);  // 点开即标记已读
+    // 面板打开期间列表项可能已被处理，刷新数据
+    if (currentPv.type !== 'intel' || currentPv.id !== id) return;
+    renderIntelPanel(d);
+    // 刷新"待我看"列表标题颜色（已读变浅）
+    renderTodo();
+  } catch (e) {
+    document.getElementById('pvBody').innerHTML = '<div class="empty2">加载失败</div>';
+  }
+}
+
+function renderIntelPanel(d) {
+  var tags = '';
+  if (d.company) tags += '<span class="tagc tagco">' + escapeHtml(d.company) + '</span>';
+  if (d.category) tags += '<span class="tagc">' + escapeHtml(d.category) + '</span>';
+  tags += '<span style="font-size:12px;color:var(--gray-400)">' + relTime(d.created_at) + '</span>';
+
+  var content = d.content || '';
+  var clamped = content.length > 600;
+  if (clamped) content = content.slice(0, 600);
+  document.getElementById('pvTitle').textContent = d.title || '未命名';
+  document.getElementById('pvBody').innerHTML =
+    '<div class="pv-meta">' + tags + '</div>'
+    + (d.source_url ? '<div style="margin-bottom:10px"><a href="' + escapeHtml(d.source_url) + '" target="_blank" style="font-size:12.5px;color:var(--accent)">原文链接 ↗</a></div>' : '')
+    + '<div class="pv-content' + (clamped ? ' clamped' : '') + '">' + escapeHtml(content) + '</div>';
+
+  // 状态流转按钮已隐藏（状态模型未定），仅保留"查看完整详情"
+  document.getElementById('pvFoot').innerHTML =
+    '<div class="pv-foot" style="padding:0;border:none"><span class="pv-link" onclick="goDetail(' + d.id + ')">查看完整详情 →</span></div>';
+}
+
+async function previewReport(tid) {
+  currentPv = { type: 'report', id: tid };
+  openPanel();
+  document.getElementById('pvTitle').textContent = '加载中...';
+  document.getElementById('pvBody').innerHTML = '<div class="empty2">加载中...</div>';
+  document.getElementById('pvFoot').innerHTML = '';
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/reports/overview');
+    var d = await r.json();
+    var list = Array.isArray(d) ? d : (d.templates || []);
+    var t = null;
+    for (var i = 0; i < list.length; i++) if (list[i].template_id == tid) { t = list[i]; break; }
+    if (!t) t = { name: '未命名', last_status: null, last_time: null, last_duration: null, last_fact_count: null, domain: '' };
+    if (currentPv.type !== 'report' || currentPv.id !== tid) return;
+    var stMap = { completed: '完成', failed: '失败', running: '运行中', no_data: '无数据' };
+    var st = t.last_status || 'other';
+    var stTxt = stMap[st] || '待运行';
+    var cls = (stMap[st]) ? st : 'other';
+    var dur = t.last_duration ? t.last_duration + 's' : '-';
+    document.getElementById('pvTitle').textContent = t.name || '未命名';
+    document.getElementById('pvBody').innerHTML =
+      '<div class="pv-meta"><span class="badge ' + cls + '">' + stTxt + '</span>'
+      + (t.domain ? '<span class="tagc">' + escapeHtml(t.domain) + '</span>' : '')
+      + '<span style="font-size:12px;color:var(--gray-400)">' + relTime(t.last_time) + '</span></div>'
+      + '<div style="font-size:13px;color:var(--gray-600);line-height:2">'
+      + '<div>执行耗时：' + dur + '</div>'
+      + '<div>事实数：' + (t.last_fact_count != null ? t.last_fact_count : '-') + '</div>'
+      + '</div>';
+    document.getElementById('pvFoot').innerHTML =
+      '<div class="pv-foot" style="padding:0;border:none"><span class="pv-link" onclick="goReport(' + t.template_id + ')">打开报告 →</span></div>';
+  } catch (e) {
+    document.getElementById('pvBody').innerHTML = '<div class="empty2">加载失败</div>';
+  }
+}
+
+// 跳转：仅"深度阅读"才离开工作台
+function parentTab(h) { if (window.parent && window.parent !== window) window.parent.openTab(h); }
+function goList() { parentTab(''); }
+function openAnalyst() { parentTab('analyst'); }
+function goDetail(id) {
+  localStorage.setItem('qm_open_intel', String(id));
+  closePanel();
+  parentTab('');
+}
+function goReport(tid) {
+  localStorage.setItem('qm_open_report', String(tid));
+  closePanel();
+  parentTab('analyst');
+}
+
+// 状态变更（updateStatus）已随状态模型一起隐藏——情报流程态暂未确定，
+// 用户当前只需阅读 + 未读/已读。待"行动/价值"模型想清楚后再接回。
+
+async function init() {
+  await loadIntel();
+  await loadReports();
+  renderKpis();
+  renderTodo();
+  renderReports();
+  // Esc 关闭面板
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closePanel();
+  });
+}
+init();
+</script>
+</body>
+</html>

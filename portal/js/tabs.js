@@ -2,7 +2,8 @@
 // Tab management and hash routing
 
 var ROUTES = {
-  '': { page: 'index.html', label: '情报列表', pinned: true },
+  'home': { page: 'home.html', label: '工作台', pinned: true },
+  '': { page: 'index.html', label: '情报列表' },
   'dashboard': { page: 'dashboard.html', label: '数据看板' },
   'datasources': { page: 'datasources.html', label: '数据源管理' },
   'target_types': { page: 'target_types.html', label: '目标类型' },
@@ -205,14 +206,14 @@ function renderTabBar() {
 function updateBreadcrumb(hash) {
   var bc = document.getElementById('breadcrumb');
   if (!bc) return;
-  var currentLabel = '首页';
+  var currentLabel = '工作台';
   if (hash && ROUTES[hash]) {
     currentLabel = ROUTES[hash].label;
   }
-  if (hash === '') {
-    bc.innerHTML = '<a href="#" onclick="openTab(\'\');return false;">首页</a>';
+  if (hash === 'home') {
+    bc.innerHTML = '<a href="#" onclick="openTab(\'home\');return false;">工作台</a>';
   } else {
-    bc.innerHTML = '<a href="#" onclick="openTab(\'\');return false;">首页</a><span class="sep">&gt;</span>' + escapeHtml(currentLabel);
+    bc.innerHTML = '<a href="#" onclick="openTab(\'home\');return false;">工作台</a><span class="sep">&gt;</span>' + escapeHtml(currentLabel);
   }
 }
 
@@ -230,11 +231,11 @@ function initTabs() {
     }
   });
 
-  // Initial load
+  // Initial load — 默认落在工作台
   var initialHash = getHash();
   if (initialHash && ROUTES[initialHash]) {
     openTab(initialHash);
   } else {
-    openTab('');
+    openTab('home');
   }
 }
