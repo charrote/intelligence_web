@@ -246,7 +246,8 @@ async function previewIntel(id) {
     // 面板打开期间列表项可能已被处理，刷新数据
     if (currentPv.type !== 'intel' || currentPv.id !== id) return;
     renderIntelPanel(d);
-    // 刷新"待我看"列表标题颜色（已读变浅）
+    // 刷新 KPI（未读计数实时更新）+ "未读情报"列表（移除刚读项）
+    renderKpis();
     renderTodo();
   } catch (e) {
     document.getElementById('pvBody').innerHTML = '<div class="empty2">加载失败</div>';
