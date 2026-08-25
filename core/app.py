@@ -714,6 +714,16 @@ def create_app(project_root, spec):
         admin_id = _admin_role_id()
         return any(int(r) == admin_id for r in (u.get('role_ids') or []))
 
+    def _is_builtin_admin_id(user_id):
+        """True for the built-in super-admin account (seeded as id=1,
+        username='admin'). This account's role, domains and login name are
+        locked: they cannot be modified through any API — the built-in admin
+        must always keep its built-in administrator privileges."""
+        if user_id == 1:
+            return True
+        u = get_user_by_id_full(db_path, user_id)
+        return u is not None and u.get('username') == 'admin'
+
     def _normalize_domains(dom):
         """Normalize a domains field (list of slugs, or comma string, or None)
         to a clean list of slugs."""
@@ -1180,6 +1190,9 @@ def create_app(project_root, spec):
             role_ids = [role_ids]
         if not isinstance(role_ids, list):
             return jsonify({'error': 'role_ids 必须是数组'}), 400
+        # Built-in admin's role is locked: nobody (incl. admin) may modify it.
+        if _is_builtin_admin_id(user_id):
+            return jsonify({'error': '内置管理员的角色不可修改'}), 403
         # No privilege escalation: only admin may grant the admin role.
         err = _check_no_admin_grant(user, [int(r) for r in role_ids])
         if err:
@@ -1754,6 +1767,14 @@ def create_app(project_root, spec):
         data = request.json
         if not data:
             return jsonify({'error': '请提供更新数据'}), 400
+        # Built-in admin: role, domains and login name are locked — the
+        # built-in administrator must keep its built-in privileges. Only
+        # display_name, remark and password may be changed for this account.
+        target_is_builtin_admin = _is_builtin_admin_id(user_id)
+        if target_is_builtin_admin:
+            if data.get('username') or data.get('role_ids') is not None \
+                    or data.get('role_id') is not None or 'domains' in data:
+                return jsonify({'error': '内置管理员的登录名、角色和所属域不可修改'}), 403
         # Build fields dict (exclude password — handled separately).
         # Changing username / domains is sensitive (identity / access scope) and
         # requires users.manage (or admin); a self user may only edit display_name
@@ -1866,6 +1887,10 @@ def create_app(project_root, spec):
                 if not _in_user_domain(actor, uid, target.get('domains')):
                     failed.append({'id': uid, 'error': '没有权限操作此用户'})
                     continue
+            # Built-in admin's domain whitelist is locked.
+            if _is_builtin_admin_id(uid):
+                failed.append({'id': uid, 'error': '内置管理员的所属域不可修改'})
+                continue
             # domains='' clears the whitelist (update_user applies empty string, not None)
             res = update_user(db_path, uid, {'domains': domains_str})
             if res is None:

@@ -97,6 +97,7 @@
 <div class="panel" id="panel">
   <div class="panel-head"><h2 id="panelTitle">新建用户</h2><button class="panel-close" onclick="closePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
   <div class="panel-body">
+    <div id="builtinAdminTip" style="display:none;padding:8px 12px;border-radius:6px;background:#fff7ed;color:#c2410c;font-size:12px;line-height:1.6;margin-bottom:12px">系统内置管理员：角色、所属域与登录名不可修改，仅可修改显示名称、备注和密码。</div>
     <div class="form-group">
       <label>用户名 *</label>
       <input type="text" id="mu_username" placeholder="username">
@@ -112,7 +113,7 @@
     <div class="form-group">
       <label>角色（可多选）</label>
       <div id="mu_roles" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;max-height:160px;overflow-y:auto"></div>
-      <div style="font-size:11px;color:var(--gray-400);margin-top:4px">可分配多个角色，权限取所有角色的并集</div>
+      <div id="muRolesHint" style="font-size:11px;color:var(--gray-400);margin-top:4px">可分配多个角色，权限取所有角色的并集</div>
     </div>
     <div class="form-group">
       <label>备注</label>
@@ -121,7 +122,7 @@
     <div class="form-group">
       <label>所属域（可访问范围）</label>
       <div id="mu_domains" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;max-height:180px;overflow-y:auto"></div>
-      <div style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域；勾选后仅可访问所选域。域访问授权统一在系统主域管理</div>
+      <div id="muDomainsHint" style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域；勾选后仅可访问所选域。域访问授权统一在系统主域管理</div>
     </div>
     <input type="hidden" id="mu_user_id">
     <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
@@ -172,6 +173,7 @@ function escapeHtml(s){if(!s)return'';return String(s).replace(/[&<>"']/g,functi
 function loadRolesForUsers(){
   apiFetch(systemApiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
     allRoles = roles;
+    lockIfBuiltinEditing();
   }).catch(function(){});
 }
 
@@ -182,7 +184,17 @@ var allDomains = []; // [{slug, name, theme_color, enabled}]
 function loadAllDomains(){
   apiFetch(systemApiBase()+'/api/system/domains').then(function(r){return r.json()}).then(function(data){
     allDomains = (data.domains || []).filter(function(d){ return d.enabled !== false; });
+    lockIfBuiltinEditing();
   }).catch(function(){});
+}
+
+// Roles/domains load asynchronously — if the built-in admin edit panel is
+// already open when they arrive, re-apply the full-privilege locked display.
+function lockIfBuiltinEditing(){
+  var id = document.getElementById('mu_user_id').value;
+  var panelOpen = document.getElementById('panel').classList.contains('open');
+  var uname = document.getElementById('mu_username').value;
+  if(panelOpen && id && (id === '1' || uname === 'admin')) setBuiltinAdminLock(true);
 }
 
 // Render domain checkboxes into #mu_domains, pre-checking given slugs.
@@ -268,9 +280,64 @@ function openCreate() {
   var defaultRoleId = (allRoles.find(function(r){return r.name==='user';})||{}).id || (allRoles[0]||{}).id;
   renderRoleCheckboxes(defaultRoleId ? [defaultRoleId] : []);
   renderDomainCheckboxes([]);
+  setBuiltinAdminLock(false);
   document.getElementById('panelFeedback').style.display = 'none';
   document.getElementById('panel').classList.add('open');
   document.getElementById('mu_username').focus();
+}
+
+// Built-in admin (id=1 / username='admin'): its role, domains and login name
+// are locked server-side — mirror that in the UI. The built-in admin always
+// shows FULL privilege: every role checked, no domain restriction (empty
+// whitelist = all enabled domains), all greyed out and unmodifiable.
+function isBuiltinAdminUser(u){
+  return !!(u && (u.id === 1 || u.id === '1' || u.username === 'admin'));
+}
+
+var ROLE_HINT_NORMAL = '可分配多个角色，权限取所有角色的并集';
+var ROLE_HINT_LOCKED = '内置管理员：拥有全部角色权限（满权限），不可修改';
+var DOMAIN_HINT_NORMAL = '不勾选 = 可访问全部启用域；勾选后仅可访问所选域。域访问授权统一在系统主域管理';
+var DOMAIN_HINT_LOCKED = '内置管理员：可访问全部启用域（满权限），不可修改';
+
+function setBuiltinAdminLock(locked){
+  var tip = document.getElementById('builtinAdminTip');
+  if(tip) tip.style.display = locked ? 'block' : 'none';
+  var un = document.getElementById('mu_username');
+  un.disabled = locked;
+  un.style.background = locked ? 'var(--gray-100)' : '';
+
+  // Role box: built-in admin = all roles checked (full privilege), locked.
+  var rolesBox = document.getElementById('mu_roles');
+  if(rolesBox){
+    rolesBox.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.disabled = locked;
+      if(locked) cb.checked = true;
+    });
+    rolesBox.querySelectorAll('.cb-item').forEach(function(item){
+      item.style.opacity = locked ? '0.55' : '';
+      item.style.pointerEvents = locked ? 'none' : '';
+      if(locked) item.classList.add('checked');
+      else item.classList.remove('checked');
+    });
+  }
+  var rh = document.getElementById('muRolesHint');
+  if(rh) rh.textContent = locked ? ROLE_HINT_LOCKED : ROLE_HINT_NORMAL;
+
+  // Domain box: built-in admin = nothing checked (all enabled domains), locked.
+  var domBox = document.getElementById('mu_domains');
+  if(domBox){
+    domBox.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.disabled = locked;
+      if(locked) cb.checked = false;
+    });
+    domBox.querySelectorAll('.cb-item').forEach(function(item){
+      item.style.opacity = locked ? '0.55' : '';
+      item.style.pointerEvents = locked ? 'none' : '';
+      if(locked) item.classList.remove('checked');
+    });
+  }
+  var dh = document.getElementById('muDomainsHint');
+  if(dh) dh.textContent = locked ? DOMAIN_HINT_LOCKED : DOMAIN_HINT_NORMAL;
 }
 
 function openEdit(id) {
@@ -285,6 +352,7 @@ function openEdit(id) {
     document.getElementById('mu_remark').value = u.remark || '';
     renderRoleCheckboxes(u.role_ids || []);
     renderDomainCheckboxes(Array.isArray(u.domains) ? u.domains : []);
+    setBuiltinAdminLock(isBuiltinAdminUser(u));
     document.getElementById('panelFeedback').style.display = 'none';
     document.getElementById('panel').classList.add('open');
   });
@@ -293,6 +361,7 @@ function openEdit(id) {
 function closePanel() {
   document.getElementById('panel').classList.remove('open');
   document.getElementById('mu_username').disabled = false;
+  setBuiltinAdminLock(false);
 }
 
 function saveUser() {
@@ -304,23 +373,39 @@ function saveUser() {
   var role_ids = selectedRoleIds();
   var domains = selectedDomainSlugs();
   var fb = document.getElementById('panelFeedback');
+  var isBuiltinAdmin = !!(id && (id === '1' || username === 'admin'));
 
-  if (!username || !display) {
+  if (!display) {
     fb.style.display = 'block';
     fb.style.background = '#fceef0';
     fb.style.color = 'var(--red)';
-    fb.textContent = '用户名和显示名称不能为空';
+    fb.textContent = '显示名称不能为空';
     return;
   }
-  if (!role_ids.length) {
-    fb.style.display = 'block';
-    fb.style.background = '#fceef0';
-    fb.style.color = 'var(--red)';
-    fb.textContent = '请至少分配一个角色';
-    return;
+  if (!isBuiltinAdmin) {
+    if (!username) {
+      fb.style.display = 'block';
+      fb.style.background = '#fceef0';
+      fb.style.color = 'var(--red)';
+      fb.textContent = '用户名不能为空';
+      return;
+    }
+    if (!role_ids.length) {
+      fb.style.display = 'block';
+      fb.style.background = '#fceef0';
+      fb.style.color = 'var(--red)';
+      fb.textContent = '请至少分配一个角色';
+      return;
+    }
   }
 
-  var body = { username: username, display_name: display, remark: remark, role_ids: role_ids, domains: domains };
+  var body = { display_name: display, remark: remark };
+  if (!isBuiltinAdmin) {
+    // Built-in admin: locked fields are never sent (server rejects them).
+    body.username = username;
+    body.role_ids = role_ids;
+    body.domains = domains;
+  }
   if (id) {
     if (password) body.password = password;
     apiFetch(systemApiBase()+'/api/users/'+id, {
