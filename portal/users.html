@@ -51,6 +51,18 @@
 .form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff}
 .form-group input:focus,.form-group select:focus{border-color:var(--accent);outline:none}
 .empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+/* 角色/所属域多选网格：两列，每项两行（名称 + 代码） */
+.cb-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px}
+.cb-item{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:6px;cursor:pointer;transition:background 0.12s}
+.cb-item:hover{background:var(--gray-100)}
+.cb-item.checked{background:var(--gray-100)}
+.cb-item input{margin-top:2px;flex-shrink:0;accent-color:var(--accent)}
+.cb-item .cb-text{min-width:0;flex:1}
+.cb-item .cb-name{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--gray-800);line-height:1.5}
+.cb-item .cb-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.cb-item .cb-code{font-size:11px;color:var(--gray-400);font-family:ui-monospace,SFMono-Regular,monospace;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cb-item .cb-badge{margin-left:auto;font-size:10px;color:var(--gray-500);background:var(--gray-100);padding:1px 6px;border-radius:8px;flex-shrink:0}
+@media(max-width:480px){.cb-grid{grid-template-columns:1fr}}
 @media(max-width:768px){.panel{width:100vw;max-width:100vw}}
 </style>
 </head>
@@ -61,12 +73,20 @@
   <div class="toolbar">
     <input type="text" id="searchInput" placeholder="搜索用户名..." oninput="loadUsers()">
     <span class="spacer"></span>
+    <span id="batchBar" style="display:none;align-items:center;gap:6px">
+      <span id="batchCount" style="font-size:12px;color:var(--gray-600)"></span>
+      <button class="btn btn-primary" onclick="openBatch()">批量设置域</button>
+      <button class="btn btn-ghost" onclick="clearSelection()">取消选择</button>
+    </span>
     <button class="btn btn-primary" onclick="openCreate()">+ 新建用户</button>
   </div>
   <div class="table-wrapper">
     <table>
       <thead>
-        <tr><th>ID</th><th>用户名</th><th>显示名称</th><th>角色</th><th>所属域</th><th>创建时间</th><th>操作</th></tr>
+        <tr>
+          <th style="width:36px;text-align:center"><input type="checkbox" id="selectAll" title="全选当前列表" onchange="toggleSelectAll()"></th>
+          <th>ID</th><th>用户名</th><th>显示名称</th><th>角色</th><th>所属域</th><th>备注</th><th>创建时间</th><th>操作</th>
+        </tr>
       </thead>
       <tbody id="userList"></tbody>
     </table>
@@ -95,8 +115,13 @@
       <div style="font-size:11px;color:var(--gray-400);margin-top:4px">可分配多个角色，权限取所有角色的并集</div>
     </div>
     <div class="form-group">
-      <label>所属域 (逗号分隔)</label>
-      <input type="text" id="mu_domains" placeholder="intelligence_web, intelligence_sales">
+      <label>备注</label>
+      <textarea id="mu_remark" placeholder="选填，如：销售团队、测试账号等" rows="2" style="width:100%;padding:8px 12px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-800);background:#fff;resize:vertical;font-family:inherit"></textarea>
+    </div>
+    <div class="form-group">
+      <label>所属域（可访问范围）</label>
+      <div id="mu_domains" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;max-height:180px;overflow-y:auto"></div>
+      <div style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域；勾选后仅可访问所选域。域访问授权统一在系统主域管理</div>
     </div>
     <input type="hidden" id="mu_user_id">
     <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
@@ -108,18 +133,94 @@
 </div>
 <div class="panel-overlay" onclick="closePanel()"></div>
 
+<!-- Batch domain-setting modal -->
+<div class="modal-overlay" id="batchOverlay">
+  <div class="modal" style="width:520px;max-height:80vh">
+    <div class="modal-header">
+      <h2>批量设置所属域</h2>
+      <button class="panel-close" onclick="closeBatch()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--gray-600);margin-bottom:14px">
+        已选择 <b id="batchSelCount" style="color:var(--accent)">0</b> 个用户，统一设置可访问的域。
+        <div style="font-size:12px;color:var(--gray-400);margin-top:4px">仅改所属域，不影响已分配的角色与密码。</div>
+      </div>
+      <div class="form-group">
+        <label>所属域（可访问范围）</label>
+        <div id="batchDomains" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;max-height:200px;overflow-y:auto"></div>
+        <div style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域（清空限制）；勾选后仅可访问所选域</div>
+      </div>
+      <div id="batchFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeBatch()">取消</button>
+      <button class="btn btn-primary" onclick="applyBatch()">应用</button>
+    </div>
+  </div>
+</div>
+
 <script>
 var token = getToken();
 if (!token) { window.location.href = '/portal/login.html'; }
 
 var allRoles = []; // [{id, name, label, is_system}]
+var selectedIds = new Set(); // user ids selected for batch action (persists across re-renders)
+var currentUserList = []; // latest loaded user rows, used by select-all
 
 function escapeHtml(s){if(!s)return'';return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 
 function loadRolesForUsers(){
-  apiFetch(apiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
+  apiFetch(systemApiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
     allRoles = roles;
   }).catch(function(){});
+}
+
+// Domain access is managed at the system (primary) domain — that is where
+// login reads users.domains, so user/role/domain edits must target it.
+var allDomains = []; // [{slug, name, theme_color, enabled}]
+
+function loadAllDomains(){
+  apiFetch(systemApiBase()+'/api/system/domains').then(function(r){return r.json()}).then(function(data){
+    allDomains = (data.domains || []).filter(function(d){ return d.enabled !== false; });
+  }).catch(function(){});
+}
+
+// Render domain checkboxes into #mu_domains, pre-checking given slugs.
+function renderDomainCheckboxes(slugs){
+  slugs = slugs || [];
+  var box = document.getElementById('mu_domains');
+  if(!box) return;
+  if(!allDomains.length){ box.innerHTML = '<span style="font-size:12px;color:var(--gray-400)">域列表加载中...</span>'; return; }
+  box.innerHTML = '<div class="cb-grid">' + allDomains.map(function(d){
+    var checked = slugs.indexOf(d.slug) >= 0;
+    var color = d.theme_color || 'var(--gray-400)';
+    return '<label class="cb-item'+(checked?' checked':'')+'">'
+      +'<input type="checkbox" class="mu-domain-cb" value="'+d.slug+'"'+(checked?' checked':'')+'>'
+      +'<span class="cb-text">'
+      +'<span class="cb-name"><span class="cb-dot" style="background:'+color+'"></span>'+escapeHtml(d.name||d.slug)+'</span>'
+      +'<span class="cb-code">'+escapeHtml(d.slug)+'</span>'
+      +'</span></label>';
+  }).join('') + '</div>';
+  bindCbHighlight('mu_domains');
+}
+
+function selectedDomainSlugs(){
+  var boxes = document.querySelectorAll('.mu-domain-cb:checked');
+  var slugs = [];
+  boxes.forEach(function(b){ slugs.push(b.value); });
+  return slugs;
+}
+
+// Keep the .checked highlight in sync when the user toggles a box.
+function bindCbHighlight(boxId){
+  var box = document.getElementById(boxId);
+  if(!box) return;
+  box.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+    cb.addEventListener('change', function(){
+      var item = cb.closest('.cb-item');
+      if(item) item.classList.toggle('checked', cb.checked);
+    });
+  });
 }
 
 // Render role checkboxes into #mu_roles, pre-checking given role_ids
@@ -128,15 +229,16 @@ function renderRoleCheckboxes(roleIds){
   var box = document.getElementById('mu_roles');
   if(!box) return;
   if(!allRoles.length){ box.innerHTML = '<span style="font-size:12px;color:var(--gray-400)">角色加载中...</span>'; return; }
-  box.innerHTML = allRoles.map(function(r){
-    var checked = roleIds.indexOf(r.id) >= 0 ? 'checked' : '';
-    return '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;color:var(--gray-700);cursor:pointer">'
-      +'<input type="checkbox" class="mu-role-cb" value="'+r.id+'" '+checked+'>"
-      +'<span>'+escapeHtml(r.label||r.name)+'</span>'
-      +'<span style="color:var(--gray-400);font-size:11px;font-family:monospace">'+escapeHtml(r.name)+'</span>'
-      +(r.is_system?'<span style="margin-left:auto;font-size:10px;color:var(--gray-400);background:var(--gray-100);padding:1px 5px;border-radius:8px">内置</span>':'')
-      +'</label>';
-  }).join('');
+  box.innerHTML = '<div class="cb-grid">' + allRoles.map(function(r){
+    var checked = roleIds.indexOf(r.id) >= 0;
+    return '<label class="cb-item'+(checked?' checked':'')+'">'
+      +'<input type="checkbox" class="mu-role-cb" value="'+r.id+'"'+(checked?' checked':'')+'>'
+      +'<span class="cb-text">'
+      +'<span class="cb-name">'+escapeHtml(r.label||r.name)+(r.is_system?'<span class="cb-badge">内置</span>':'')+'</span>'
+      +'<span class="cb-code">'+escapeHtml(r.name)+'</span>'
+      +'</span></label>';
+  }).join('') + '</div>';
+  bindCbHighlight('mu_roles');
 }
 
 function selectedRoleIds(){
@@ -161,10 +263,11 @@ function openCreate() {
   document.getElementById('mu_display').value = '';
   document.getElementById('mu_password').value = '';
   document.getElementById('mu_password').placeholder = '至少6位';
+  document.getElementById('mu_remark').value = '';
   // default: select the 'user' role
   var defaultRoleId = (allRoles.find(function(r){return r.name==='user';})||{}).id || (allRoles[0]||{}).id;
   renderRoleCheckboxes(defaultRoleId ? [defaultRoleId] : []);
-  document.getElementById('mu_domains').value = '';
+  renderDomainCheckboxes([]);
   document.getElementById('panelFeedback').style.display = 'none';
   document.getElementById('panel').classList.add('open');
   document.getElementById('mu_username').focus();
@@ -173,14 +276,15 @@ function openCreate() {
 function openEdit(id) {
   document.getElementById('panelTitle').textContent = '编辑用户';
   document.getElementById('mu_user_id').value = id;
-  apiFetch(apiBase()+'/api/users/'+id).then(function(r){return r.json()}).then(function(u){
+  apiFetch(systemApiBase()+'/api/users/'+id).then(function(r){return r.json()}).then(function(u){
     document.getElementById('mu_username').value = u.username;
     document.getElementById('mu_username').disabled = true;
     document.getElementById('mu_display').value = u.display_name || '';
     document.getElementById('mu_password').value = '';
     document.getElementById('mu_password').placeholder = '留空不修改';
+    document.getElementById('mu_remark').value = u.remark || '';
     renderRoleCheckboxes(u.role_ids || []);
-    document.getElementById('mu_domains').value = Array.isArray(u.domains) ? u.domains.join(', ') : '';
+    renderDomainCheckboxes(Array.isArray(u.domains) ? u.domains : []);
     document.getElementById('panelFeedback').style.display = 'none';
     document.getElementById('panel').classList.add('open');
   });
@@ -196,9 +300,9 @@ function saveUser() {
   var username = document.getElementById('mu_username').value.trim();
   var display = document.getElementById('mu_display').value.trim();
   var password = document.getElementById('mu_password').value;
+  var remark = document.getElementById('mu_remark').value.trim();
   var role_ids = selectedRoleIds();
-  var domains_raw = document.getElementById('mu_domains').value.trim();
-  var domains = domains_raw ? domains_raw.split(',').map(function(d){return d.trim()}).filter(Boolean) : [];
+  var domains = selectedDomainSlugs();
   var fb = document.getElementById('panelFeedback');
 
   if (!username || !display) {
@@ -216,10 +320,10 @@ function saveUser() {
     return;
   }
 
-  var body = { username: username, display_name: display, role_ids: role_ids, domains: domains };
+  var body = { username: username, display_name: display, remark: remark, role_ids: role_ids, domains: domains };
   if (id) {
     if (password) body.password = password;
-    apiFetch(apiBase()+'/api/users/'+id, {
+    apiFetch(systemApiBase()+'/api/users/'+id, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -237,7 +341,7 @@ function saveUser() {
       return;
     }
     body.password = password;
-    apiFetch(apiBase()+'/api/users', {
+    apiFetch(systemApiBase()+'/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -251,28 +355,157 @@ function saveUser() {
 
 function deleteUser(id) {
   if (!confirm('确认删除此用户？')) return;
-  apiFetch(apiBase()+'/api/users/'+id, { method: 'DELETE' }).then(function(){
+  apiFetch(systemApiBase()+'/api/users/'+id, { method: 'DELETE' }).then(function(){
     loadUsers();
+  });
+}
+
+function domainLabel(slugs) {
+  if (!Array.isArray(slugs) || !slugs.length) return '<span style="color:var(--gray-400)">全部启用域</span>';
+  return slugs.map(function(s){
+    var d = allDomains.find(function(x){ return x.slug === s; });
+    var color = d ? (d.theme_color || 'var(--gray-400)') : 'var(--gray-400)';
+    var name = d ? (d.name || s) : s;
+    return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-right:6px">'
+      +'<span style="width:8px;height:8px;border-radius:2px;background:'+color+'"></span>'
+      +escapeHtml(name)+'</span>';
+  }).join('');
+}
+
+// --- Batch domain selection ---
+function toggleRow(id, cb) {
+  if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateSelectAllState();
+  updateBatchBar();
+}
+
+function toggleSelectAll() {
+  var all = document.getElementById('selectAll').checked;
+  currentUserList.forEach(function(u){ if (all) selectedIds.add(u.id); else selectedIds.delete(u.id); });
+  document.querySelectorAll('.row-cb').forEach(function(cb){ cb.checked = all; });
+  updateBatchBar();
+}
+
+function updateSelectAllState() {
+  var boxes = document.querySelectorAll('.row-cb');
+  var selInView = 0;
+  boxes.forEach(function(cb){ if (cb.checked) selInView++; });
+  var sa = document.getElementById('selectAll');
+  if (!sa) return;
+  sa.checked = boxes.length > 0 && selInView === boxes.length;
+  sa.indeterminate = selInView > 0 && selInView < boxes.length;
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.row-cb').forEach(function(cb){ cb.checked = false; });
+  updateSelectAllState();
+  updateBatchBar();
+}
+
+function updateBatchBar() {
+  var n = selectedIds.size;
+  var bar = document.getElementById('batchBar');
+  bar.style.display = n > 0 ? 'flex' : 'none';
+  if (n > 0) document.getElementById('batchCount').textContent = '已选 ' + n + ' 个用户';
+}
+
+// Render domain checkboxes into #batchDomains (default: none checked = all enabled).
+function renderBatchDomainCheckboxes(slugs){
+  slugs = slugs || [];
+  var box = document.getElementById('batchDomains');
+  if(!box) return;
+  if(!allDomains.length){ box.innerHTML = '<span style="font-size:12px;color:var(--gray-400)">域列表加载中...</span>'; return; }
+  box.innerHTML = '<div class="cb-grid">' + allDomains.map(function(d){
+    var checked = slugs.indexOf(d.slug) >= 0;
+    var color = d.theme_color || 'var(--gray-400)';
+    return '<label class="cb-item'+(checked?' checked':'')+'">'
+      +'<input type="checkbox" class="batch-domain-cb" value="'+d.slug+'"'+(checked?' checked':'')+'>'
+      +'<span class="cb-text">'
+      +'<span class="cb-name"><span class="cb-dot" style="background:'+color+'"></span>'+escapeHtml(d.name||d.slug)+'</span>'
+      +'<span class="cb-code">'+escapeHtml(d.slug)+'</span>'
+      +'</span></label>';
+  }).join('') + '</div>';
+  bindCbHighlight('batchDomains');
+}
+
+function selectedBatchDomainSlugs(){
+  var boxes = document.querySelectorAll('.batch-domain-cb:checked');
+  var slugs = [];
+  boxes.forEach(function(b){ slugs.push(b.value); });
+  return slugs;
+}
+
+function openBatch() {
+  if (!selectedIds.size) return;
+  document.getElementById('batchSelCount').textContent = selectedIds.size;
+  renderBatchDomainCheckboxes([]);
+  document.getElementById('batchFeedback').style.display = 'none';
+  document.getElementById('batchOverlay').classList.add('open');
+}
+
+function closeBatch() {
+  document.getElementById('batchOverlay').classList.remove('open');
+}
+
+function applyBatch() {
+  var ids = Array.from(selectedIds);
+  if (!ids.length) return;
+  var domains = selectedBatchDomainSlugs();
+  var fb = document.getElementById('batchFeedback');
+  var btn = document.querySelector('#batchOverlay .modal-footer .btn-primary');
+  btn.disabled = true; btn.textContent = '应用中...';
+  apiFetch(systemApiBase()+'/api/users/batch/domains', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_ids: ids, domains: domains })
+  }).then(function(r){
+    if (!r.ok) return r.json().then(function(e){
+      fb.style.display = 'block'; fb.style.background = '#fceef0'; fb.style.color = 'var(--red)';
+      fb.textContent = e.error || '设置失败';
+    });
+    return r.json().then(function(res){
+      var ok = res.updated || 0;
+      var fail = (res.failed || []).length;
+      var label = domains.length ? domains.join(', ') : '全部启用域';
+      if (fail) {
+        fb.style.display = 'block'; fb.style.background = '#fff7ed'; fb.style.color = 'var(--orange, #c2410c)';
+        fb.textContent = '成功 ' + ok + ' 人，失败 ' + fail + ' 人（' + (res.failed||[]).map(function(f){return 'ID '+f.id}).join('、') + '）';
+      } else {
+        fb.style.display = 'block'; fb.style.background = '#f0fdf4'; fb.style.color = 'var(--green, #15803d)';
+        fb.textContent = '已为 ' + ok + ' 个用户设置所属域：' + label + '（用户重新登录后生效）';
+      }
+      clearSelection();
+      loadUsers();
+    });
+  }).catch(function(){
+    fb.style.display = 'block'; fb.style.background = '#fceef0'; fb.style.color = 'var(--red)';
+    fb.textContent = '网络错误';
+  }).then(function(){
+    btn.disabled = false; btn.textContent = '应用';
   });
 }
 
 function loadUsers() {
   var search = document.getElementById('searchInput').value;
-  apiFetch(apiBase()+'/api/users?search='+encodeURIComponent(search)+'&limit=100').then(function(r){return r.json()}).then(function(data){
+  apiFetch(systemApiBase()+'/api/users?search='+encodeURIComponent(search)+'&limit=100').then(function(r){return r.json()}).then(function(data){
     var tbody = document.getElementById('userList');
+    currentUserList = data.items;
     tbody.innerHTML = data.items.map(function(u){
-      var domains = Array.isArray(u.domains) ? u.domains.join(', ') : '-';
       // Multi-role tags
       var roleNames = Array.isArray(u.role_names) && u.role_names.length ? u.role_names : [u.role_name || 'viewer'];
       var roleTags = roleNames.map(function(n){
         return '<span class="tag '+roleTagClass(n)+'" style="margin-right:4px">'+escapeHtml(n)+'</span>';
       }).join('');
+      var checked = selectedIds.has(u.id) ? 'checked' : '';
       return '<tr>'
+        +'<td style="text-align:center"><input type="checkbox" class="row-cb" data-id="'+u.id+'" '+checked+' onchange="toggleRow('+u.id+',this)"></td>'
         +'<td>'+u.id+'</td>'
         +'<td>'+escapeHtml(u.username)+'</td>'
         +'<td>'+escapeHtml(u.display_name || '-')+'</td>'
         +'<td>'+roleTags+'</td>'
-        +'<td>'+escapeHtml(domains)+'</td>'
+        +'<td>'+domainLabel(u.domains)+'</td>'
+        +'<td style="font-size:12px;color:var(--gray-500);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escapeHtml(u.remark||'')+'">'+escapeHtml(u.remark||'-')+'</td>'
         +'<td>'+(u.created_at ? new Date(u.created_at).toLocaleDateString() : '-')+'</td>'
         +'<td class="action-cell">'
           +'<div class="action-btns">'
@@ -282,13 +515,16 @@ function loadUsers() {
         +'</td>'
         +'</tr>';
     }).join('');
-    if (!data.items.length) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">暂无用户</td></tr>';
+    if (!data.items.length) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--gray-400);padding:30px">暂无用户</td></tr>';
+    updateSelectAllState();
+    updateBatchBar();
   }).catch(function(){
-    document.getElementById('userList').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
+    document.getElementById('userList').innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--gray-400);padding:30px">加载失败</td></tr>';
   });
 }
 
 loadRolesForUsers();
+loadAllDomains();
 loadUsers();
 </script>
 </body>

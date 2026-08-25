@@ -601,6 +601,13 @@ def create_app(project_root, spec):
             'user_id': user['id'],
             'username': user['username'],
             'role': user['role'],
+            # Domain access whitelist (slugs). Empty list = all enabled domains
+            # (backward compatible with pre-gating users/tokens).
+            'domains': user.get('domains') or [],
+            # System-level RBAC (platform-wide). Computed at login on the primary
+            # domain. Absent on pre-existing tokens -> endpoints fall back to DB.
+            'role_ids': user.get('role_ids') or [],
+            'permission_codes': user.get('permission_codes') or [],
             'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
             'iat': datetime.utcnow(),
         }
@@ -642,13 +649,156 @@ def create_app(project_root, spec):
                 role = user.get('role')
                 if role == 'admin':
                     return f(*args, **kwargs)
-                user_id = user.get('user_id')
-                codes = get_user_permission_codes(db_path, user_id, role)
+                # System-level RBAC: prefer the permission codes embedded at login
+                # (platform-wide, works across domains). Fall back to this domain's
+                # DB only for pre-existing tokens that predate the claim.
+                if 'permission_codes' in user:
+                    codes = set(user.get('permission_codes') or [])
+                else:
+                    codes = get_user_permission_codes(db_path, user.get('user_id'), role)
                 if code not in codes:
                     return jsonify({'error': '没有权限执行此操作'}), 403
                 return f(*args, **kwargs)
             return decorated
         return decorator
+
+    def _user_perm_codes(user):
+        """Resolve a token user's effective permission-code set.
+
+        Prefers the codes embedded in the JWT at login (system-level, works
+        across domains); falls back to this domain's DB only for pre-existing
+        tokens that predate the claim. admin is handled inside
+        get_user_permission_codes (returns the full catalog).
+        """
+        role = user.get('role')
+        if 'permission_codes' in user:
+            return set(user.get('permission_codes') or [])
+        return get_user_permission_codes(db_path, user.get('user_id'), role)
+
+    def _require_user_or_perm(code):
+        """Inline check: allow admin / self / holder of `code`. Returns
+        (ok, response) so callers can short-circuit with the given response."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return False, (jsonify({'error': 'Unauthorized'}), 401)
+        if user.get('role') == 'admin':
+            return True, None
+        if code in _user_perm_codes(user):
+            return True, None
+        return False, (jsonify({'error': '没有权限执行此操作'}), 403)
+
+    def _admin_role_id():
+        """Resolve the admin role's numeric id from the DB (1 if present)."""
+        for r in list_roles(db_path):
+            if r.get('name') == 'admin':
+                return r.get('id')
+        return 1
+
+    def _is_admin_user(user):
+        """True if the token user holds the admin role (effective role or
+        any of its multi-role associations)."""
+        if user.get('role') == 'admin':
+            return True
+        admin_id = _admin_role_id()
+        rids = user.get('role_ids') or []
+        return any(int(r) == admin_id for r in rids)
+
+    def _is_admin_user_id(user_id):
+        """True if the user with this DB id holds the admin role (effective
+        role or any of its multi-role associations)."""
+        u = get_user_by_id_full(db_path, user_id)
+        if u is None:
+            return False
+        if u.get('role') == 'admin':
+            return True
+        admin_id = _admin_role_id()
+        return any(int(r) == admin_id for r in (u.get('role_ids') or []))
+
+    def _normalize_domains(dom):
+        """Normalize a domains field (list of slugs, or comma string, or None)
+        to a clean list of slugs."""
+        if not dom:
+            return []
+        if isinstance(dom, str):
+            return [d.strip() for d in dom.split(',') if d.strip()]
+        return [str(d).strip() for d in dom if str(d).strip()]
+
+    def _in_user_domain(actor, target_user_id, target_domains):
+        """Scope guard for user management: may `actor` see/act on the user with
+        `target_user_id` given their domain whitelist?
+
+        - admin → always
+        - self → always
+        - empty actor whitelist → all domains (legacy compat, matches domain gating)
+        - otherwise → the target must share at least one domain with the actor
+        """
+        if actor.get('role') == 'admin':
+            return True
+        if actor.get('user_id') == target_user_id:
+            return True
+        actor_domains = _normalize_domains(actor.get('domains'))
+        if not actor_domains:
+            return True
+        tdoms = _normalize_domains(target_domains)
+        return any(d in actor_domains for d in tdoms)
+
+    def _check_no_admin_grant(actor, role_ids):
+        """Privilege-escalation guard: only an admin may grant the admin role.
+
+        Returns a 403 response tuple if `actor` is not admin but `role_ids`
+        includes the admin role; otherwise None (allowed).
+        """
+        if actor.get('role') == 'admin':
+            return None
+        admin_id = _admin_role_id()
+        if any(int(r) == admin_id for r in role_ids):
+            return (jsonify({'error': '只有管理员可以授予管理员角色'}), 403)
+        return None
+
+    def _require_any_perm(codes):
+        """Inline check: allow admin or holder of ANY code in `codes`. Returns
+        (ok, response)."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return False, (jsonify({'error': 'Unauthorized'}), 401)
+        if user.get('role') == 'admin':
+            return True, None
+        owned = _user_perm_codes(user)
+        if any(c in owned for c in codes):
+            return True, None
+        return False, (jsonify({'error': '没有权限执行此操作'}), 403)
+
+    # --- Domain access gating (per-domain business APIs) ---
+    # System-level endpoints (/api/auth, /api/system, /api/me, /api/health) are
+    # shared across domains and are NOT gated. All other /api/* business routes
+    # are gated by the user's domain whitelist (JWT 'domains' claim): admin or a
+    # user with an empty whitelist (legacy token / not-yet-scoped user) passes;
+    # otherwise the current domain's slug must be present in the whitelist.
+    _DOMAIN_GATING_EXCLUDE = ('/api/auth/', '/api/system/', '/api/me/', '/api/health',
+                              '/api/users', '/api/roles', '/api/permissions')
+
+    @app.before_request
+    def enforce_domain_access():
+        path = request.path
+        if not path.startswith('/api/'):
+            return None
+        if path.startswith(_DOMAIN_GATING_EXCLUDE):
+            return None
+        if request.method == 'OPTIONS':
+            return None
+        auth_header = request.headers.get('Authorization', '')
+        token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+        user = _verify_token(token) if token else None
+        if not user:
+            return None  # let the route's own auth check produce the 401
+        if user.get('role') == 'admin':
+            return None
+        domains = user.get('domains') or []
+        if not domains:
+            return None  # legacy token / user without a whitelist: allow
+        if spec['slug'] not in domains:
+            return jsonify({'error': '没有访问「%s」的权限' % spec['title_prefix']}), 403
+        return None
 
     # ========================================================================
     # Projects API
@@ -890,13 +1040,19 @@ def create_app(project_root, spec):
 
     @app.route('/api/roles', methods=['GET'])
     def list_roles_endpoint():
-        """List all roles with user_count. Admin only."""
+        """List all roles with user_count. Requires users.manage OR roles.manage
+        (admin passes) — user management needs the role list for its dropdown.
+
+        The admin role is hidden from every non-admin viewer (they can neither
+        see it in role management nor pick it as a grant target)."""
+        ok, resp = _require_any_perm(['users.manage', 'roles.manage'])
+        if not ok:
+            return resp
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') != 'admin':
-            return jsonify({'error': '需要管理员权限'}), 403
         roles = list_roles(db_path)
+        if not _is_admin_user(user or {}):
+            admin_id = _admin_role_id()
+            roles = [r for r in roles if r.get('id') != admin_id]
         # Attach the permission set for each role
         for r in roles:
             r['permissions'] = get_role_permissions(db_path, r['id'])
@@ -904,12 +1060,10 @@ def create_app(project_root, spec):
 
     @app.route('/api/roles', methods=['POST'])
     def create_role_endpoint():
-        """Create a role. Admin only."""
-        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') != 'admin':
-            return jsonify({'error': '需要管理员权限'}), 403
+        """Create a role. Requires roles.manage (admin passes)."""
+        ok, resp = _require_user_or_perm('roles.manage')
+        if not ok:
+            return resp
         data = request.json or {}
         name = (data.get('name') or '').strip()
         if not name:
@@ -930,12 +1084,11 @@ def create_app(project_root, spec):
 
     @app.route('/api/roles/<int:id>', methods=['PUT'])
     def update_role_endpoint(id):
-        """Update a role's label/description/permissions. Admin only."""
-        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') != 'admin':
-            return jsonify({'error': '需要管理员权限'}), 403
+        """Update a role's label/description/permissions. Requires roles.manage
+        (admin passes)."""
+        ok, resp = _require_user_or_perm('roles.manage')
+        if not ok:
+            return resp
         role = get_role(db_path, id)
         if role is None:
             return jsonify({'error': '角色不存在'}), 404
@@ -955,12 +1108,10 @@ def create_app(project_root, spec):
 
     @app.route('/api/roles/<int:id>', methods=['DELETE'])
     def delete_role_endpoint(id):
-        """Delete a role (non-system only). Admin only."""
-        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') != 'admin':
-            return jsonify({'error': '需要管理员权限'}), 403
+        """Delete a role (non-system only). Requires roles.manage (admin passes)."""
+        ok, resp = _require_user_or_perm('roles.manage')
+        if not ok:
+            return resp
         role = get_role(db_path, id)
         if role is None:
             return jsonify({'error': '角色不存在'}), 404
@@ -976,35 +1127,63 @@ def create_app(project_root, spec):
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not user:
             return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') != 'admin':
-            return jsonify({'error': '需要管理员权限'}), 403
+        if user.get('role') == 'admin':
+            return jsonify(list_permissions(db_path))
+        codes = _user_perm_codes(user)
+        if 'users.manage' not in codes and 'roles.manage' not in codes:
+            return jsonify({'error': '没有权限查看权限目录'}), 403
         return jsonify(list_permissions(db_path))
 
     # User-role association
     @app.route('/api/users/<int:user_id>/roles', methods=['GET'])
     def get_user_roles_endpoint(user_id):
+        """A user's roles. Self, admin, or users.manage (admin passes). A non-admin
+        users.manage holder is scoped to their own domains, and admin accounts are
+        invisible to them (consistent with the user list)."""
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not user:
             return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') != 'admin':
-            return jsonify({'error': '需要管理员权限'}), 403
+        is_self = user.get('user_id') == user_id
+        is_admin = user.get('role') == 'admin'
+        has_perm = 'users.manage' in _user_perm_codes(user)
+        if not (is_self or is_admin or has_perm):
+            return jsonify({'error': '没有权限查看此用户'}), 403
+        if not is_admin:
+            if _is_admin_user_id(user_id):
+                return jsonify({'error': '没有权限查看此用户'}), 403
+            target = get_user_by_id_full(db_path, user_id)
+            if target is not None and not _in_user_domain(user, user_id, target.get('domains')):
+                return jsonify({'error': '没有权限查看此用户'}), 403
         return jsonify({'role_ids': get_user_role_ids(db_path, user_id),
                         'role_names': get_user_role_names(db_path, user_id)})
 
     @app.route('/api/users/<int:user_id>/roles', methods=['PUT'])
     def set_user_roles_endpoint(user_id):
-        """Assign one or more roles to a user. Admin only."""
+        """Assign one or more roles to a user. Requires users.manage (admin passes).
+        Non-admins cannot grant the admin role and are scoped to their own domains."""
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not user:
             return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') != 'admin':
-            return jsonify({'error': '需要管理员权限'}), 403
+        is_admin = user.get('role') == 'admin'
+        if not is_admin and 'users.manage' not in _user_perm_codes(user):
+            return jsonify({'error': '需要用户管理权限'}), 403
+        # Non-admin: cannot touch admin accounts or users outside their domains.
+        if not is_admin:
+            if _is_admin_user_id(user_id):
+                return jsonify({'error': '没有权限修改此用户'}), 403
+            target = get_user_by_id_full(db_path, user_id)
+            if target is not None and not _in_user_domain(user, user_id, target.get('domains')):
+                return jsonify({'error': '没有权限修改此用户'}), 403
         data = request.json or {}
         role_ids = data.get('role_ids') or []
         if isinstance(role_ids, int):
             role_ids = [role_ids]
         if not isinstance(role_ids, list):
             return jsonify({'error': 'role_ids 必须是数组'}), 400
+        # No privilege escalation: only admin may grant the admin role.
+        err = _check_no_admin_grant(user, [int(r) for r in role_ids])
+        if err:
+            return err
         result = set_user_roles(db_path, user_id, role_ids)
         if result is None:
             return jsonify({'error': '更新失败'}), 500
@@ -1017,7 +1196,12 @@ def create_app(project_root, spec):
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not user:
             return jsonify({'error': 'Unauthorized'}), 401
-        codes = get_user_permission_codes(db_path, user['user_id'], user.get('role'))
+        # System-level: prefer token-embedded codes (platform-wide); fall back to
+        # DB for pre-existing tokens.
+        if 'permission_codes' in user:
+            codes = set(user.get('permission_codes') or [])
+        else:
+            codes = get_user_permission_codes(db_path, user['user_id'], user.get('role'))
         # Map codes back to full permission objects for the frontend
         perms = list_permissions(db_path)
         code_to_perm = {p['code']: p for p in perms}
@@ -1260,10 +1444,27 @@ def create_app(project_root, spec):
 
     @app.route('/api/system/domains/enabled')
     def enabled_domains():
-        """Return only enabled domains (for frontend domain switcher)."""
+        """Return enabled domains the current user may switch to.
+
+        For the domain switcher: admin sees every enabled domain; a user with a
+        non-empty domain whitelist sees only the enabled domains in their list;
+        a legacy user (empty whitelist) sees all enabled domains (backward
+        compatible — matches the per-domain API gating rule).
+        """
         data = _load_domains()
         enabled = [d for d in data.get('domains', []) if d.get('enabled', True)]
-        return jsonify({'domains': enabled})
+
+        auth_header = request.headers.get('Authorization', '')
+        token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+        user = _verify_token(token) if token else None
+        if not user:
+            return jsonify({'domains': []}), 401
+        if user.get('role') == 'admin':
+            return jsonify({'domains': enabled})
+        domains = user.get('domains') or []
+        if not domains:
+            return jsonify({'domains': enabled})
+        return jsonify({'domains': [d for d in enabled if d.get('slug') in domains]})
 
     @app.route('/api/system/domains/<int:port>/toggle', methods=['PUT'])
     def toggle_domain(port):
@@ -1475,62 +1676,126 @@ def create_app(project_root, spec):
 
     @app.route('/api/users', methods=['GET'])
     def list_users_endpoint():
-        """List all users with optional search. Admin only."""
+        """List users with optional search. Requires users.manage (admin passes).
+
+        Admin users are hidden from every non-admin viewer. A non-admin
+        users.manage holder is scoped to their own domains: they can only see
+        users who share at least one domain with them (plus themselves).
+        Empty whitelist = all domains (legacy compat, matches domain gating)."""
+        ok, resp = _require_user_or_perm('users.manage')
+        if not ok:
+            return resp
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        if user.get('role') not in ('admin', 'power_user'):
-            return jsonify({'error': '需要管理员权限'}), 403
         search = request.args.get('search', '')
         limit = int(request.args.get('limit', 100))
         result = list_users(db_path, search=search if search else None, limit=limit)
+        is_admin = _is_admin_user(user or {})
+        for it in list(result['items']):
+            # 1) Admin accounts are invisible to non-admins.
+            if not is_admin and (it.get('role') == 'admin' or any(int(r) == _admin_role_id() for r in (it.get('role_ids') or []))):
+                result['items'].remove(it)
+                continue
+            # 2) Non-admin viewers are scoped to their own domains.
+            if not is_admin and not _in_user_domain(user, it['id'], it.get('domains')):
+                result['items'].remove(it)
         return jsonify(result)
 
     @app.route('/api/users/<int:user_id>', methods=['GET'])
     def get_user_endpoint(user_id):
-        """Get a single user by ID. Admin only."""
+        """Get a single user by ID. Self or users.manage (admin passes).
+
+        A non-admin viewer is scoped to their own domains (and to admin
+        accounts being invisible), matching the list endpoint."""
         token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not token_user:
             return jsonify({'error': 'Unauthorized'}), 401
+        is_self = token_user.get('user_id') == user_id
+        is_admin = token_user.get('role') == 'admin'
+        has_perm = 'users.manage' in _user_perm_codes(token_user)
+        if not (is_self or is_admin or has_perm):
+            return jsonify({'error': '没有权限查看此用户'}), 403
         u = get_user_by_id_full(db_path, user_id)
         if u is None:
             return jsonify({'error': 'not found'}), 404
+        # Admin accounts are invisible to non-admins.
+        if not is_admin and _is_admin_user_id(user_id):
+            return jsonify({'error': '没有权限查看此用户'}), 403
+        # Non-admin viewers are scoped to their own domains.
+        if not is_admin and not _in_user_domain(token_user, user_id, u.get('domains')):
+            return jsonify({'error': '没有权限查看此用户'}), 403
         return jsonify(u)
 
     @app.route('/api/users/<int:user_id>', methods=['PUT'])
     def update_user_endpoint(user_id):
-        """Update a user. Admin or self (non-password fields). Admin only for password change."""
+        """Update a user. Self or users.manage (admin passes); self may change own
+        password, users.manage may change any user (incl. roles)."""
         token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not token_user:
             return jsonify({'error': 'Unauthorized'}), 401
-        # Only admin or self can edit
-        if token_user.get('user_id') != user_id and token_user.get('role') != 'admin':
+        # Self / admin / users.manage can edit. Others cannot.
+        is_self = token_user.get('user_id') == user_id
+        is_admin = token_user.get('role') == 'admin'
+        has_perm = 'users.manage' in _user_perm_codes(token_user)
+        if not (is_self or is_admin or has_perm):
             return jsonify({'error': '没有权限修改此用户'}), 403
+        # A non-admin can never edit an admin account. (Otherwise the role
+        # checkboxes — which hide the admin role from them — would silently
+        # strip admin on save, i.e. a non-admin could demote an admin.)
+        if not is_admin and _is_admin_user_id(user_id):
+            return jsonify({'error': '没有权限修改此用户'}), 403
+        # Non-admin viewers are scoped to their own domains: they can only
+        # edit users who share a domain with them (or themselves).
+        if not is_admin:
+            target = get_user_by_id_full(db_path, user_id)
+            if target is None:
+                return jsonify({'error': '用户不存在'}), 404
+            if not _in_user_domain(token_user, user_id, target.get('domains')):
+                return jsonify({'error': '没有权限修改此用户'}), 403
         data = request.json
         if not data:
             return jsonify({'error': '请提供更新数据'}), 400
-        # Build fields dict (exclude password — handled separately)
+        # Build fields dict (exclude password — handled separately).
+        # Changing username / domains is sensitive (identity / access scope) and
+        # requires users.manage (or admin); a self user may only edit display_name
+        # and remark here.
+        can_manage_roles = is_admin or has_perm
         fields = {}
         if data.get('username'):
+            if not can_manage_roles:
+                return jsonify({'error': '修改用户名需要用户管理权限'}), 403
             fields['username'] = data['username']
         if data.get('display_name'):
             fields['display_name'] = data['display_name']
+        if 'remark' in data:
+            fields['remark'] = (data.get('remark') or '').strip()
         if data.get('domains'):
+            if not can_manage_roles:
+                return jsonify({'error': '修改所属域需要用户管理权限'}), 403
             domains = data['domains']
             if isinstance(domains, list):
                 fields['domains'] = ','.join([str(d) for d in domains if d])
             elif isinstance(domains, str):
                 fields['domains'] = domains
-        # Role handling: support multi-role via role_ids, or single legacy role_id
         if data.get('role_ids') is not None:
-            role_ids = data['role_ids']
+            if not can_manage_roles:
+                return jsonify({'error': '修改角色需要用户管理权限'}), 403
+            role_ids = data.get('role_ids')
             if isinstance(role_ids, int):
                 role_ids = [role_ids]
             if not isinstance(role_ids, list):
                 return jsonify({'error': 'role_ids 必须是数组'}), 400
+            # No privilege escalation: only admin may grant the admin role.
+            err = _check_no_admin_grant(token_user, [int(r) for r in role_ids])
+            if err:
+                return err
             # Persist legacy role (highest privilege) + user_roles together
             set_user_roles(db_path, user_id, role_ids)
         elif data.get('role_id') is not None:
+            if not can_manage_roles:
+                return jsonify({'error': '修改角色需要用户管理权限'}), 403
+            err = _check_no_admin_grant(token_user, [int(data['role_id'])])
+            if err:
+                return err
             # Legacy single-role path: map numeric role_id to name and sync both
             id_to_role = {1: 'admin', 2: 'power_user', 3: 'user', 4: 'agent'}
             role_name = id_to_role.get(int(data['role_id']), 'user')
@@ -1550,14 +1815,79 @@ def create_app(project_root, spec):
         updated['role_names'] = get_user_role_names(db_path, user_id)
         return jsonify(updated)
 
+    @app.route('/api/users/batch/domains', methods=['PUT'])
+    def batch_set_user_domains_endpoint():
+        """Batch-set the domain access whitelist for multiple users. Admin only.
+
+        Sets users.domains only — never touches roles or passwords. An empty
+        `domains` list clears the whitelist (user can then access all enabled
+        domains). Returns per-user success/failure so a partial failure is visible.
+        Requires users.manage (admin passes).
+        """
+        ok, resp = _require_user_or_perm('users.manage')
+        if not ok:
+            return resp
+        data = request.json or {}
+        user_ids = data.get('user_ids') or []
+        if isinstance(user_ids, int):
+            user_ids = [user_ids]
+        if not isinstance(user_ids, list) or not user_ids:
+            return jsonify({'error': 'user_ids 必须是非空数组'}), 400
+        raw_domains = data.get('domains', [])
+        if isinstance(raw_domains, list):
+            domains_str = ','.join([str(d) for d in raw_domains if d])
+        elif isinstance(raw_domains, str):
+            domains_str = raw_domains
+        else:
+            return jsonify({'error': 'domains 必须是数组或字符串'}), 400
+        # Validate requested slugs against enabled domains (empty = clear, always allowed)
+        if domains_str:
+            valid_slugs = {d.get('slug') for d in _load_domains().get('domains', []) if d.get('enabled', True)}
+            requested = [s for s in domains_str.split(',') if s]
+            invalid = [s for s in requested if s not in valid_slugs]
+            if invalid:
+                return jsonify({'error': '无效的域标识: ' + ', '.join(invalid)}), 400
+        # Domain scope: a non-admin may only batch-update users within their own
+        # domains (judged by the user's current whitelist, before the change).
+        actor = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        is_admin = bool(actor) and actor.get('role') == 'admin'
+        updated_ids, failed = [], []
+        for uid in user_ids:
+            try:
+                uid = int(uid)
+            except (TypeError, ValueError):
+                failed.append({'id': uid, 'error': '无效的用户ID'})
+                continue
+            if not is_admin:
+                target = get_user_by_id_full(db_path, uid)
+                if target is None:
+                    failed.append({'id': uid, 'error': '用户不存在'})
+                    continue
+                if not _in_user_domain(actor, uid, target.get('domains')):
+                    failed.append({'id': uid, 'error': '没有权限操作此用户'})
+                    continue
+            # domains='' clears the whitelist (update_user applies empty string, not None)
+            res = update_user(db_path, uid, {'domains': domains_str})
+            if res is None:
+                failed.append({'id': uid, 'error': '更新失败或用户不存在'})
+            else:
+                updated_ids.append(res['id'])
+        return jsonify({
+            'updated': len(updated_ids),
+            'updated_ids': updated_ids,
+            'failed': failed,
+            'domains': domains_str.split(',') if domains_str else []
+        })
+
     @app.route('/api/users', methods=['POST'])
     def create_user_endpoint():
-        """Create a new user. Admin only."""
+        """Create a new user. Requires users.manage (admin passes). Non-admins cannot
+        grant the admin role."""
         token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not token_user:
             return jsonify({'error': 'Unauthorized'}), 401
-        if token_user.get('role') != 'admin':
-            return jsonify({'error': '只有管理员可以创建用户'}), 403
+        if token_user.get('role') != 'admin' and 'users.manage' not in _user_perm_codes(token_user):
+            return jsonify({'error': '只有用户管理员可以创建用户'}), 403
         data = request.json
         if not data:
             return jsonify({'error': '请提供用户数据'}), 400
@@ -1580,11 +1910,22 @@ def create_app(project_root, spec):
             return jsonify({'error': 'role_ids 必须是数字数组'}), 400
         if not role_ids:
             role_ids = [3]  # default to 'user'
+        # No privilege escalation: only admin may grant the admin role.
+        err = _check_no_admin_grant(token_user, [int(r) for r in role_ids])
+        if err:
+            return err
         if isinstance(domains, str):
             domains = [d.strip() for d in domains.split(',') if d.strip()]
+        # Domain scope: a non-admin may only create users within their own
+        # domains, so they can actually see and manage the user they create.
+        # (An empty/all-domains whitelist puts the new user out of their scope.)
+        if token_user.get('role') != 'admin':
+            actor_domains = _normalize_domains(token_user.get('domains'))
+            if actor_domains and not any(d in actor_domains for d in _normalize_domains(domains)):
+                return jsonify({'error': '只能在自己所属的域内创建用户'}), 403
         # create_user sets a placeholder role; set_user_roles below re-syncs
         # users.role to the highest-privilege assigned role.
-        uid = create_user(db_path, username, display_name, password, role='user', domains=domains)
+        uid = create_user(db_path, username, display_name, password, role='user', domains=domains, remark=data.get('remark', ''))
         if uid is None:
             return jsonify({'error': '创建失败（用户名可能已存在）'}), 409
         set_user_roles(db_path, uid, role_ids)
@@ -1597,14 +1938,23 @@ def create_app(project_root, spec):
 
     @app.route('/api/users/<int:user_id>', methods=['DELETE'])
     def delete_user_endpoint(user_id):
-        """Delete (soft-disable) a user. Admin only."""
-        token_user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not token_user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        if token_user.get('role') != 'admin':
-            return jsonify({'error': '只有管理员可以删除用户'}), 403
+        """Delete (soft-disable) a user. Requires users.manage (admin passes).
+        A non-admin cannot delete an admin account."""
+        ok, resp = _require_user_or_perm('users.manage')
+        if not ok:
+            return resp
         if user_id == 1:
             return jsonify({'error': '不能删除超级管理员'}), 403
+        actor = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not actor or actor.get('role') != 'admin':
+            if _is_admin_user_id(user_id):
+                return jsonify({'error': '不能删除管理员账号'}), 403
+            # Non-admins are scoped to their own domains.
+            target = get_user_by_id_full(db_path, user_id)
+            if target is None:
+                return jsonify({'error': '用户不存在'}), 404
+            if not _in_user_domain(actor, user_id, target.get('domains')):
+                return jsonify({'error': '没有权限删除此用户'}), 403
         if not delete_user(db_path, user_id):
             return jsonify({'error': '删除失败'}), 500
         return jsonify({'ok': True})
@@ -1626,6 +1976,13 @@ def create_app(project_root, spec):
         user = authenticate_user(db_path, username, password)
         if user is None:
             return jsonify({'error': '用户名或密码错误'}), 401
+        # System-level RBAC: compute the user's roles + effective permission codes
+        # HERE (research = system/primary domain that owns the identity store) and
+        # embed them in the JWT. Both domains then resolve permissions from the
+        # token, so a user's roles are platform-wide regardless of which domain
+        # backend enforces them (sales container does not mount the research DB).
+        user['role_ids'] = get_user_role_ids(db_path, user['id'])
+        user['permission_codes'] = sorted(get_user_permission_codes(db_path, user['id'], user.get('role')))
         token = _generate_token(user)
         return jsonify({
             'token': token,

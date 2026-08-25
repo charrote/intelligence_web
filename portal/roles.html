@@ -63,7 +63,7 @@
 <body>
 <main class="main">
   <h1>角色管理</h1>
-  <p class="sub">管理系统角色与权限分配</p>
+  <p class="sub">系统级角色与权限（全平台统一，两个域共享同一套）</p>
   <div class="toolbar">
     <input type="text" id="searchInput" placeholder="搜索角色...">
     <span class="spacer"></span>
@@ -130,7 +130,7 @@ var allRoles = [];
 function escapeHtml(s){if(!s)return'';return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 
 function loadRoles(){
-  apiFetch(apiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
+  apiFetch(systemApiBase()+'/api/roles').then(function(r){return r.json()}).then(function(roles){
     allRoles = roles;
     renderRoles();
   }).catch(function(){
@@ -186,7 +186,7 @@ function renderPermGroups(selectedCodes){
 }
 
 function loadPermissions(){
-  apiFetch(apiBase()+'/api/permissions').then(function(r){return r.json()}).then(function(perms){
+  apiFetch(systemApiBase()+'/api/permissions').then(function(r){return r.json()}).then(function(perms){
     allPermissions = perms;
   }).catch(function(){});
 }
@@ -242,7 +242,7 @@ function saveRole(){
   }
   var perms = selectedPermCodes();
   var method = editingRoleId ? 'PUT' : 'POST';
-  var urlPath = editingRoleId ? apiBase()+'/api/roles/'+editingRoleId : apiBase()+'/api/roles';
+  var urlPath = editingRoleId ? systemApiBase()+'/api/roles/'+editingRoleId : systemApiBase()+'/api/roles';
   var payload = { label: label, description: description, permissions: perms };
   if(!editingRoleId) payload.name = name;
   apiFetch(urlPath, {
@@ -270,7 +270,7 @@ function deleteRole(id){
   var role = allRoles.find(function(r){ return r.id === id; });
   var msg = '确认删除角色「'+(role?role.label||role.name:'')+'」？该角色下已分配的用户将失去此角色权限。';
   if(!confirm(msg)) return;
-  apiFetch(apiBase()+'/api/roles/'+id, { method:'DELETE' }).then(function(r){
+  apiFetch(systemApiBase()+'/api/roles/'+id, { method:'DELETE' }).then(function(r){
     return r.json().then(function(e){
       if(r.ok){ loadRoles(); }
       else { alert(e.error || '删除失败'); }

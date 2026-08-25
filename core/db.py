@@ -128,6 +128,7 @@ def init_db(project_root, spec):
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
                 display_name TEXT DEFAULT '',
+                remark TEXT DEFAULT '',
                 role TEXT NOT NULL DEFAULT 'user',
                 enabled INTEGER DEFAULT 1,
                 created_at TEXT NOT NULL,
@@ -521,11 +522,16 @@ def authenticate_user(db_path, username, password):
         hash_obj = hashlib.sha256((user['salt'] + password).encode('utf-8'))
         if hash_obj.hexdigest() != user['password_hash']:
             return None
+        # domains: comma-separated slug whitelist. Empty string means "all
+        # enabled domains" (whitelist not applied) — backward compatible.
+        domains_raw = user.get('domains') or ''
+        domains = [d.strip() for d in domains_raw.split(',') if d.strip()] if domains_raw else []
         return {
             'id': user['id'],
             'username': user['username'],
             'display_name': user['display_name'],
             'role': user['role'],
+            'domains': domains,
         }
 
 
@@ -563,9 +569,13 @@ def _role_to_id(role):
 
 
 def list_users(db_path, search=None, limit=100):
-    """List users with optional search. Returns dict with 'items' and 'total'."""
+    """List users with optional search. Returns dict with 'items' and 'total'.
+
+    Only enabled users are listed. Deletion is a soft-disable (enabled=0),
+    so a deleted user drops out of this list — which is what the UI expects.
+    """
     with get_db(db_path) as conn:
-        sql = "SELECT id, username, display_name, role, enabled, domains, created_at, updated_at FROM users WHERE 1=1"
+        sql = "SELECT id, username, display_name, remark, role, enabled, domains, created_at, updated_at FROM users WHERE enabled = 1"
         params = []
         if search:
             sql += " AND (username LIKE ? OR display_name LIKE ?)"
@@ -606,7 +616,7 @@ def get_user_by_id_full(db_path, user_id):
     """Get user by ID with full details (including salt for edit form). Returns user dict or None."""
     with get_db(db_path) as conn:
         row = conn.execute(
-            'SELECT id, username, display_name, role, enabled, domains, created_at, updated_at FROM users WHERE id = ?',
+            'SELECT id, username, display_name, remark, role, enabled, domains, created_at, updated_at FROM users WHERE id = ?',
             (user_id,)
         ).fetchone()
         if row is None:
@@ -629,7 +639,7 @@ def get_user_by_id_full(db_path, user_id):
         return u
 
 
-def create_user(db_path, username, display_name, password, role='user', domains=None):
+def create_user(db_path, username, display_name, password, role='user', domains=None, remark=''):
     """Create a new user. Returns the new user id or None on error."""
     now = datetime.now().isoformat()
     password_hash, salt = _hash_password(password)
@@ -637,9 +647,9 @@ def create_user(db_path, username, display_name, password, role='user', domains=
     with get_db(db_path) as conn:
         try:
             cursor = conn.execute(
-                'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, domains, created_at, updated_at) '
-                'VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)',
-                (username.strip(), password_hash, salt, display_name.strip(), role, domains_str, now, now)
+                'INSERT INTO users (username, password_hash, salt, display_name, remark, role, enabled, domains, created_at, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)',
+                (username.strip(), password_hash, salt, display_name.strip(), remark.strip(), role, domains_str, now, now)
             )
             conn.commit()
             return cursor.lastrowid
@@ -652,7 +662,7 @@ def update_user(db_path, user_id, fields):
     """Update user fields. Supported: username, display_name, role, domains.
     Password is separate via update_user_password. Returns updated user dict or None.
     """
-    allowed_fields = ['username', 'display_name', 'role', 'domains']
+    allowed_fields = ['username', 'display_name', 'remark', 'role', 'domains']
     updates = []
     params = []
     for field in allowed_fields:
@@ -661,12 +671,13 @@ def update_user(db_path, user_id, fields):
             params.append(fields[field])
     if not updates:
         return None
-    params.append(user_id)
     with get_db(db_path) as conn:
         try:
+            # Placeholder order is: SET <field>=?, updated_at=? WHERE id=?
+            # so params must be [field_values..., now, user_id].
             conn.execute(
                 f'UPDATE users SET {", ".join(updates)}, updated_at = ? WHERE id = ?',
-                params + [datetime.now().isoformat()]
+                params + [datetime.now().isoformat(), user_id]
             )
             conn.commit()
             return get_user_by_id_full(db_path, user_id)
@@ -1462,6 +1473,7 @@ def migrate_db(db_path):
                     password_hash TEXT NOT NULL,
                     salt TEXT NOT NULL,
                     display_name TEXT DEFAULT '',
+                    remark TEXT DEFAULT '',
                     role TEXT NOT NULL DEFAULT 'user',
                     enabled INTEGER DEFAULT 1,
                     created_at TEXT NOT NULL,
@@ -1471,6 +1483,7 @@ def migrate_db(db_path):
             # Migration: add columns if missing (for DBs created before users table had full schema)
             for col, col_type in [
                 ('display_name', 'TEXT DEFAULT ""'),
+                ('remark', 'TEXT DEFAULT ""'),
                 ('role', 'TEXT DEFAULT "user"'),
                 ('enabled', 'INTEGER DEFAULT 1'),
                 ('salt', 'TEXT DEFAULT ""'),
