@@ -234,6 +234,31 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
         </div>
       </div>
     </div>
+
+    <!-- Tavily 搜索配置（公众号情报「搜」用） -->
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Tavily 搜索</h2>
+      <div class="section-body">
+        <div class="hint" style="margin-bottom:12px">微信公众号情报「搜」使用的搜索引擎 API。配置后 MCP 的 <code>wechat_search</code> 工具即生效，修改无需重启容器（运行时即时读取）。</div>
+        <div class="form-group">
+          <label>API Key</label>
+          <div style="display:flex;gap:8px">
+            <input type="password" id="tavilyApiKey" placeholder="tvly-..." style="flex:1">
+            <button class="btn btn-ghost" onclick="toggleTavilyKey()" id="toggleTavilyKeyBtn" title="显示/隐藏"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="hint">此处显示为脱敏值（如 <code>tvly-***UiQ</code>）。如需修改，请重新输入完整 Key，否则保持原值</div>
+        </div>
+        <div class="form-group">
+          <label>API 地址</label>
+          <input type="text" id="tavilyBaseUrl" placeholder="https://api.tavily.com">
+          <div class="hint">留空使用默认地址</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <button class="btn btn-primary" onclick="saveTavilySettings()">保存 Tavily 配置</button>
+          <button class="btn btn-ghost" onclick="testTavilyConnection()" id="testTavilyBtn">测试连接</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ===== MCP Server & Tools ===== -->
@@ -342,6 +367,24 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
         </div>
       </div>
     </div>
+
+    <!-- 注册开放开关（首页/分享页注册入口的总开关，实时生效） -->
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg></span>注册开放</h2>
+      <div class="section-body">
+        <div class="hint" style="margin-bottom:14px">控制是否向外部开放自助注册。<b>关闭后</b>：登录页与分享页的"注册"入口立即隐藏，注册接口拒绝（即时生效，无需重启容器）。</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--gray-50);border-radius:var(--radius)">
+          <div>
+            <div style="font-size:14px;font-weight:500;color:var(--gray-700)">开放自助注册</div>
+            <div id="regStatusHint" style="font-size:12px;color:var(--gray-400);margin-top:2px">加载中…</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="registerEnabled" onchange="saveRegisterToggle()">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ===== Scheduler Configuration ===== -->
@@ -430,6 +473,56 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
         </div>
       </div>
     </div>
+
+    <!-- 情报搜刮（系统自驱） -->
+    <div class="settings-section">
+      <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></span>情报搜刮（系统自驱）</h2>
+      <div class="section-body">
+        <div class="form-group">
+          <label>启用自动搜刮</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="search_enabled" style="width:18px;height:18px">
+            <span style="font-size:13px;color:var(--gray-600)">启用后系统按下方时间自动搜刮情报，不再依赖外部 Agent</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>第 1 次执行（时）</label>
+            <input type="number" id="search_cron_hour" min="0" max="23" value="8">
+          </div>
+          <div class="form-group">
+            <label>第 2 次执行（时）</label>
+            <input type="number" id="search_cron_hour2" min="0" max="23" value="14">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>每域上限（条）</label>
+            <input type="number" id="search_max_per_domain" min="1" max="100" value="20">
+            <div class="hint">每轮每个域最多采集条数</div>
+          </div>
+          <div class="form-group">
+            <label>每项目关键词数</label>
+            <input type="number" id="search_max_keywords" min="1" max="10" value="5">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>LLM 调用上限（次/轮）</label>
+            <input type="number" id="search_max_llm_calls" min="1" max="200" value="50">
+            <div class="hint">安全轮数：达到后本轮停止，防止 token 失控</div>
+          </div>
+          <div class="form-group">
+            <label>摘要最大字数</label>
+            <input type="number" id="search_content_max" min="50" max="2000" value="400">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+          <button class="btn btn-primary" onclick="saveSearchSettings()">保存搜刮配置</button>
+          <button class="btn btn-ghost" onclick="triggerSearchCycle()" id="triggerSearchBtn">立即搜刮一次</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ===== Domain Controller ===== -->
@@ -473,9 +566,11 @@ function switchSettingsTab(tab) {
   } else if (tab === 'system') {
     document.getElementById('pane-system').classList.add('active');
     loadLlmSettings();
+    loadTavilySettings();
   } else if (tab === 'scheduler') {
     document.getElementById('pane-scheduler').classList.add('active');
     loadSchedulerSettings();
+    loadSearchSettings();
   } else if (tab === 'mcp') {
     document.getElementById('pane-mcp').classList.add('active');
     loadMcpInfo();
@@ -484,6 +579,7 @@ function switchSettingsTab(tab) {
     document.getElementById('pane-infra').classList.add('active');
     loadServiceHealth();
     loadSystemInfo();
+    loadRegisterToggle();
   } else if (tab === 'domains') {
     document.getElementById('pane-domains').classList.add('active');
     loadDomainController();
@@ -678,6 +774,175 @@ async function testModelConnection() {
       showToast('连接成功！模型: ' + (res.model || '已连通'), 'success');
     } else {
       showToast(res.error || ('HTTP ' + r.status + ' 连接失败'), 'error');
+    }
+  } catch(e) {
+    showToast('网络错误: ' + e.message, 'error');
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
+
+// ── Tavily 搜索配置 ──
+function toggleTavilyKey() {
+  var input = document.getElementById('tavilyApiKey');
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function loadTavilySettings() {
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/tavily');
+    if (!r.ok) return;
+    var cfg = await r.json();
+    document.getElementById('tavilyApiKey').value = cfg.api_key_masked || '';
+    document.getElementById('tavilyBaseUrl').value = cfg.base_url || '';
+  } catch(e) {
+    console.error('加载 Tavily 配置失败:', e);
+  }
+}
+
+async function saveTavilySettings() {
+  var keyVal = document.getElementById('tavilyApiKey').value.trim();
+  var data = { base_url: document.getElementById('tavilyBaseUrl').value.trim() };
+  // 脱敏值（含***）说明未改，不更新 key
+  if (keyVal && !keyVal.includes('***')) {
+    data.api_key = keyVal;
+  }
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/tavily', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    if (r.ok) {
+      showToast('Tavily 配置已保存（即时生效，无需重启）', 'success');
+      loadTavilySettings();
+    } else {
+      showToast('保存失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+  }
+}
+
+async function testTavilyConnection() {
+  var btn = document.getElementById('testTavilyBtn');
+  var origText = btn.textContent;
+  btn.textContent = '测试中...';
+  btn.disabled = true;
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/tavily/test', { method: 'POST' });
+    var res;
+    try { res = await r.json(); } catch(e) { res = {}; }
+    if (r.ok && res.ok) {
+      showToast('连接成功！Tavily API 可用', 'success');
+    } else {
+      showToast(res.error || ('HTTP ' + r.status + ' 连接失败'), 'error');
+    }
+  } catch(e) {
+    showToast('网络错误: ' + e.message, 'error');
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
+
+// ── 注册开放开关 ──
+async function loadRegisterToggle() {
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/register');
+    var res;
+    try { res = await r.json(); } catch(e) { res = {}; }
+    if (r.ok) {
+      var enabled = !!res.register_enabled;
+      document.getElementById('registerEnabled').checked = enabled;
+      document.getElementById('regStatusHint').textContent = enabled ? '当前：开放中' : '当前：已关闭';
+      document.getElementById('regStatusHint').style.color = enabled ? 'var(--green)' : 'var(--gray-400)';
+    } else {
+      document.getElementById('regStatusHint').textContent = res.error || '加载失败';
+    }
+  } catch(e) {
+    document.getElementById('regStatusHint').textContent = '加载失败';
+  }
+}
+
+async function saveRegisterToggle() {
+  var enabled = document.getElementById('registerEnabled').checked;
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/register', {
+      method: 'PUT',
+      body: JSON.stringify({ register_enabled: enabled }),
+    });
+    var res;
+    try { res = await r.json(); } catch(e) { res = {}; }
+    if (r.ok) {
+      showToast(enabled ? '已开放自助注册' : '已关闭自助注册（即时生效）', 'success');
+      loadRegisterToggle();
+    } else {
+      showToast(res.error || '保存失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误: ' + e.message, 'error');
+  }
+}
+
+// ── 情报搜刮（系统自驱） ──
+async function loadSearchSettings() {
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/search');
+    if (!r.ok) return;
+    var cfg = await r.json();
+    document.getElementById('search_enabled').checked = cfg.enabled !== false;
+    if (cfg.cron_hour !== undefined) document.getElementById('search_cron_hour').value = cfg.cron_hour;
+    if (cfg.cron_hour2 !== undefined) document.getElementById('search_cron_hour2').value = cfg.cron_hour2;
+    if (cfg.max_per_domain !== undefined) document.getElementById('search_max_per_domain').value = cfg.max_per_domain;
+    if (cfg.max_keywords_per_project !== undefined) document.getElementById('search_max_keywords').value = cfg.max_keywords_per_project;
+    if (cfg.max_llm_calls_per_cycle !== undefined) document.getElementById('search_max_llm_calls').value = cfg.max_llm_calls_per_cycle;
+    if (cfg.content_max_chars !== undefined) document.getElementById('search_content_max').value = cfg.content_max_chars;
+  } catch(e) {
+    console.error('加载搜刮配置失败:', e);
+  }
+}
+
+async function saveSearchSettings() {
+  var data = {
+    enabled: document.getElementById('search_enabled').checked,
+    cron_hour: parseInt(document.getElementById('search_cron_hour').value) || 8,
+    cron_hour2: parseInt(document.getElementById('search_cron_hour2').value) || 14,
+    max_per_domain: parseInt(document.getElementById('search_max_per_domain').value) || 20,
+    max_keywords_per_project: parseInt(document.getElementById('search_max_keywords').value) || 5,
+    max_llm_calls_per_cycle: parseInt(document.getElementById('search_max_llm_calls').value) || 50,
+    content_max_chars: parseInt(document.getElementById('search_content_max').value) || 400,
+  };
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/search', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    if (r.ok) {
+      showToast('搜刮配置已保存（重启容器后调度时间生效）', 'success');
+      loadSearchSettings();
+    } else {
+      showToast('保存失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+  }
+}
+
+async function triggerSearchCycle() {
+  var btn = document.getElementById('triggerSearchBtn');
+  var origText = btn.textContent;
+  btn.textContent = '搜刮中...';
+  btn.disabled = true;
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/search/trigger', { method: 'POST' });
+    var res;
+    try { res = await r.json(); } catch(e) { res = {}; }
+    if (r.ok) {
+      var msg = '搜刮完成：' + (res.projects_processed || 0) + ' 个项目，新增 ' + (res.new_intel || 0) + ' 条情报，LLM 调用 ' + (res.llm_calls || 0) + ' 次';
+      showToast(msg, 'success');
+    } else {
+      showToast(res.error || ('HTTP ' + r.status + ' 失败'), 'error');
     }
   } catch(e) {
     showToast('网络错误: ' + e.message, 'error');

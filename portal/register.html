@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>注册 - 业务情报社</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-font-smoothing:antialiased}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e1e1e;min-height:100vh;display:flex;align-items:center;justify-content:center}
+:root{--accent:#3b4f8c;--accent-light:#eef1f7;--gray-200:#e0e1e3;--gray-400:#9a9b9d;--gray-600:#545557;--gray-800:#262728;--radius:6px;--shadow-md:0 4px 12px rgba(0,0,0,0.05)}
+.reg-wrap{width:400px;max-width:90vw;padding:40px}
+.reg-logo{font-weight:600;font-size:20px;color:var(--gray-800);display:flex;align-items:center;gap:10px;margin-bottom:8px;letter-spacing:-0.3px}
+.reg-logo .mark{width:8px;height:8px;border-radius:2px;background:var(--accent);display:inline-block}
+.reg-sub{font-size:14px;color:var(--gray-400);margin-bottom:32px}
+.form-group{margin-bottom:18px}
+.form-group label{display:block;font-size:13px;font-weight:500;color:var(--gray-600);margin-bottom:6px}
+.form-group input{width:100%;padding:10px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;color:var(--gray-800);outline:none;transition:border-color 0.2s;background:#fff}
+.form-group input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+.form-group input::placeholder{color:var(--gray-400)}
+.code-row{display:flex;gap:8px}
+.code-row input{flex:1;min-width:0}
+.btn-code{flex:0 0 auto;width:120px;padding:10px 0;border:1px solid var(--accent);border-radius:var(--radius);background:#fff;color:var(--accent);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s;white-space:nowrap}
+.btn-code:hover:not(:disabled){background:var(--accent-light)}
+.btn-code:disabled{border-color:var(--gray-200);color:var(--gray-400);cursor:not-allowed;background:#fff}
+.btn-reg{width:100%;padding:10px;border:none;border-radius:var(--radius);background:var(--accent);color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background 0.15s;margin-top:6px}
+.btn-reg:hover{background:#2f3f70}
+.btn-reg:disabled{opacity:0.6;cursor:not-allowed}
+.error-msg{color:#b33a3a;font-size:13px;margin-top:12px;display:none}
+.error-msg.show{display:block}
+.success-msg{color:#2a7d4f;font-size:13px;margin-top:12px;display:none}
+.success-msg.show{display:block}
+.hint{font-size:12px;color:var(--gray-400);margin-top:6px}
+.to-login{margin-top:24px;text-align:center;font-size:14px;color:var(--gray-600)}
+.to-login a{color:var(--accent);text-decoration:none;font-weight:500}
+.to-login a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="reg-wrap">
+  <div class="reg-logo"><span class="mark"></span>业务情报社</div>
+  <div class="reg-sub">注册账号，每日获取行业情报</div>
+
+  <!-- 注册关闭提示（默认隐藏，状态查询后决定显示） -->
+  <div id="regClosed" style="display:none;text-align:center;padding:20px 0">
+    <div style="font-size:15px;color:#545557;font-weight:500;margin-bottom:8px">注册通道暂未开放</div>
+    <div style="font-size:13px;color:#9a9b9d;margin-bottom:24px">如需体验，请联系管理员开通</div>
+  </div>
+
+  <!-- 注册表单（注册关闭时隐藏） -->
+  <div id="regForm" style="display:none">
+  <div class="form-group">
+    <label for="username">用户名</label>
+    <input type="text" id="username" placeholder="2-32 位字母、数字、下划线或连字符" autocomplete="username" maxlength="32">
+  </div>
+
+  <div class="form-group">
+    <label for="phone">手机号码</label>
+    <input type="tel" id="phone" placeholder="请输入手机号" autocomplete="tel" maxlength="15" inputmode="numeric">
+  </div>
+
+  <div class="form-group">
+    <label for="code">短信验证码</label>
+    <div class="code-row">
+      <input type="text" id="code" placeholder="6 位验证码" maxlength="8" inputmode="numeric" autocomplete="one-time-code">
+      <button class="btn-code" id="codeBtn" onclick="sendCode()">获取验证码</button>
+    </div>
+    <div class="hint" id="codeHint"></div>
+  </div>
+
+  <div class="form-group">
+    <label for="password">密码</label>
+    <input type="password" id="password" placeholder="至少 6 位" autocomplete="new-password" onkeydown="if(event.key==='Enter')doRegister()">
+  </div>
+
+  <button class="btn-reg" id="regBtn" onclick="doRegister()">注 册</button>
+
+  <div class="error-msg" id="errorMsg"></div>
+  <div class="success-msg" id="successMsg"></div>
+  </div>
+
+  <div class="to-login">已有账号？<a href="/portal/login.html">直接登录</a></div>
+</div>
+
+<script>
+const API = '';
+let countdown = 0;
+let countdownTimer = null;
+
+// 加载时查询注册开放状态：开放才显示表单，否则显示"已关闭"提示（实时生效）
+async function loadRegisterStatus() {
+  try {
+    const r = await fetch(API + '/api/auth/register-status');
+    const d = await r.json();
+    if (d.register_enabled) {
+      document.getElementById('regForm').style.display = '';
+    } else {
+      document.getElementById('regClosed').style.display = '';
+    }
+  } catch(e) {
+    // 查询失败：保持表单隐藏，避免误开放
+    document.getElementById('regClosed').style.display = '';
+  }
+}
+loadRegisterStatus();
+
+function showErr(msg){ const e=document.getElementById('errorMsg'); e.textContent=msg; e.classList.add('show'); document.getElementById('successMsg').classList.remove('show'); }
+function showOk(msg){ const s=document.getElementById('successMsg'); s.textContent=msg; s.classList.add('show'); document.getElementById('errorMsg').classList.remove('show'); }
+function clearMsg(){ document.getElementById('errorMsg').classList.remove('show'); document.getElementById('successMsg').classList.remove('show'); }
+
+async function sendCode(){
+  clearMsg();
+  const phone = document.getElementById('phone').value.trim();
+  if(!/^\d{11,15}$/.test(phone)){ showErr('请输入有效的手机号码'); return; }
+  const btn = document.getElementById('codeBtn');
+  btn.disabled = true;
+  try{
+    const res = await fetch(API + '/api/auth/sms/send', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({phone})
+    });
+    const data = await res.json();
+    if(res.ok){
+      showOk('验证码已发送，请查收短信');
+      startCountdown(data.cooldown || 60);
+    }else{
+      showErr(data.error || '发送失败');
+      btn.disabled = false;
+    }
+  }catch(e){
+    showErr('网络连接失败，请检查网络');
+    btn.disabled = false;
+  }
+}
+
+function startCountdown(sec){
+  const btn = document.getElementById('codeBtn');
+  const hint = document.getElementById('codeHint');
+  countdown = sec;
+  btn.disabled = true;
+  btn.textContent = sec + 's 后重发';
+  hint.textContent = '验证码已发送至 ' + document.getElementById('phone').value.trim();
+  countdownTimer = setInterval(()=>{
+    countdown--;
+    if(countdown <= 0){
+      clearInterval(countdownTimer);
+      btn.disabled = false;
+      btn.textContent = '重新获取';
+      hint.textContent = '';
+    }else{
+      btn.textContent = countdown + 's 后重发';
+    }
+  }, 1000);
+}
+
+async function doRegister(){
+  clearMsg();
+  const btn = document.getElementById('regBtn');
+  const username = document.getElementById('username').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const code = document.getElementById('code').value.trim();
+  const password = document.getElementById('password').value;
+
+  if(!username){ showErr('请输入用户名'); return; }
+  if(!/^\d{11,15}$/.test(phone)){ showErr('请输入有效的手机号码'); return; }
+  if(!code){ showErr('请输入短信验证码'); return; }
+  if(password.length < 6){ showErr('密码至少 6 位'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '注册中...';
+  try{
+    const res = await fetch(API + '/api/auth/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, phone, code, password})
+    });
+    const data = await res.json();
+    if(res.ok){
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      showOk('注册成功，正在进入...');
+      setTimeout(()=>{ window.location.href = '/portal/'; }, 600);
+    }else{
+      showErr(data.error || '注册失败');
+      btn.disabled = false;
+      btn.textContent = '注 册';
+    }
+  }catch(e){
+    showErr('网络连接失败，请检查网络');
+    btn.disabled = false;
+    btn.textContent = '注 册';
+  }
+}
+</script>
+</body>
+</html>

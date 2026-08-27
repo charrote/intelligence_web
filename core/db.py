@@ -131,6 +131,8 @@ def init_db(project_root, spec):
                 remark TEXT DEFAULT '',
                 role TEXT NOT NULL DEFAULT 'user',
                 enabled INTEGER DEFAULT 1,
+                phone TEXT DEFAULT '',
+                phone_verified INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -510,12 +512,22 @@ def _seed_default_users(conn):
 
 
 def authenticate_user(db_path, username, password):
-    """Verify username and password. Returns user dict or None."""
+    """Verify username (or phone) and password. Returns user dict or None.
+
+    `username` may be a login name or a phone number — the lookup tries
+    username first, then falls back to phone so a registered mobile number
+    can be used as the login identifier.
+    """
     with get_db(db_path) as conn:
         row = conn.execute(
             'SELECT * FROM users WHERE username = ? AND enabled = 1',
             (username,)
         ).fetchone()
+        if row is None:
+            row = conn.execute(
+                'SELECT * FROM users WHERE phone = ? AND enabled = 1',
+                (username,)
+            ).fetchone()
         if row is None:
             return None
         user = dict(row)
@@ -533,6 +545,54 @@ def authenticate_user(db_path, username, password):
             'role': user['role'],
             'domains': domains,
         }
+
+
+def get_user_by_phone(db_path, phone):
+    """Get a user by phone number (regardless of enabled state). Returns dict or None."""
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            'SELECT * FROM users WHERE phone = ?',
+            (phone,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_username(db_path, username):
+    """Get a user by username (regardless of enabled state). Returns dict or None."""
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            'SELECT * FROM users WHERE username = ?',
+            (username,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_user_with_phone(db_path, username, password, phone, display_name=''):
+    """Create a user with a verified phone number. role=user.
+
+    Returns (user_id, error). user_id is None on error; error is a human
+    message string ('', '' when ok, or None when ok).
+    """
+    now = datetime.now().isoformat()
+    password_hash, salt = _hash_password(password)
+    with get_db(db_path) as conn:
+        # Pre-checks (friendly error messages instead of raw UNIQUE violation)
+        if conn.execute('SELECT 1 FROM users WHERE username = ?', (username,)).fetchone():
+            return None, '用户名已存在'
+        if conn.execute('SELECT 1 FROM users WHERE phone = ?', (phone,)).fetchone():
+            return None, '该手机号已注册'
+        try:
+            cursor = conn.execute(
+                'INSERT INTO users (username, password_hash, salt, display_name, remark, role, enabled, domains, phone, phone_verified, created_at, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?)',
+                (username.strip(), password_hash, salt, display_name.strip(), '', 'user', '', phone.strip(), now, now)
+            )
+            conn.commit()
+            return cursor.lastrowid, ''
+        except Exception as e:
+            print(f"[create_user_with_phone] ERROR: {e}")
+            return None, '注册失败，请稍后重试'
+
 
 
 def get_user_by_id(db_path, user_id):
@@ -727,6 +787,7 @@ def delete_user(db_path, user_id):
 PERMISSION_CATALOG = [
     ('intel.view', '查看情报', '情报'),
     ('intel.import', '批量导入', '情报'),
+    ('intel.share', '开放情报分享', '情报'),
     ('rules.manage', '抽取规则', '配置'),
     ('reports.manage', '报告模板', '配置'),
     ('projects.manage', '采集项目', '配置'),
@@ -744,7 +805,7 @@ ALL_PERMISSION_CODES = {code for code, _, _ in PERMISSION_CATALOG}
 BUILTIN_ROLES = [
     ('admin', '管理员', '拥有全部权限', ['all']),
     ('power_user', '高级用户', '日常运营与配置权限',
-     ['intel.view', 'intel.import', 'rules.manage', 'reports.manage',
+     ['intel.view', 'intel.import', 'intel.share', 'rules.manage', 'reports.manage',
       'projects.manage', 'datasources.manage', 'target_types.manage', 'audit.view']),
     ('user', '普通用户', '只读查看情报', ['intel.view']),
     ('agent', '智能体', '系统智能体账号', ['intel.view']),
@@ -1124,6 +1185,46 @@ def get_intelligence_by_id(db_path, intel_id):
         return dict(row) if row else None
 
 
+def set_intelligence_share(db_path, intel_id, enabled):
+    """Enable/disable public sharing for an intelligence record.
+
+    Enabling generates a fresh random token if none exists; disabling keeps
+    the token (so re-enabling reuses it) but flips the flag off. Returns the
+    current (token, enabled) pair, or None if the record is missing.
+    """
+    import uuid
+    with get_db(db_path) as conn:
+        row = conn.execute('SELECT share_token, share_enabled FROM intelligence WHERE id = ?',
+                           (intel_id,)).fetchone()
+        if row is None:
+            return None
+        token = row['share_token']
+        if enabled and not token:
+            token = uuid.uuid4().hex
+        now = datetime.now().isoformat()
+        conn.execute(
+            'UPDATE intelligence SET share_token = ?, share_enabled = ?, updated_at = ? WHERE id = ?',
+            (token, 1 if enabled else 0, now, intel_id)
+        )
+        conn.commit()
+        return token, bool(enabled)
+
+
+def get_intelligence_by_share_token(db_path, token):
+    """Look up a shared (publicly exposed) intelligence by its share token.
+
+    Returns the full row only when sharing is enabled; otherwise None.
+    """
+    if not token:
+        return None
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            'SELECT * FROM intelligence WHERE share_token = ? AND share_enabled = 1',
+            (token,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def get_intelligence_by_project(db_path, project_id, limit=50):
     """Get intelligence records linked to a specific project."""
     with get_db(db_path) as conn:
@@ -1476,6 +1577,8 @@ def migrate_db(db_path):
                     remark TEXT DEFAULT '',
                     role TEXT NOT NULL DEFAULT 'user',
                     enabled INTEGER DEFAULT 1,
+                    phone TEXT DEFAULT '',
+                    phone_verified INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -1490,6 +1593,8 @@ def migrate_db(db_path):
                 ('domains', 'TEXT DEFAULT ""'),
                 ('created_at', 'TEXT DEFAULT ""'),
                 ('updated_at', 'TEXT DEFAULT ""'),
+                ('phone', 'TEXT DEFAULT ""'),
+                ('phone_verified', 'INTEGER DEFAULT 0'),
             ]:
                 try:
                     c.execute(f'ALTER TABLE users ADD COLUMN {col} {col_type}')
@@ -1580,6 +1685,16 @@ def migrate_db(db_path):
             # Migration: add source_url to intelligence table if missing
             try:
                 c.execute('ALTER TABLE intelligence ADD COLUMN source_url TEXT DEFAULT ""')
+            except Exception:
+                pass  # column already exists
+
+            # Migration: add share_token / share_enabled to intelligence table
+            try:
+                c.execute('ALTER TABLE intelligence ADD COLUMN share_token TEXT')
+            except Exception:
+                pass  # column already exists
+            try:
+                c.execute('ALTER TABLE intelligence ADD COLUMN share_enabled INTEGER DEFAULT 0')
             except Exception:
                 pass  # column already exists
 

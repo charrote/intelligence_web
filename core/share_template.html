@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }} — 业务情报社</title>
+<style>
+  :root{
+    --accent:#3B82F6; --accent-light:#EAF2FF;
+    --ink:#1F2937; --ink-2:#4B5563; --ink-3:#9CA3AF;
+    --line:#E5E7EB; --bg:#F5F6F8; --card:#fff;
+    --green:#16A34A; --green-light:#EAF7EF;
+    --purple:#722ED1; --purple-light:#F3EBFF;
+    --radius:12px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);line-height:1.6}
+  .wrap{max-width:420px;margin:0 auto;padding:20px 16px 40px}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+  .brand .logo{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#3B82F6,#1E40AF);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;flex-shrink:0}
+  .brand .nm{font-size:14px;font-weight:600;color:var(--ink)}
+  .brand .sub{font-size:11px;color:var(--ink-3);margin-top:1px}
+  .title{font-size:20px;font-weight:700;line-height:1.5;color:var(--ink);margin-bottom:14px;letter-spacing:.2px}
+  .meta{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:18px}
+  .tag{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:3px 9px;border-radius:5px}
+  .tag-cat{background:#EEF0F3;color:var(--ink-2)}
+  .tag-co{background:var(--purple-light);color:var(--purple)}
+  .tag-date{background:transparent;color:var(--ink-3);padding-left:0}
+  .body-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px;margin-bottom:14px}
+  .body-card p{font-size:14.5px;line-height:1.85;color:var(--ink-2);margin-bottom:12px}
+  .body-card p:last-child{margin-bottom:0}
+  .body-card p b,.body-card p strong{color:var(--ink);font-weight:600}
+  .src{display:flex;align-items:center;gap:7px;padding:12px 4px;font-size:13px;color:var(--accent);
+    border-top:1px dashed var(--line);border-bottom:1px dashed var(--line);margin-bottom:20px;text-decoration:none}
+  .cta{background:linear-gradient(180deg,#fff,#F7FAFF);border:1px solid #D6E4FF;border-radius:var(--radius);
+    padding:18px 16px}
+  .cta .head{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
+  .cta .head b{font-size:15px;color:var(--ink)}
+  .cta .head span{font-size:11px;color:var(--accent);background:var(--accent-light);padding:2px 7px;border-radius:4px;font-weight:600}
+  .cta .desc{font-size:12.5px;color:var(--ink-2);line-height:1.65;margin-bottom:14px}
+  .cta .desc .hl{color:var(--accent);font-weight:600}
+  .btn-primary{width:100%;height:46px;background:var(--accent);color:#fff;border:none;border-radius:10px;
+    font-size:15px;font-weight:600;cursor:pointer;letter-spacing:.5px;
+    display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 6px 16px rgba(59,130,246,.28)}
+  .cta-disabled{width:100%;height:46px;display:flex;align-items:center;justify-content:center;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB;border-radius:10px;font-size:13px;font-weight:500}
+  .foot{margin-top:20px;text-align:center;font-size:11px;color:var(--ink-3);line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="logo">情</div>
+    <div>
+      <div class="nm">业务情报社</div>
+      <div class="sub">每日自动采集 · 行业情报</div>
+    </div>
+  </div>
+
+  <div class="title">{{ title }}</div>
+
+  <div class="meta">
+    {% if category %}<span class="tag tag-cat">{{ category }}</span>{% endif %}
+    {% if company %}<span class="tag tag-co">{{ company }}</span>{% endif %}
+    <span class="tag tag-date">{{ created_at }}</span>
+  </div>
+
+  <div class="body-card">
+    {{ content_html|safe }}
+  </div>
+
+  {% if source_url %}
+  <a class="src" href="{{ source_url }}" target="_blank" rel="noopener">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+    查看原文报道
+  </a>
+  {% endif %}
+
+  <div class="cta">
+    <div class="head"><b>想看更多情报？</b><span>每日自动采集</span></div>
+    <div class="desc">本条已完整展示。注册后，情报社每日自动采集 <span class="hl">1,200+ 条</span>竞品/商机情报，追踪 <span class="hl">5 大行业</span>，分析师每日 10:00 推送。</div>
+    {% if register_enabled %}
+    <button class="btn-primary" onclick="window.location.href='/portal/register.html'">注册 · 每日获取更多情报</button>
+    {% else %}
+    <div class="cta-disabled">注册通道暂未开放，如需体验请联系管理员</div>
+    {% endif %}
+  </div>
+
+  <div class="foot">
+    本情报由 业务情报社 自动采集生成<br>内容仅供参考，不构成商业建议
+  </div>
+</div>
+</body>
+</html>

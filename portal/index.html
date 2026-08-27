@@ -6,6 +6,7 @@
 <title>情报列表</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/reset.css">
 <link rel="stylesheet" href="css/header.css">
@@ -37,7 +38,24 @@
 .pg-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
 .pg-btn:disabled{opacity:.4;cursor:not-allowed}
 .pg-dots{color:var(--gray-400);padding:0 2px}
-#sidebarCats{}</style>
+#sidebarCats{}
+/* ── Share modal ── */
+.share-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:none;align-items:center;justify-content:center;padding:16px}
+.share-modal-overlay.open{display:flex}
+.share-modal{background:#fff;border-radius:12px;width:100%;max-width:360px;max-height:88vh;overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.share-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--gray-200)}
+.share-modal-head h3{font-size:15px;font-weight:600;color:var(--gray-800)}
+.share-modal-body{padding:16px 18px}
+.share-label{font-size:12px;color:var(--gray-400);margin:0 0 8px;font-weight:600}
+.share-label + .share-link-row, .share-label + .share-poster-wrap{margin-top:0}
+.share-link-row{display:flex;align-items:center;gap:8px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:9px 12px}
+.share-link-row .txt{flex:1;font-size:12px;color:var(--gray-600);word-break:break-all;line-height:1.5}
+.share-poster-wrap{border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;background:#F5F6F8}
+.share-poster-wrap canvas{width:100%;height:auto;display:block}
+.share-actions{display:flex;gap:8px;margin-top:16px}
+.share-actions .btn{flex:1}
+.share-tip{font-size:11px;color:var(--gray-400);margin-top:12px;text-align:center;line-height:1.6}
+</style>
 </head>
 <body>
 <main class="main">
@@ -66,6 +84,28 @@
   <div class="panel-foot" id="panelFoot"></div>
 </div>
 <div class="panel-overlay" onclick="closePanel()"></div>
+<!-- 分享弹窗 -->
+<div class="share-modal-overlay" id="shareModal">
+  <div class="share-modal">
+    <div class="share-modal-head">
+      <h3>分享情报</h3>
+      <button class="panel-close" onclick="closeShare()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="share-modal-body">
+      <div class="share-label">分享链接</div>
+      <div class="share-link-row">
+        <span class="txt" id="shareLinkText">加载中…</span>
+        <button class="btn btn-primary btn-sm" onclick="copyShareLink()">复制</button>
+      </div>
+      <div class="share-label" style="margin-top:16px">分享海报（朋友圈）</div>
+      <div class="share-poster-wrap"><canvas id="sharePoster"></canvas></div>
+      <div class="share-actions">
+        <button class="btn btn-primary" id="posterBtn" onclick="downloadPoster()">下载海报</button>
+      </div>
+      <div class="share-tip">复制链接发到微信，或保存海报分享到朋友圈<br>分享内容为完整正文，对方无需登录即可查看</div>
+    </div>
+  </div>
+</div>
 <script>
 console.log("[TEST] Script loaded");
 var currentIntel = null;
@@ -96,21 +136,37 @@ function parseDate(iso) {
 
 function renderMarkdown(text) {
   if (!text) return '';
+  var html;
   try {
-    var html = marked.parse(text);
+    html = marked.parse(text);
     if (typeof DOMPurify !== 'undefined') {
-      return DOMPurify.sanitize(html);
+      html = DOMPurify.sanitize(html);
     }
-    return html;
   } catch(e) {
     console.warn('[renderMarkdown] parse error:', e);
     return escapeHtml(text);
   }
+  // 情报正文里的超链接一律标为外部链接（data-ext）——
+  // 由全局外链守卫拦截：弹提示 → 新标签页打开，绝不在系统内导航。
+  var tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  var links = tmp.querySelectorAll('a[href]');
+  for (var i = 0; i < links.length; i++) {
+    var a = links[i];
+    var href = a.getAttribute('href');
+    // 只拦截真正的网址链接；锚点(#)、mailto/tel 交给浏览器默认处理
+    if (!href || href.charAt(0) === '#') continue;
+    if (/^(mailto:|tel:)/i.test(href)) continue;
+    a.setAttribute('data-ext', '1');
+    a.removeAttribute('target'); // 新标签页统一由守卫 window.open 控制
+  }
+  return tmp.innerHTML;
 }
 
 function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;applyFilters()}
 
 async function init() {
+  initExternalLinkGuard(); // 情报详情超链接 → 弹提示 + 新标签页打开，不在系统内导航
   await loadDomainConfig();
   await loadProjectsList();
   await loadData();
@@ -310,7 +366,7 @@ function renderDetail() {
     +'</div>'
     +(ents?'<div style="margin-bottom:12px;font-size:12px;color:var(--gray-600)"><span style="color:var(--gray-400);margin-right:4px;">关联实体：</span>'+ents+'</div>':'')
     +(d.opinion?'<div class="detail-opinion">意见：'+escapeHtml(d.opinion)+'</div>':'')
-    +(d.source_url?'<div style="margin-bottom:12px;"><a href="'+escapeHtml(d.source_url)+'" target="_blank" style="font-size:13px;color:var(--accent);">原文链接</a></div>':'')
+    +(d.source_url?'<div style="margin-bottom:12px;"><a href="'+escapeHtml(d.source_url)+'" data-ext="1" data-label="打开原文链接" style="font-size:13px;color:var(--accent);">原文链接</a></div>':'')
     +('<div class="detail-source">'+formatDate(d.created_at)+'</div>'
     +'<div class="detail-content">'+renderMarkdown(d.content)+'</div>')
     +'<div id="attachmentsSection" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--gray-200)">'
@@ -333,10 +389,13 @@ function renderDetail() {
     +'</div>'
     +'</div>'
     +'</div>';
-  // 状态流转按钮已隐藏（状态模型未定），仅保留管理员删除
+  // 状态流转按钮已隐藏（状态模型未定），保留管理员删除；分享按角色权限"开放情报分享"渲染
   var btns='';
+  if(canShareIntel()){
+    btns+='<button class="btn btn-primary" onclick="openShare()" style="display:inline-flex;align-items:center;gap:5px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/></svg>分享</button>';
+  }
   if(isAdmin){btns+='<button class="btn btn-danger" onclick="deleteIntel('+currentIntel.id+')" style="background:#b33a3a;color:#fff">删除</button>';}
-  if(btns){foot.style.display='';foot.innerHTML=btns;}else{foot.style.display='none';foot.innerHTML='';}
+  foot.style.display='';foot.innerHTML=btns;
   bindCommentInput();
 }
 
@@ -465,6 +524,213 @@ async function loadAttachments(intelId) {
     var container = document.getElementById('attachmentsList');
     if (container) container.innerHTML = '<div style="color:var(--gray-400);font-size:12px">加载失败</div>';
   }
+}
+
+// ── 分享 ──────────────────────────────────────────────────────────
+var shareState = { url: '' };
+
+// 分享权限：admin 或角色勾选了"开放情报分享"（intel.share）
+function canShareIntel() {
+  var u = getUser();
+  if (!u) return false;
+  if (u.role === 'admin') return true;
+  return ((u.permission_codes || []).indexOf('intel.share') !== -1);
+}
+
+async function openShare() {
+  if (!currentIntel) return;
+  if (!canShareIntel()) { alert('没有分享权限（需在角色中勾选"开放情报分享"）'); return; }
+  var id = currentIntel.id;
+  try {
+    // 若本条尚未开启分享，先开启（生成 token）
+    var r = await apiFetch(APP_API_BASE + '/api/intelligence/' + id + '/share', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ enabled: true })
+    });
+    var d = await r.json();
+    if (!r.ok) { alert(d.error || '开启分享失败'); return; }
+    shareState.url = d.share_url;
+    shareState.posterReady = false;
+    var pb = document.getElementById('posterBtn');
+    if (pb) { pb.disabled = true; pb.style.opacity = '.6'; }
+    document.getElementById('shareLinkText').textContent = d.share_url;
+    document.getElementById('shareModal').classList.add('open');
+    renderPoster(currentIntel, d.share_url);
+  } catch(e) { alert('开启分享失败：' + e); }
+}
+
+function closeShare() { document.getElementById('shareModal').classList.remove('open'); }
+
+async function copyShareLink() {
+  if (!shareState.url) return;
+  try {
+    await navigator.clipboard.writeText(shareState.url);
+    toast('链接已复制');
+  } catch(e) {
+    // 回退：选中手动复制
+    var t = document.getElementById('shareLinkText');
+    var range = document.createRange(); range.selectNode(t);
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    alert('请长按复制链接：\n' + shareState.url);
+  }
+}
+
+function toast(msg) {
+  var t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);background:#1F2937;color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;z-index:2000;opacity:0;transition:opacity .2s';
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){ t.style.opacity='1'; });
+  setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ t.remove(); }, 250); }, 1600);
+}
+
+// 文字换行（canvas）
+function wrapText(ctx, text, x, y, maxW, lineH, maxLines) {
+  var lines = [], line = '', i, ch;
+  for (i = 0; i < text.length; i++) {
+    ch = text[i];
+    if (ch === '\n') { lines.push(line); line = ''; continue; }
+    if (ctx.measureText(line + ch).width > maxW) { lines.push(line); line = ch; }
+    else line += ch;
+  }
+  if (line) lines.push(line);
+  if (maxLines && lines.length > maxLines) {
+    lines = lines.slice(0, maxLines);
+    lines[maxLines-1] = lines[maxLines-1].replace(/.{1,2}$/, '…');
+  }
+  for (var j = 0; j < lines.length; j++) ctx.fillText(lines[j], x, y + j * lineH);
+  return lines.length;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+function renderPoster(intel, url) {
+  var canvas = document.getElementById('sharePoster');
+  var W = 750, PAD = 48;
+  var ctx = canvas.getContext('2d');
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  // 先按逻辑尺寸排版，最后整体放大绘制
+  var body = (intel.content || '').replace(/[#*`>\-\[\]()!]/g, '').replace(/\n+/g, '\n');
+  var maxBodyChars = 150;
+  var bodyText = body.length > maxBodyChars ? body.slice(0, maxBodyChars) + '…' : body;
+  var titleText = (intel.title || '').slice(0, 60);
+  var dateStr = (intel.created_at || '').slice(0, 10);
+  var tags = [];
+  if (intel.category) tags.push(intel.category);
+  if (intel.company) tags.push(intel.company);
+  tags.push(dateStr);
+
+  var H = 1180;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  // 背景
+  ctx.fillStyle = '#F5F6F8'; ctx.fillRect(0, 0, W, H);
+  // 白色主卡
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, PAD, PAD, W - PAD*2, H - PAD*2, 20); ctx.fill();
+
+  var x = PAD + 36, cw = W - PAD*2 - 72;
+
+  // 品牌
+  ctx.fillStyle = '#3B82F6';
+  roundRect(ctx, x, 88, 52, 52, 12); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = '700 26px sans-serif';
+  ctx.textBaseline = 'middle'; ctx.fillText('情', x + 14, 116);
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#1F2937'; ctx.font = '600 24px sans-serif';
+  ctx.fillText('业务情报社', x + 68, 112);
+  ctx.fillStyle = '#9CA3AF'; ctx.font = '400 16px sans-serif';
+  ctx.fillText('每日自动采集 · 行业情报', x + 68, 138);
+
+  // 标题
+  ctx.fillStyle = '#1F2937'; ctx.font = '700 30px sans-serif';
+  var titleLines = wrapText(ctx, titleText, x, 210, cw, 44, 3);
+
+  var y = 210 + titleLines * 44 + 18;
+
+  // meta tags
+  ctx.font = '500 15px sans-serif';
+  var tagX = x;
+  for (var ti = 0; ti < tags.length; ti++) {
+    var tw = ctx.measureText(tags[ti]).width + 22;
+    ctx.fillStyle = ti === tags.length-1 ? '#EEF0F3' : (ti===0?'#F3EBFF':'#EEF0F3');
+    ctx.fillStyle = '#EEF0F3';
+    roundRect(ctx, tagX, y - 16, tw, 30, 6); ctx.fill();
+    ctx.fillStyle = ti===0 ? '#722ED1' : '#4B5563';
+    ctx.fillText(tags[ti], tagX + 11, y + 4);
+    tagX += tw + 10;
+  }
+  y += 40;
+
+  // 正文
+  ctx.fillStyle = '#4B5563'; ctx.font = '400 19px sans-serif';
+  var bodyLines = wrapText(ctx, bodyText, x, y, cw, 32, 12);
+  y += bodyLines * 32 + 24;
+
+  // 分隔线
+  ctx.strokeStyle = '#E5E7EB'; ctx.setLineDash([4,4]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x+cw, y); ctx.stroke(); ctx.setLineDash([]);
+  y += 36;
+
+  // CTA
+  ctx.fillStyle = '#1F2937'; ctx.font = '700 24px sans-serif';
+  ctx.fillText('想看更多情报？', x, y);
+  ctx.fillStyle = '#4B5563'; ctx.font = '400 17px sans-serif';
+  wrapText(ctx, '注册后，每日自动采集 1200+ 条竞品/商机情报，追踪 5 大行业，分析师每日推送。', x, y + 34, cw, 28, 2);
+  y += 96;
+
+  // 二维码 + 文案 + 底部 slogan 统一放到 finish() 里，确保 QR 异步绘制完成后再允许下载
+  var qrSize = 180, qrX = x, qrY = y;
+  var finish = function() {
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 12); ctx.fill();
+    ctx.strokeStyle = '#D6E4FF'; ctx.lineWidth = 1;
+    roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 12); ctx.stroke();
+    var tx = qrX + qrSize + 28;
+    ctx.fillStyle = '#1F2937'; ctx.font = '600 20px sans-serif';
+    ctx.fillText('业务情报社', tx, qrY + 30);
+    ctx.fillStyle = '#9CA3AF'; ctx.font = '400 16px sans-serif';
+    wrapText(ctx, '长按识别二维码\n或复制链接到微信查看\n每日 10:00 推送行业情报', tx, qrY + 62, W - PAD*2 - (qrSize + 28) - 72, 26, 3);
+    ctx.fillStyle = '#9CA3AF'; ctx.font = '400 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('本情报由 业务情报社 自动采集生成 · 内容仅供参考', W/2, H - PAD - 36);
+    ctx.textAlign = 'left';
+    shareState.posterReady = true;
+    var btn = document.getElementById('posterBtn');
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+  };
+  if (typeof QRCode !== 'undefined') {
+    var qrCanvas = document.createElement('canvas');
+    QRCode.toCanvas(qrCanvas, url, { width: qrSize, margin: 1, color: { dark: '#1F2937', light: '#ffffff' } }, function() {
+      ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+      finish();
+    });
+  } else {
+    finish();
+  }
+}
+
+function downloadPoster() {
+  var canvas = document.getElementById('sharePoster');
+  if (!canvas || !shareState.url) return;
+  if (!shareState.posterReady) { toast('海报生成中，请稍候'); return; }
+  try {
+    var a = document.createElement('a');
+    a.download = '情报分享_' + (currentIntel ? currentIntel.id : 'intel') + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch(e) { alert('海报下载失败：' + e); }
 }
 
 document.addEventListener('click', function(e) {

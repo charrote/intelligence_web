@@ -37,6 +37,7 @@ from core import entity as entitylib
 from core import notify as notifylib
 from core import search as searchlib
 from core import project as projlib
+from mcp_server.wechat import search_wechat_articles, read_wechat_article
 import importlib
 
 # Use FastMCP for proper MCP protocol handling
@@ -562,6 +563,37 @@ async def system_status():
         "available_tools": [t.name for t in tools],
         "total_tools": len(tools),
     }
+
+
+# ====== 微信公众号「搜」+「读」工具 ======
+
+@server.tool()
+def wechat_search(account: str, keyword: str = "", max_results: int = 10) -> dict:
+    """搜索指定公众号内的文章，返回 mp.weixin.qq.com 直链候选列表。
+
+    用于公众号类型数据源的情报发现：
+    - account: 公众号名称（必填），限定搜索范围，如"迅越印刷ERP"
+    - keyword: 可选主题关键词，进一步过滤该号内的情报项
+    - max_results: 最多返回条数（默认 10）
+
+    返回 list[dict]，每条含 title / url / snippet / source / published_date。
+    拿到 url 后调用 wechat_read_article 读取正文，再入库。
+    """
+    return {"results": search_wechat_articles(account, keyword, max_results)}
+
+
+@server.tool()
+def wechat_read_article(url: str) -> dict:
+    """读取单篇微信公众号文章正文。
+
+    Args:
+        url: mp.weixin.qq.com 文章直链（来自 wechat_search 返回的 url）。
+
+    Returns:
+        dict: title / account / published_date / content / url。
+        失败时返回 {error: ...}，Agent 据此决定是否跳过或重试。
+    """
+    return read_wechat_article(url)
 
 
 # ====== Main ======

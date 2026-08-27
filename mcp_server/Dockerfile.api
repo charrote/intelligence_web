@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 WORKDIR /app
 
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --no-cache-dir flask flask-cors gunicorn "mcp>=1.0,<2.0" pydantic uvicorn requests meilisearch
+    pip install --no-cache-dir flask flask-cors gunicorn "mcp>=1.0,<2.0" pydantic uvicorn requests meilisearch beautifulsoup4 lxml
 
 # Copy shared core
 COPY core/ /app/core/

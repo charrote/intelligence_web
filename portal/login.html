@@ -40,9 +40,24 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e
   </div>
   <button class="btn-login" id="loginBtn" onclick="doLogin()">登 录</button>
   <div class="error-msg" id="errorMsg"></div>
+  <div class="reg-link" id="regLink" style="margin-top:20px;text-align:center;font-size:14px;color:#545557;display:none">
+    还没有账号？<a href="/portal/register.html" style="color:#3b4f8c;font-weight:500;text-decoration:none">注册</a>
+  </div>
 </div>
 <script>
 const API = '';
+
+// 加载时查询注册开放状态：开放才显示"注册"入口（实时生效）
+async function loadRegisterStatus() {
+  try {
+    const r = await fetch(API + '/api/auth/register-status');
+    const d = await r.json();
+    if (d.register_enabled) {
+      document.getElementById('regLink').style.display = '';
+    }
+  } catch(e) { /* 查询失败保持隐藏，避免误开放 */ }
+}
+loadRegisterStatus();
 
 async function doLogin() {
   const btn = document.getElementById('loginBtn');

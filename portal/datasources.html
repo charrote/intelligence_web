@@ -81,16 +81,9 @@
           <label>类型 *</label>
           <select id="srcType">
             <option value="website">网站</option>
+            <option value="wechat">公众号</option>
             <option value="rss">RSS</option>
             <option value="api">API</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>调度频率</label>
-          <select id="srcSchedule">
-            <option value="daily">每日</option>
-            <option value="weekly">每周</option>
-            <option value="monthly">每月</option>
           </select>
         </div>
       </div>
@@ -171,7 +164,7 @@ function renderTable() {
 }
 
 function typeLabel(t) {
-  return {website:'网站',rss:'RSS',api:'API'}[t] || t;
+  return {website:'网站',wechat:'公众号',rss:'RSS',api:'API'}[t] || t;
 }
 
 function truncate(s, len) {
@@ -184,7 +177,6 @@ function openCreate() {
   document.getElementById('srcName').value = '';
   document.getElementById('srcType').value = 'website';
   document.getElementById('srcUrl').value = '';
-  document.getElementById('srcSchedule').value = 'daily';
   document.getElementById('srcStatus').value = 'active';
   document.getElementById('srcIndicators').value = '';
   document.getElementById('panelFeedback').style.display = 'none';
@@ -200,7 +192,6 @@ function editSource(id) {
   document.getElementById('srcName').value = src.name;
   document.getElementById('srcType').value = src.type;
   document.getElementById('srcUrl').value = src.url;
-  document.getElementById('srcSchedule').value = src.schedule || 'daily';
   document.getElementById('srcStatus').value = src.status || 'active';
   document.getElementById('srcIndicators').value = Array.isArray(src.indicators) ? src.indicators.join(', ') : (src.indicators || '');
   document.getElementById('panelFeedback').style.display = 'none';
@@ -215,7 +206,6 @@ async function saveSource() {
   var name = document.getElementById('srcName').value.trim();
   var type = document.getElementById('srcType').value;
   var url = document.getElementById('srcUrl').value.trim();
-  var schedule = document.getElementById('srcSchedule').value;
   var status = document.getElementById('srcStatus').value;
   var indicators = document.getElementById('srcIndicators').value.trim();
   var fb = document.getElementById('panelFeedback');
@@ -228,7 +218,7 @@ async function saveSource() {
     return;
   }
 
-  var payload = { name: name, type: type, url: url, schedule: schedule, status: status };
+  var payload = { name: name, type: type, url: url, status: status };
   if (indicators) payload.indicators = indicators;
 
   try {

@@ -51,6 +51,32 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # 搜刮调度（从 config/search.json 读取时间）
+    try:
+        from config import get_search_config
+        scfg = get_search_config()
+        if scfg.get("enabled", True):
+            h1 = int(scfg.get("cron_hour", 8))
+            h2 = int(scfg.get("cron_hour2", 14))
+            scheduler.add_job(
+                func=_run_search_cycle,
+                trigger=CronTrigger(hour=h1, minute=0),
+                id="search_cycle",
+                replace_existing=True,
+                misfire_grace_time=120,
+            )
+            if h2 != h1:
+                scheduler.add_job(
+                    func=_run_search_cycle,
+                    trigger=CronTrigger(hour=h2, minute=0),
+                    id="search_cycle_2",
+                    replace_existing=True,
+                    misfire_grace_time=120,
+                )
+            logger.info(f"[scheduler] search_cycle registered: {h1}:00, {h2}:00")
+    except Exception as e:
+        logger.warning(f"[scheduler] Failed to register search_cycle: {e}")
+
     logger.info("Scheduler starting...")
     scheduler.start()
     logger.info("Scheduler started (extract=10min, report=5min, cleanup=08:00)")
@@ -125,6 +151,24 @@ def _run_cleanup():
         logger.info(f"[cleanup] Deleted {deleted} expired report_run records")
 
     _update_scheduler("last_cleanup_time", _now_iso())
+
+
+def _run_search_cycle():
+    """Search cycle — run self-driven intelligence search for this domain."""
+    from core.scheduler.search_cycle import run_search_cycle
+
+    logger.info("[search_cycle] Running self-driven search cycle")
+    try:
+        result = run_search_cycle()
+        logger.info(
+            f"[search_cycle] Done: domain={result.get('domain')}, "
+            f"projects={result.get('projects_processed')}, "
+            f"new_intel={result.get('new_intel')}, "
+            f"llm_calls={result.get('llm_calls')}"
+        )
+        _update_scheduler("last_search_time", _now_iso())
+    except Exception as e:
+        logger.error(f"[search_cycle] Error: {e}")
 
 
 def _update_scheduler(field: str, value):

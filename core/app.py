@@ -17,6 +17,7 @@ from core.db import (
     get_commands, add_command_content,
     get_all_settings, get_setting, set_setting,
     authenticate_user, get_user_by_id, get_user_by_id_full,
+    get_user_by_phone, get_user_by_username, create_user_with_phone,
     list_users, create_user, update_user, update_user_password, delete_user,
     list_roles, get_role, create_role, update_role, delete_role,
     get_role_permissions, set_role_permissions, list_permissions,
@@ -200,6 +201,64 @@ def create_app(project_root, spec):
         if intel is None:
             return jsonify({'error': 'not found'}), 404
         return jsonify(intel)
+
+    # --- Public share page (no auth) ---
+    @app.route('/s/<token>')
+    def share_page(token):
+        from core.db import get_intelligence_by_share_token
+        intel = get_intelligence_by_share_token(db_path, token)
+        if intel is None:
+            return '<h1 style="text-align:center;margin-top:60px;font-family:sans-serif;color:#9CA3AF">链接无效或已关闭</h1>', 404
+        # Sanitize content: escape HTML then convert newlines to <p>
+        import html as html_mod
+        escaped = html_mod.escape(intel.get('content', ''))
+        content_html = '<p>' + escaped.replace('\n', '</p><p>').strip() + '</p>'
+        # Format date
+        created = intel.get('created_at', '')[:10]
+        # 注册开关（系统设置，实时生效）。默认关闭；显式开启才显示注册入口。
+        from core.db import get_setting
+        reg_flag = get_setting(db_path, 'register_enabled')
+        register_enabled = reg_flag in ('1', 'true', 'True')
+        from jinja2 import Environment
+        tpl_path = os.path.join(os.path.dirname(__file__), 'share_template.html')
+        with open(tpl_path, 'r', encoding='utf-8') as f:
+            tpl = Environment(autoescape=True).from_string(f.read())
+        html_out = tpl.render(
+            title=intel.get('title', ''),
+            category=intel.get('category', ''),
+            company=intel.get('company', ''),
+            created_at=created,
+            content_html=content_html,
+            source_url=intel.get('source_url', '') or '',
+            register_enabled=register_enabled,
+        )
+        return Response(html_out, content_type='text/html; charset=utf-8')
+
+    # --- Toggle sharing (requires intel.share permission) ---
+    @app.route('/api/intelligence/<int:id>/share', methods=['POST'])
+    def toggle_share(id):
+        from core.db import set_intelligence_share
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        # 分享权限管控：角色勾选"开放情报分享"（intel.share）才允许。
+        # admin 与持 intel.share 权限的角色放行；否则 403。
+        if user.get('role') != 'admin' and 'intel.share' not in _user_perm_codes(user):
+            return jsonify({'error': '没有权限执行此操作（需在角色中勾选"开放情报分享"）'}), 403
+        data = request.get_json(silent=True) or {}
+        enabled = bool(data.get('enabled', True))
+        result = set_intelligence_share(db_path, id, enabled)
+        if result is None:
+            return jsonify({'error': 'not found'}), 404
+        token, on = result
+        # Build share URL. WeChat's in-app browser only opens https links,
+        # so default to https (respect X-Forwarded-Proto if a higher proxy
+        # sets it; keep http only for local dev on localhost).
+        scheme = request.headers.get('X-Forwarded-Proto', '')
+        if not scheme:
+            scheme = 'http' if 'localhost' in request.host or request.host.startswith('127.') else 'https'
+        share_url = f"{scheme}://{request.host}/s/{token}" if on else ""
+        return jsonify({'enabled': on, 'token': token, 'share_url': share_url})
 
     @app.route('/api/intelligence/<int:id>', methods=['DELETE'])
     def delete_intelligence_endpoint(id):
@@ -2014,6 +2073,104 @@ def create_app(project_root, spec):
             'user': user,
         })
 
+    # ── 自助注册（手机号 + 短信验证码 + 用户名 + 密码，role=user，免审核） ──
+    # 内存限频表：phone -> {last_send_ts, day_date, day_count}
+    _sms_rate = {}
+    _SMS_COOLDOWN_SEC = 60        # 同号两次发码最小间隔
+    _SMS_MAX_PER_DAY = 10         # 同号每日发码上限
+
+    @app.route('/api/auth/sms/send', methods=['POST'])
+    def auth_sms_send():
+        """发送手机验证码（限频：同号 60s 冷却 + 每日 10 次）。"""
+        data = request.json or {}
+        phone = (data.get('phone') or '').strip()
+        if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
+            return jsonify({'error': '请输入有效的手机号码'}), 400
+        import time as _time
+        now_ts = _time.time()
+        today = datetime.now().strftime('%Y-%m-%d')
+        rec = _sms_rate.get(phone, {'last_send_ts': 0, 'day_date': '', 'day_count': 0})
+        if rec['day_date'] != today:
+            rec['day_date'] = today
+            rec['day_count'] = 0
+        if rec['day_count'] >= _SMS_MAX_PER_DAY:
+            return jsonify({'error': '今日发送次数已达上限，请明天再试'}), 429
+        if now_ts - rec['last_send_ts'] < _SMS_COOLDOWN_SEC:
+            wait = int(_SMS_COOLDOWN_SEC - (now_ts - rec['last_send_ts']))
+            return jsonify({'error': f'发送过于频繁，请 {wait} 秒后再试'}), 429
+        from core.sms import send_verify_code
+        ok, msg = send_verify_code(phone, scene='register')
+        if not ok:
+            return jsonify({'error': msg}), 502
+        rec['last_send_ts'] = now_ts
+        rec['day_count'] += 1
+        _sms_rate[phone] = rec
+        return jsonify({'ok': True, 'message': msg, 'cooldown': _SMS_COOLDOWN_SEC})
+
+    @app.route('/api/auth/register', methods=['POST'])
+    def auth_register():
+        """自助注册：用户名 + 手机号 + 短信验证码 + 密码。
+
+        校验手机号验证码（PNVS / test_mode）→ 建 user（role=user，免审核）
+        → 直接签发 JWT，前端注册成功即登录进门户。
+        """
+        # 注册开关（系统设置，实时生效）。默认关闭；显式开启才放行。
+        from core.db import get_setting
+        reg_flag = get_setting(db_path, 'register_enabled')
+        if reg_flag not in ('1', 'true', 'True'):
+            return jsonify({'error': '注册通道已关闭，暂不开放新用户注册'}), 403
+        data = request.json or {}
+        username = (data.get('username') or '').strip()
+        phone = (data.get('phone') or '').strip()
+        code = (data.get('code') or '').strip()
+        password = data.get('password') or ''
+
+        if not username:
+            return jsonify({'error': '请输入用户名'}), 400
+        if not (2 <= len(username) <= 32) or not username.replace('_', '').replace('-', '').isalnum():
+            return jsonify({'error': '用户名需 2-32 位字母、数字、下划线或连字符'}), 400
+        if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
+            return jsonify({'error': '请输入有效的手机号码'}), 400
+        if not code or not code.isdigit():
+            return jsonify({'error': '请输入短信验证码'}), 400
+        if len(password) < 6:
+            return jsonify({'error': '密码至少 6 位'}), 400
+
+        # 用户名 / 手机号唯一性（友好提示）
+        if get_user_by_username(db_path, username):
+            return jsonify({'error': '用户名已被占用，请换一个'}), 409
+        if get_user_by_phone(db_path, phone):
+            return jsonify({'error': '该手机号已注册，请直接登录'}), 409
+
+        # 短信验证码校验（PNVS 真实 / test_mode 本地）
+        from core.sms import verify_code
+        ok, msg = verify_code(phone, code)
+        if not ok:
+            return jsonify({'error': msg}), 400
+
+        user_id, err = create_user_with_phone(db_path, username, password, phone,
+                                               display_name=username)
+        if user_id is None:
+            return jsonify({'error': err or '注册失败'}), 409
+
+        # 注册即登录：构造 user + 签发 JWT
+        user = {
+            'id': user_id,
+            'username': username,
+            'display_name': username,
+            'role': 'user',
+            'domains': [],
+        }
+        user['role_ids'] = get_user_role_ids(db_path, user_id)
+        user['permission_codes'] = sorted(get_user_permission_codes(db_path, user_id, 'user'))
+        token = _generate_token(user)
+        return jsonify({
+            'ok': True,
+            'message': '注册成功',
+            'token': token,
+            'user': user,
+        })
+
     @app.route('/api/auth/check')
     def auth_check():
         """Validate JWT token (used by nginx auth_request)."""
@@ -2420,6 +2577,126 @@ def create_app(project_root, spec):
             return jsonify({'ok': True, 'model': '已连通'})
         return jsonify({'ok': False, 'error': result.get('error', '未知错误')}), 500
 
+    # ─── Tavily 搜索配置 ──────────────────────────────────────────
+
+    @app.route('/api/system/tavily', methods=['GET'])
+    @require_auth
+    def get_tavily_settings():
+        """获取 Tavily 搜索配置（api_key 脱敏）"""
+        from config import get_tavily_config
+        cfg = get_tavily_config()
+        api_key = cfg.get('api_key', '')
+        if len(api_key) > 6:
+            cfg['api_key_masked'] = api_key[:5] + '***' + api_key[-3:]
+        else:
+            cfg['api_key_masked'] = '***' if api_key else ''
+        cfg.pop('api_key', None)
+        return jsonify(cfg)
+
+    @app.route('/api/system/tavily', methods=['PUT'])
+    @require_auth
+    def update_tavily_settings():
+        """更新 Tavily 搜索配置"""
+        from config import get_tavily_config, save_tavily_config
+        data = request.json or {}
+        current = get_tavily_config()
+        new_key = data.get('api_key', '').strip()
+        if new_key and '***' not in new_key:
+            current['api_key'] = new_key
+        if 'base_url' in data and data['base_url'] not in (None, ''):
+            current['base_url'] = data['base_url']
+        save_tavily_config(current)
+        return jsonify({'ok': True})
+
+    # ─── 注册开放开关 ──────────────────────────────────────────
+    # 存 DB settings（实时生效，改一次无需重建容器）。默认关闭（未设置 = 关）。
+    def _register_enabled(db_path):
+        from core.db import get_setting
+        flag = get_setting(db_path, 'register_enabled')
+        return flag in ('1', 'true', 'True')
+
+    @app.route('/api/auth/register-status', methods=['GET'])
+    def register_status():
+        """公开：注册通道是否开放（登录页/注册页/分享页读取，无需登录）。"""
+        return jsonify({'register_enabled': _register_enabled(db_path)})
+
+    @app.route('/api/system/register', methods=['GET'])
+    @require_auth
+    def get_register_settings():
+        """获取注册开放开关（admin）。"""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user or user.get('role') != 'admin':
+            return jsonify({'error': '仅 admin 可配置'}), 403
+        return jsonify({'register_enabled': _register_enabled(db_path)})
+
+    @app.route('/api/system/register', methods=['PUT'])
+    @require_auth
+    def update_register_settings():
+        """更新注册开放开关（admin）。enabled: true/false。"""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user or user.get('role') != 'admin':
+            return jsonify({'error': '仅 admin 可配置'}), 403
+        from core.db import set_setting
+        data = request.json or {}
+        enabled = bool(data.get('register_enabled', True))
+        set_setting(db_path, 'register_enabled', '1' if enabled else '0', category='auth')
+        return jsonify({'ok': True, 'register_enabled': enabled})
+
+    @app.route('/api/system/tavily/test', methods=['POST'])
+    @require_auth
+    def test_tavily_connection():
+        """测试 Tavily API 连通性（发一次真实搜索）"""
+        import requests
+        from config import get_tavily_config
+        cfg = get_tavily_config()
+        api_key = cfg.get('api_key', '')
+        if not api_key:
+            return jsonify({'ok': False, 'error': 'Tavily API Key 未配置'}), 400
+        try:
+            resp = requests.post(
+                cfg.get('base_url', 'https://api.tavily.com') + '/search',
+                json={'api_key': api_key, 'query': 'test', 'max_results': 1},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return jsonify({'ok': True, 'results': len(data.get('results', []))})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+    # ─── 搜刮调度配置（系统自驱） ─────────────────────────────────
+
+    @app.route('/api/system/search', methods=['GET'])
+    @require_auth
+    def get_search_settings():
+        """获取搜刮调度配置。"""
+        from config import get_search_config
+        return jsonify(get_search_config())
+
+    @app.route('/api/system/search', methods=['PUT'])
+    @require_auth
+    def update_search_settings():
+        """更新搜刮调度配置。"""
+        from config import get_search_config, save_search_config
+        data = request.json or {}
+        current = get_search_config()
+        for k in ('enabled', 'cron_hour', 'cron_hour2', 'max_per_domain',
+                  'max_keywords_per_project', 'max_llm_calls_per_cycle',
+                  'results_per_keyword', 'content_max_chars'):
+            if k in data and data[k] is not None:
+                current[k] = data[k]
+        save_search_config(current)
+        return jsonify({'ok': True})
+
+    @app.route('/api/system/search/trigger', methods=['POST'])
+    @require_auth
+    def trigger_search_cycle():
+        """手动触发一次搜刮（同步执行，返回结果摘要）。"""
+        import threading
+        from core.scheduler.search_cycle import trigger_search_once
+        result = trigger_search_once()
+        return jsonify(result)
 
     # ─── 抽取规则管理 API ──────────────────────────────────────
 

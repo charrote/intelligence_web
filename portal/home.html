@@ -266,7 +266,7 @@ function renderIntelPanel(d) {
   document.getElementById('pvTitle').textContent = d.title || '未命名';
   document.getElementById('pvBody').innerHTML =
     '<div class="pv-meta">' + tags + '</div>'
-    + (d.source_url ? '<div style="margin-bottom:10px"><a href="' + escapeHtml(d.source_url) + '" target="_blank" style="font-size:12.5px;color:var(--accent)">原文链接 ↗</a></div>' : '')
+    + (d.source_url ? '<div style="margin-bottom:10px"><a href="' + escapeHtml(d.source_url) + '" data-ext="1" data-label="打开原文链接" style="font-size:12.5px;color:var(--accent)">原文链接 ↗</a></div>' : '')
     + '<div class="pv-content' + (clamped ? ' clamped' : '') + '">' + escapeHtml(content) + '</div>';
 
   // 状态流转按钮已隐藏（状态模型未定），仅保留"查看完整详情"
@@ -328,6 +328,7 @@ function goReport(tid) {
 // 用户当前只需阅读 + 未读/已读。待"行动/价值"模型想清楚后再接回。
 
 async function init() {
+  initExternalLinkGuard(); // 情报详情超链接 → 弹提示 + 新标签页打开，不在系统内导航
   await loadIntel();
   await loadReports();
   renderKpis();
