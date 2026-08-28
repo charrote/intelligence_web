@@ -508,11 +508,12 @@ def record_search_run_start(db_path, domain, trigger_type='scheduled'):
 
 def record_search_run_end(db_path, run_id, status, projects_processed=0,
                           new_intel=0, llm_calls=0, intel_items=None,
-                          duration_sec=None, error_msg=''):
+                          duration_sec=None, error_msg='', model_name=''):
     """Finalize a search_run row.
 
     intel_items: list of {title, url, intel_id} for the intelligence created
     in this run (stored as JSON for the history brief).
+    model_name: 本轮搜刮使用的 LLM 模型名（来自 config/llm.json，便于履历追溯）。
     """
     now = datetime.now(timezone.utc).isoformat()
     intel_json = json.dumps(intel_items or [], ensure_ascii=False)
@@ -521,10 +522,10 @@ def record_search_run_end(db_path, run_id, status, projects_processed=0,
             """UPDATE search_run SET
                status = ?, completed_at = ?,
                projects_processed = ?, new_intel = ?, llm_calls = ?,
-               intel_json = ?, duration_sec = ?, error_msg = ?
+               intel_json = ?, duration_sec = ?, error_msg = ?, model_name = ?
                WHERE id = ?""",
             (status, now, projects_processed, new_intel, llm_calls,
-             intel_json, duration_sec, error_msg, run_id),
+             intel_json, duration_sec, error_msg, model_name, run_id),
         )
         conn.commit()
 
@@ -538,7 +539,7 @@ def list_search_runs(db_path, limit=20):
         rows = conn.execute(
             """SELECT id, domain, trigger_type, started_at, completed_at, status,
                       projects_processed, new_intel, llm_calls, duration_sec,
-                      intel_json, error_msg
+                      model_name, intel_json, error_msg
                FROM search_run ORDER BY started_at DESC, id DESC LIMIT ?""",
             (limit,),
         ).fetchall()
@@ -1726,11 +1727,17 @@ def migrate_db(db_path):
                     new_intel INTEGER NOT NULL DEFAULT 0,
                     llm_calls INTEGER NOT NULL DEFAULT 0,
                     duration_sec INTEGER,
+                    model_name TEXT DEFAULT '',
                     intel_json TEXT DEFAULT '[]',
                     error_msg TEXT DEFAULT '',
                     created_at TEXT NOT NULL
                 )
             ''')
+            # Migration: 存量库补 model_name（搜刮履历记录所用 LLM 模型）
+            try:
+                c.execute("ALTER TABLE search_run ADD COLUMN model_name TEXT DEFAULT ''")
+            except Exception:
+                pass  # column already exists
 
             # Migration: add entities table
             c.execute('''

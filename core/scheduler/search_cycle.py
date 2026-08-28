@@ -277,6 +277,13 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
     results_per_kw = int(cfg.get("results_per_keyword", 5))
     content_max = int(cfg.get("content_max_chars", 400))
 
+    # 本轮使用的 LLM 模型名（config/llm.json），写入调度履历便于追溯
+    from config import get_llm_config
+    try:
+        model_name = get_llm_config().get("model_name", "") or ""
+    except Exception:
+        model_name = ""
+
     t0 = time.time()
 
     # 清理历史遗留的"卡死在 running"记录（上轮进程被杀/容器重启导致）
@@ -477,6 +484,7 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                     intel_items=acc["intel_items"],
                     duration_sec=int(time.time() - t0),
                     error_msg=acc["error_msg"],
+                    model_name=model_name,
                 )
             except Exception as e:
                 logger.warning(f"[search_cycle] failed to record run end: {e}")

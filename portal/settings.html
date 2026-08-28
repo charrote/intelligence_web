@@ -574,12 +574,13 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
                   <th>触发</th>
                   <th>结果</th>
                   <th>耗时</th>
+                  <th>模型</th>
                   <th>项目 / 新增 / LLM</th>
                   <th>产出情报</th>
                 </tr>
               </thead>
               <tbody id="searchHistoryBody">
-                <tr><td colspan="8" class="empty">加载中…</td></tr>
+                <tr><td colspan="9" class="empty">加载中…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1159,14 +1160,14 @@ async function loadSearchRuns() {
   var body = document.getElementById('searchHistoryBody');
   var meta = document.getElementById('searchHistoryMeta');
   var note = document.getElementById('searchHistoryNote');
-  if (body) body.innerHTML = '<tr><td colspan="8" class="empty">加载中…</td></tr>';
+  if (body) body.innerHTML = '<tr><td colspan="9" class="empty">加载中…</td></tr>';
   try {
     var r = await apiFetch(systemApiBase() + '/api/system/search/runs?limit=30');
     if (!r.ok) throw new Error('HTTP ' + r.status);
     var data = await r.json();
     var runs = data.runs || [];
     if (!runs.length) {
-      if (body) body.innerHTML = '<tr><td colspan="8" class="empty">暂无调度履历 — 触发一次搜刮后这里会记录每轮的开始/结束、结果与产出的情报</td></tr>';
+    if (body) body.innerHTML = '<tr><td colspan="9" class="empty">暂无调度履历 — 触发一次搜刮后这里会记录每轮的开始/结束、结果与产出的情报</td></tr>';
     } else {
       var html = '';
       runs.forEach(function(run){
@@ -1177,6 +1178,7 @@ async function loadSearchRuns() {
           + '<td class="sh-trigger"><span class="sh-tag t-' + (run.trigger_type === 'manual' ? 'manual' : 'scheduled') + '">' + (run.trigger_type === 'manual' ? '手动' : '定时') + '</span></td>'
           + '<td>' + shStatusHtml(run.status) + '</td>'
           + '<td class="time">' + (run.duration_sec != null ? run.duration_sec + 's' : '-') + '</td>'
+          + '<td class="time">' + (run.model_name ? escapeHtml(run.model_name) : '-') + '</td>'
           + '<td class="sh-count">' + (run.projects_processed||0) + ' / <b>' + (run.new_intel||0) + '</b> / ' + (run.llm_calls||0) + '</td>'
           + '<td class="sh-intel">' + shIntelHtml(run, false) + '</td>'
           + '</tr>';
@@ -1192,7 +1194,7 @@ async function loadSearchRuns() {
       note.style.display = salesBad ? '' : 'none';
     }
   } catch(e) {
-    if (body) body.innerHTML = '<tr><td colspan="8" class="empty">加载失败：' + escapeHtml(e.message || e) + '</td></tr>';
+    if (body) body.innerHTML = '<tr><td colspan="9" class="empty">加载失败：' + escapeHtml(e.message || e) + '</td></tr>';
     if (meta) meta.textContent = '';
   }
 }
