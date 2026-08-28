@@ -1007,7 +1007,10 @@ async function triggerSearchCycle() {
   btn.textContent = '搜刮中...';
   btn.disabled = true;
   try {
-    var r = await apiFetch(systemApiBase() + '/api/system/search/trigger', { method: 'POST' });
+    // 立即搜刮限定当前域：走域感知的 apiBase()（8766 research / 8767 sales），
+    // 各域容器只搜自己 ANALYZER_DB_SLUG 对应的 DB，天然隔离。
+    // （不能用 systemApiBase() —— 它永远路由到 research，会在 sales 域误触 research。）
+    var r = await apiFetch(apiBase() + '/api/system/search/trigger', { method: 'POST' });
     var res;
     try { res = await r.json(); } catch(e) { res = {}; }
     if (!r.ok) {
@@ -1030,10 +1033,12 @@ async function triggerSearchCycle() {
 function _pollManualRun() {
   return new Promise(function(resolve){
     var maxTries = 60;   // ~5 分钟上限
-    var curDomain = (localStorage.getItem('domainPort') === '8767') ? 'intelligence_sales' : 'intelligence_web';
+    var curDomain = (localStorage.getItem('domainPort') === '8767') ? 'intelligence_sales' : 'intelligence';
     var startedAfter = new Date().toISOString(); // 只认触发后产生的记录
     function tick(n) {
-      apiFetch(systemApiBase() + '/api/system/search/runs?limit=10')
+      // 只查当前域自己的运行记录（运行记录落在被触发的当前域容器）；
+      // local=1 关闭跨域合并，避免依赖 research 容器的跨域取数。
+      apiFetch(apiBase() + '/api/system/search/runs?limit=10&local=1')
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(data){
           if (!data) { resolve(); return; }
@@ -1102,7 +1107,7 @@ function goIntelDetail(runDomain, intelId, title, url) {
     if (url) window.open(url, '_blank');
     return;
   }
-  var curDomain = (localStorage.getItem('domainPort') === '8767') ? 'intelligence_sales' : 'intelligence_web';
+  var curDomain = (localStorage.getItem('domainPort') === '8767') ? 'intelligence_sales' : 'intelligence';
   if (runDomain === curDomain) {
     localStorage.setItem('qm_open_intel', String(intelId));
     window.parent.openTab('');
