@@ -138,13 +138,16 @@ def _execute_report_steps(db_path: str, conn, run_id: int, template_dict: dict) 
         )
 
         # Step 4: LLM analysis
+        # max_tokens 与抽取同源：大模板（数百条事实的聚合）analysis 输出长，
+        # 1500 会截断导致 JSON parse failed（线上 2026-08 实锤：模板 2/3 失败）。
         db_path = _get_db_path()
         timeout = int(get_setting(db_path, "llm.report_timeout") or "120")
+        report_max_tokens = max(1000, int(get_setting(db_path, "llm.report_max_tokens") or "4000"))
         llm_result = call_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.1,
-            max_tokens=1500,
+            max_tokens=report_max_tokens,
             timeout=timeout,
         )
         if not llm_result.get("ok"):
