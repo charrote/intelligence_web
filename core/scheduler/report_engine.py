@@ -340,28 +340,68 @@ def _handle_failure(conn, template_id: int, error_msg: str):
         logger.warning(f"Template {template_id} fused after {row['fail_count']} consecutive failures")
 
 
+def _resolve_field(config: dict, kind: str, default: str) -> str:
+    """Read a field reference from chart config, tolerating legacy key names.
+
+    kind='type'  → 'type' 或旧键 'chart_type'
+    kind='name'  → 'name_field'
+    kind='value' → 'value_field'
+    缺省返回 default（聚合行里一定存在的列：entity_name / fact_count）。
+    """
+    key = {"type": "type", "name": "name_field", "value": "value_field"}[kind]
+    if kind == "type":
+        return config.get("type") or config.get("chart_type") or default
+    return config.get(key) or default
+
+
+def _row_name(row: dict, field: str) -> str:
+    """Resolve the display name of an aggregated row for a chart.
+
+    图表拿的是聚合行（entity_name / fact_count / metric_*），不是原始 fact 行。
+    优先用配置的字段名；若该字段在聚合行里不存在，回退到 entity_name，
+    保证名称永远有值（不再画出 name 为空的空条）。
+    """
+    if field in row:
+        return row[field]
+    return str(row.get("entity_name", ""))
+
+
+def _row_value(row: dict, field: str):
+    """Resolve the numeric value of an aggregated row for a chart.
+
+    回退链：配置的 value_field → fact_count（按 entity 分组的事实数，聚合行
+    里恒存在，天然可作柱状图数值）→ metric_0 → 0。
+    修复旧版 value_field 直接指向原始 fact 字段（如 company_name/action_type）
+    时取不到值、整图全 0 的问题。
+    """
+    if field in row:
+        v = row[field]
+    elif "fact_count" in row:
+        v = row["fact_count"]
+    elif "metric_0" in row:
+        v = row["metric_0"]
+    else:
+        v = 0
+    return 0 if v is None else v
+
+
 def _build_charts(template_dict: dict, rows: list) -> list:
     """Convert aggregated data to ECharts format based on chart_config."""
     configs = json.loads(template_dict.get("chart_config", "[]"))
     charts = []
 
     for config in configs:
-        chart_type = config.get("type", "bar")
+        chart_type = _resolve_field(config, "type", "bar")
         title = config.get("title", "图表")
-        name_field = config.get("name_field", "entity_name")
-        value_field = config.get("value_field", "metric_0")
+        name_field = _resolve_field(config, "name", "entity_name")
+        value_field = _resolve_field(config, "value", "fact_count")
 
         data = []
         for row in rows:
-            item = {}
-            if name_field in row:
-                item["name"] = row[name_field]
-            else:
-                item["name"] = str(row.get("entity_name", ""))
-            if value_field in row:
-                item["value"] = row[value_field]
-            else:
-                item["value"] = 0
+            item = {
+                "name": _row_name(row, name_field),
+                "value": _row_value(row, value_field),
+            }
             data.append(item)
 
         charts.append({

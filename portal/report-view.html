@@ -138,6 +138,7 @@
 <script>
 var templateId = null;
 var currentRunId = null;
+var currentRunTemplateId = null;
 var targetRunId = null;
 var runHistory = [];
 var chartInstances = [];
@@ -149,7 +150,9 @@ function getTemplateId() {
   var params = new URLSearchParams(window.location.search);
   var fromParams = params.get('template_id');
   if (fromParams) { var p = parseInt(fromParams); if (!isNaN(p) && p > 0) return p; }
-  return parseInt(localStorage.getItem('lastTemplateId')) || 1;
+  // 未显式指定 → null = 全部模板（自动定位最新运行），不再默认 template 1
+  // （默认 1 是空页根因：多数域的模板 id 不是从 1 开始，1 查不到任何运行记录）
+  return null;
 }
 
 function showLoading(show) {
@@ -157,7 +160,8 @@ function showLoading(show) {
 }
 
 async function fetchRuns(tid) {
-  var url = apiBase() + '/api/reports/runs?template_id=' + tid + '&limit=100';
+  var url = apiBase() + '/api/reports/runs'
+    + (tid ? '?template_id=' + tid + '&limit=100' : '?limit=100');
   var res = await apiFetch(url);
   if (!res.ok) throw new Error('获取运行记录失败: ' + res.status);
   var data = await res.json();
@@ -201,16 +205,31 @@ function formatRunTime(iso) {
 function renderVersionOptions(runs) {
   var select = document.getElementById('versionSelect');
   select.innerHTML = '';
-  var visible = runs.filter(function(r) { return r.scheduled_time; }).slice(0, 20).reverse();
-  visible.forEach(function(run, idx) {
-    var opt = document.createElement('option');
-    var badge = run.status === 'completed' ? '<span class="version-badge ok">✅</span>' :
-                run.status === 'failed' ? '<span class="version-badge fail">❌</span>' :
-                '<span class="version-badge pending">⏳</span>';
-    opt.value = run.id;
-    opt.textContent = badge + ' ' + formatRunTime(run.scheduled_time) + '  ' + (run.status || '');
-    if (run.id === currentRunId) opt.selected = true;
-    select.appendChild(opt);
+  if (!runs || runs.length === 0) return;
+  // 按模板分组（optgroup），组内按时间倒序，最多 20 条
+  var byTemplate = {};
+  var order = [];
+  runs.forEach(function(r) {
+    var key = r.template_id != null ? r.template_id : '?';
+    if (!byTemplate[key]) { byTemplate[key] = []; order.push(key); }
+    byTemplate[key].push(r);
+  });
+  order.forEach(function(key) {
+    var name = runs.filter(function(r) { return String(r.template_id) === String(key); })[0].template_name;
+    var group = document.createElement('optgroup');
+    group.label = name || ('报告 #' + key);
+    byTemplate[key].slice().sort(function(a, b) {
+      return new Date(b.scheduled_time || 0) - new Date(a.scheduled_time || 0);
+    }).slice(0, 20).forEach(function(run) {
+      var opt = document.createElement('option');
+      var badge = run.status === 'completed' ? '✓' :
+                  run.status === 'failed' ? '✗' : '…';
+      opt.value = run.id;
+      opt.textContent = badge + ' ' + formatRunTime(run.scheduled_time) + '  ' + (run.status || '');
+      if (run.id === currentRunId) opt.selected = true;
+      group.appendChild(opt);
+    });
+    select.appendChild(group);
   });
 }
 
@@ -327,14 +346,20 @@ function renderSections(run) {
     container.appendChild(sec);
   }
 
-  if (!run.output_analysis && !run.output_charts && !run.output_summary && !run.error_msg) {
+  if (!run.output_analysis && !run.output_charts && !run.output_summary && !run.error_msg && (!stats || Object.keys(stats).length === 0)) {
+    // 运行已存在但没有任何产出 → 明确提示，而不是留白
     var sec = document.createElement('div');
     sec.className = 'report-section';
+    var head = document.createElement('div');
+    head.className = 'section-head';
+    head.textContent = '报告内容';
+    sec.appendChild(head);
     var body = document.createElement('div');
     body.className = 'section-body';
     body.style.textAlign = 'center';
     body.style.color = 'var(--gray-400)';
     body.textContent = '暂无报告内容';
+    sec.appendChild(body);
     container.appendChild(sec);
   }
 }
@@ -348,6 +373,16 @@ function initChart(domId, chartData) {
     var option = {};
     var type = chartData.type || 'bar';
     var data = chartData.data || [];
+
+    // 空数据检测：全部数值为 0/null/空 → 不画空图，给出明确提示
+    var hasValue = data.some(function(d) {
+      return d && d.value != null && d.value !== '' && Number(d.value) !== 0;
+    });
+    if (data.length === 0 || !hasValue) {
+      el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--gray-400,#9a9b9d);font-size:13px">'
+        + '该图表暂无有效数值数据（聚合指标均为空或 0）</div>';
+      return;
+    }
 
     if (type === 'pie') {
       option = {
@@ -419,14 +454,16 @@ function renderMarkdown(text) {
   return html;
 }
 
-async function loadRun(runId) {
+async function loadRun(runId, refreshSelect) {
   showLoading(true);
   try {
     var run = await fetchRun(runId);
     currentRunId = runId;
+    if (run.template_id != null) currentRunTemplateId = run.template_id;
     if (run.template_name) {
       document.getElementById('reportTitle').textContent = run.template_name;
     }
+    if (refreshSelect) renderVersionOptions(runHistory); // 回填下拉选中态
     renderSections(run);
     document.getElementById('reportMeta').style.display = 'flex';
     document.getElementById('runTime').textContent = formatRunTime(run.scheduled_time);
@@ -436,12 +473,19 @@ async function loadRun(runId) {
       var remainSec = sec % 60;
       var perfText = (min > 0 ? min + '分' : '') + remainSec + '秒';
       document.getElementById('runPerf').textContent = '✅ ' + perfText;
+    } else if (run.duration_sec != null) {
+      var sec2 = Math.round(run.duration_sec);
+      var min2 = Math.floor(sec2 / 60);
+      var remain2 = sec2 % 60;
+      document.getElementById('runPerf').textContent = '✅ ' + (min2 > 0 ? min2 + '分' : '') + remain2 + '秒';
     } else if (run.status === 'completed') {
       document.getElementById('runPerf').textContent = '✅';
     } else if (run.status === 'failed') {
-      document.getElementById('runPerf').textContent = '❌ 失败';
+      document.getElementById('runPerf').textContent = '✗ 失败';
+    } else if (run.status === 'no_data') {
+      document.getElementById('runPerf').textContent = '… 无数据';
     } else {
-      document.getElementById('runPerf').textContent = '⏳';
+      document.getElementById('runPerf').textContent = '…';
     }
   } catch(e) {
     console.error('[report] Load run error:', e);
@@ -453,12 +497,17 @@ async function loadRun(runId) {
 
 async function rerunReport() {
   var btn = document.getElementById('rerunBtn');
+  if (!currentRunTemplateId) {
+    // 当前没有定位到任何模板（比如刚进来时没有任何运行记录）
+    alert('当前没有可执行的报告。请先在「报告文件」中查看某条报告后再重新执行。');
+    return;
+  }
   btn.disabled = true;
   btn.textContent = '执行中...';
   showLoading(true);
 
   try {
-    var url = apiBase() + '/api/reports/run/' + templateId;
+    var url = apiBase() + '/api/reports/run/' + currentRunTemplateId;
     var res = await apiFetch(url, { method: 'POST' });
     if (!res.ok) {
       var errData = await res.json().catch(function() { return {}; });
@@ -473,22 +522,17 @@ async function rerunReport() {
       pollingTimer = setInterval(async function() {
         try {
           var updated = await fetchRun(newRunId);
-          if (updated.status === 'completed') {
-            clearInterval(pollingTimer);
-            pollingTimer = null;
-            btn.disabled = false;
-            btn.textContent = '重新执行';
-            showLoading(false);
-            runHistory = await fetchRuns(templateId);
-            renderVersionOptions(runHistory);
-            loadRun(newRunId);
-          } else if (updated.status === 'failed') {
+          if (updated.status === 'completed' || updated.status === 'failed' || updated.status === 'no_data') {
             clearInterval(pollingTimer);
             pollingTimer = null;
             btn.disabled = false;
             btn.textContent = '重新执行';
             showLoading(false);
             loadRun(newRunId);
+            if (templateId) {
+              runHistory = await fetchRuns(templateId);
+              renderVersionOptions(runHistory);
+            }
           }
         } catch(pollErr) {
           clearInterval(pollingTimer);
@@ -505,7 +549,9 @@ async function rerunReport() {
       showLoading(false);
       runHistory = await fetchRuns(templateId);
       renderVersionOptions(runHistory);
-      var latest = runHistory.filter(function(r) { return r.scheduled_time; }).reverse()[0];
+      var latest = runHistory.slice().sort(function(a, b) {
+        return new Date(b.scheduled_time || 0) - new Date(a.scheduled_time || 0);
+      })[0];
       if (latest) loadRun(latest.id);
     }
   } catch(e) {
@@ -524,11 +570,24 @@ function goBack() {
   }
 }
 
+function showEmptyState() {
+  document.getElementById('reportTitle').textContent = '报告';
+  document.getElementById('reportMeta').style.display = 'none';
+  document.getElementById('sections').innerHTML =
+    '<div class="report-section">' +
+      '<div class="section-head">报告内容</div>' +
+      '<div class="section-body" style="text-align:center;color:var(--gray-400);padding:32px 16px">' +
+        '该域还没有任何报告运行记录。<br>' +
+        '<span style="font-size:13px">可前往「报告文件」查看/执行报告，或在「报告模板」中配置后运行。</span>' +
+      '</div>' +
+    '</div>';
+}
+
 function init() {
   templateId = getTemplateId();
-  localStorage.setItem('lastTemplateId', templateId);
   targetRunId = getRunId();
-  document.getElementById('reportTitle').textContent = '市场份额概览';
+  // 标题先显示通用占位，加载到具体运行后替换为真实模板名
+  document.getElementById('reportTitle').textContent = '报告';
 
   document.getElementById('versionSelect').addEventListener('change', function() {
     var val = parseInt(this.value);
@@ -540,19 +599,31 @@ function init() {
 
 async function loadReports() {
   try {
+    // templateId 为 null 时拉全部模板的运行记录
     runHistory = await fetchRuns(templateId);
     renderVersionOptions(runHistory);
+
+    if (runHistory.length === 0) {
+      showEmptyState();
+      return;
+    }
+
     // 若从报告文件列表点进某条具体运行，优先定位它
     if (targetRunId) {
       var targetRun = runHistory.find(function(r) { return r.id === targetRunId; });
       if (targetRun) { loadRun(targetRun.id); return; }
     }
-    var latest = runHistory.filter(function(r) { return r.scheduled_time && r.status !== 'failed'; }).reverse()[0];
-    if (latest) {
-      loadRun(latest.id);
-    } else if (runHistory.length > 0) {
-      loadRun(runHistory[0].id);
-    }
+
+    // 默认定位：优先最新一条已完成（有实际内容）的运行；否则取最新非失败；再否则取最新任意
+    var withTime = runHistory.filter(function(r) { return r.scheduled_time; })
+      .slice().sort(function(a, b) {
+        return new Date(b.scheduled_time || 0) - new Date(a.scheduled_time || 0);
+      });
+    var latest =
+      withTime.find(function(r) { return r.status === 'completed'; }) ||
+      withTime.find(function(r) { return r.status !== 'failed'; }) ||
+      withTime[0];
+    if (latest) loadRun(latest.id, true);
   } catch(e) {
     console.error('[report] Load reports error:', e);
     document.getElementById('reportTitle').textContent = '加载失败';
