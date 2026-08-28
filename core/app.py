@@ -2692,11 +2692,82 @@ def create_app(project_root, spec):
     @app.route('/api/system/search/trigger', methods=['POST'])
     @require_auth
     def trigger_search_cycle():
-        """手动触发一次搜刮（同步执行，返回结果摘要）。"""
-        import threading
-        from core.scheduler.search_cycle import trigger_search_once
-        result = trigger_search_once()
-        return jsonify(result)
+        """手动触发一次搜刮（后台异步执行，立即返回）。
+
+        完整一轮搜刮可能超过 gunicorn 工作进程超时（~120s），因此不再同步阻塞；
+        结果记录在 search_run 履历（/api/system/search/runs），前端轮询刷新。
+        """
+        from core.scheduler.search_cycle import trigger_search_async
+        return jsonify(trigger_search_async())
+
+    # 域 slug → 展示名（调度履历表用）
+    _SEARCH_DOMAIN_LABELS = {
+        'intelligence_web': '制造情报域',
+        'intelligence': '制造情报域',
+        'intelligence_sales': '销售情报域',
+    }
+
+    @app.route('/api/system/search/runs', methods=['GET'])
+    @require_auth
+    def list_search_runs():
+        """调度履历简报：合并两个域的搜刮运行记录（新 → 旧）。
+
+        返回 {runs:[{id, domain, domain_label, trigger_type, started_at,
+        completed_at, status, projects_processed, new_intel, llm_calls,
+        duration_sec, intel:[{title,url,intel_id,project}], error_msg}],
+        sources:{...}}
+        跨域查询：research 容器额外向 sales 容器取数（本地容器网络）；
+        失败时优雅降级（sources 里标注 unavailable）。
+        """
+        import requests as _requests
+        from core.db import list_search_runs as _list_runs
+        from core.db import finalize_stale_search_runs as _finalize_stale
+
+        limit = min(int(request.args.get('limit', 30) or 30), 100)
+        local_only = request.args.get('local') in ('1', 'true', 'yes')
+        # research 域的 slug 是 intelligence_web（db 文件名为 intelligence），
+        # sales 域 slug 是 intelligence_sales；跨域合并只在 research 容器做
+        is_research = spec.get('slug') == 'intelligence_web'
+
+        # 自愈：把进程被杀后卡在 running 的旧记录标记为 failed（阈值 10 分钟）
+        try:
+            _finalize_stale(db_path, max_age_sec=600)
+        except Exception:
+            pass
+
+        def _label(slug):
+            return _SEARCH_DOMAIN_LABELS.get(slug, slug or '-')
+
+        runs = []
+        for row in _list_runs(db_path, limit):
+            row = dict(row)
+            row['domain_label'] = _label(row.get('domain'))
+            runs.append(row)
+        sources = {'local': 'ok'}
+
+        # 仅 research 容器需要跨域合并（sales 只跑自己的域）
+        if is_research and not local_only:
+            try:
+                auth = request.headers.get('Authorization', '')
+                resp = _requests.get(
+                    'http://sales:8767/api/system/search/runs',
+                    params={'limit': limit, 'local': '1'},
+                    headers={'Authorization': auth},
+                    timeout=6,
+                )
+                if resp.status_code == 200:
+                    for row in (resp.json().get('runs') or []):
+                        row = dict(row)
+                        row['domain_label'] = _label(row.get('domain'))
+                        runs.append(row)
+                    sources['sales'] = 'ok'
+                else:
+                    sources['sales'] = f'unavailable (HTTP {resp.status_code})'
+            except Exception as e:
+                sources['sales'] = f'unavailable ({type(e).__name__})'
+
+        runs.sort(key=lambda x: (x.get('started_at') or '', x.get('id') or 0), reverse=True)
+        return jsonify({'runs': runs[:limit], 'sources': sources})
 
     # ─── 抽取规则管理 API ──────────────────────────────────────
 

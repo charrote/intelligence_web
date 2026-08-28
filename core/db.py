@@ -2,12 +2,13 @@
 
 import sqlite3
 import os
+import json
 import shutil
 import glob
 import base64
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from core.seed_data import DEMOS as _RESEARCH_DEMOS
 
@@ -483,6 +484,93 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
         except Exception as e:
             print(f"[create_intelligence] ERROR inserting '{title}': {e}")
             return None
+
+
+# =============================================================================
+# Search-run history (系统自驱搜刮履历)
+# =============================================================================
+
+def record_search_run_start(db_path, domain, trigger_type='scheduled'):
+    """Insert a search_run row in 'running' state. Returns the run id."""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db(db_path) as conn:
+        cur = conn.execute(
+            """INSERT INTO search_run
+               (domain, trigger_type, status, started_at, created_at)
+               VALUES (?, ?, 'running', ?, ?)""",
+            (domain, trigger_type, now, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def record_search_run_end(db_path, run_id, status, projects_processed=0,
+                          new_intel=0, llm_calls=0, intel_items=None,
+                          duration_sec=None, error_msg=''):
+    """Finalize a search_run row.
+
+    intel_items: list of {title, url, intel_id} for the intelligence created
+    in this run (stored as JSON for the history brief).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    intel_json = json.dumps(intel_items or [], ensure_ascii=False)
+    with get_db(db_path) as conn:
+        conn.execute(
+            """UPDATE search_run SET
+               status = ?, completed_at = ?,
+               projects_processed = ?, new_intel = ?, llm_calls = ?,
+               intel_json = ?, duration_sec = ?, error_msg = ?
+               WHERE id = ?""",
+            (status, now, projects_processed, new_intel, llm_calls,
+             intel_json, duration_sec, error_msg, run_id),
+        )
+        conn.commit()
+
+
+def list_search_runs(db_path, limit=20):
+    """Return the most recent search_run rows (newest first) as dicts.
+
+    intel_json is parsed back into a list.
+    """
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            """SELECT id, domain, trigger_type, started_at, completed_at, status,
+                      projects_processed, new_intel, llm_calls, duration_sec,
+                      intel_json, error_msg
+               FROM search_run ORDER BY started_at DESC, id DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['intel'] = json.loads(d.pop('intel_json') or '[]')
+        except Exception:
+            d['intel'] = []
+            d.pop('intel_json', None)
+        out.append(d)
+    return out
+
+
+def finalize_stale_search_runs(db_path, max_age_sec=3600):
+    """Mark 'running' search_run rows older than max_age_sec as failed.
+
+    Guards against a cycle that was killed mid-flight (e.g. worker timeout /
+    container restart) leaving the history row stuck in 'running' forever.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=max_age_sec)
+    with get_db(db_path) as conn:
+        cur = conn.execute(
+            """UPDATE search_run SET
+               status = 'failed',
+               completed_at = ?,
+               error_msg = '运行超时或进程中断，自动标记为失败'
+               WHERE status = 'running' AND started_at < ?""",
+            (now.isoformat(), cutoff.isoformat()),
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 # =============================================================================
@@ -1616,6 +1704,25 @@ def migrate_db(db_path):
                         'UPDATE users SET password_hash=?, salt=?, updated_at=? WHERE id=?',
                         (new_hash, new_salt, now, user['id'])
                     )
+
+            # 情报搜刮（系统自驱）调度履历表 — 记录每轮搜刮的起止时间、结果与产出
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS search_run (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT NOT NULL DEFAULT '',
+                    trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    projects_processed INTEGER NOT NULL DEFAULT 0,
+                    new_intel INTEGER NOT NULL DEFAULT 0,
+                    llm_calls INTEGER NOT NULL DEFAULT 0,
+                    duration_sec INTEGER,
+                    intel_json TEXT DEFAULT '[]',
+                    error_msg TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                )
+            ''')
 
             # Migration: add entities table
             c.execute('''

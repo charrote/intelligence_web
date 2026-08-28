@@ -235,15 +235,18 @@ def _read_web(url: str) -> str:
 
 # ── Main cycle ──────────────────────────────────────────────
 
-def run_search_cycle() -> dict:
+def run_search_cycle(trigger_type='scheduled') -> dict:
     """Execute one search cycle for the current domain.
 
     Called by scheduler (cron trigger) or manually via API.
-    Returns a summary dict.
+    Records a search_run history row (start/end, result, produced intel).
+    Returns a summary dict (includes ``run_id``).
     """
     from core.db import (
         get_db_path, create_intelligence,
         get_intelligence_by_project, update_intelligence_status,
+        record_search_run_start, record_search_run_end,
+        finalize_stale_search_runs,
     )
     from core.project import get_projects
 
@@ -262,139 +265,224 @@ def run_search_cycle() -> dict:
     results_per_kw = int(cfg.get("results_per_keyword", 5))
     content_max = int(cfg.get("content_max_chars", 400))
 
-    projects = get_projects(db_path, {"status": "active"})
-    if not projects:
-        return {"domain": db_slug, "projects_processed": 0, "new_intel": 0}
+    t0 = time.time()
 
-    llm_calls = 0
-    total_new = 0
-    project_summaries = []
+    # 清理历史遗留的"卡死在 running"记录（上轮进程被杀/容器重启导致）
+    # 阈值 10 分钟：正常一轮 ≤ ~170s，超过即视为中断
+    try:
+        finalize_stale_search_runs(db_path, max_age_sec=600)
+    except Exception as e:
+        logger.warning(f"[search_cycle] stale-run cleanup failed: {e}")
 
-    for project in projects:
-        if total_new >= max_per_domain:
-            break
+    run_id = None
+    try:
+        run_id = record_search_run_start(db_path, db_slug, trigger_type)
+    except Exception as e:
+        logger.warning(f"[search_cycle] failed to record run start: {e}")
 
-        pid = project["id"]
-        target_name = project.get("target_name", "")
-        scope = project.get("scope", "")
-        instruction = project.get("instruction", "")
-        target_type = project.get("target_type", "")
+    # 结果累加器（try/finally 保证运行记录一定被 finalize，不会卡在 running）
+    acc = {
+        "status": "success",
+        "projects_processed": 0,
+        "new_intel": 0,
+        "llm_calls": 0,
+        "intel_items": [],
+        "error_msg": "",
+    }
+    try:
+        projects = get_projects(db_path, {"status": "active"})
+        if not projects:
+            return {
+                "domain": db_slug, "projects_processed": 0, "new_intel": 0,
+                "llm_calls": 0, "run_id": run_id,
+                "project_summaries": [], "intel": [],
+            }
 
-        # Collect indicators from datasources
-        datasources = project.get("datasources", [])
-        indicators = []
-        for ds in datasources:
-            ind_raw = ds.get("indicators", "") or ""
-            indicators.extend([i.strip() for i in ind_raw.split(",") if i.strip()])
+        llm_calls = 0
+        total_new = 0
+        project_summaries = []
+        intel_items = []  # 本轮产出的情报（用于调度履历）：{title, url, intel_id, project}
 
-        if not target_name:
-            continue
-
-        # Recent intel for dedup
-        recent = get_intelligence_by_project(db_path, pid, limit=20)
-        recent_titles = {r.get("title", "").lower() for r in recent}
-
-        # ── LLM ①: build keywords ──
-        if llm_calls >= max_llm_calls:
-            break
-        llm_calls += 1
-        context = {
-            "target_name": target_name,
-            "scope": scope,
-            "instruction": instruction,
-            "indicators": indicators,
-            "target_type": target_type,
-        }
-        keywords = _build_keywords(context)
-        keywords = keywords[:max_keywords]
-        if not keywords:
-            continue
-
-        project_new = 0
-        seen_urls = set()
-
-        for kw in keywords:
-            if total_new + project_new >= max_per_domain or llm_calls >= max_llm_calls:
+        for project in projects:
+            if total_new >= max_per_domain:
                 break
 
-            results = _tavily_search(kw, max_results=results_per_kw)
+            pid = project["id"]
+            target_name = project.get("target_name", "")
+            scope = project.get("scope", "")
+            instruction = project.get("instruction", "")
+            target_type = project.get("target_type", "")
 
-            for r in results:
+            # Collect indicators from datasources
+            datasources = project.get("datasources", [])
+            indicators = []
+            for ds in datasources:
+                ind_raw = ds.get("indicators", "") or ""
+                indicators.extend([i.strip() for i in ind_raw.split(",") if i.strip()])
+
+            if not target_name:
+                continue
+
+            # Recent intel for dedup
+            recent = get_intelligence_by_project(db_path, pid, limit=20)
+            recent_titles = {r.get("title", "").lower() for r in recent}
+
+            # ── LLM ①: build keywords ──
+            if llm_calls >= max_llm_calls:
+                break
+            llm_calls += 1
+            context = {
+                "target_name": target_name,
+                "scope": scope,
+                "instruction": instruction,
+                "indicators": indicators,
+                "target_type": target_type,
+            }
+            keywords = _build_keywords(context)
+            keywords = keywords[:max_keywords]
+            if not keywords:
+                continue
+
+            project_new = 0
+            seen_urls = set()
+
+            for kw in keywords:
                 if total_new + project_new >= max_per_domain or llm_calls >= max_llm_calls:
                     break
-                url = (r.get("url") or "").strip()
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
 
-                # 内容获取：优先用 Tavily snippet（快），公众号才做全文抓取
-                content = (r.get("content") or "").strip()
-                if "mp.weixin.qq.com" in url:
-                    # 公众号需要完整正文
-                    full = _read_content(url)
-                    if full:
-                        content = full
-                if not content or len(content) < 50:
-                    continue
+                results = _tavily_search(kw, max_results=results_per_kw)
 
-                # ── LLM ②: judge + extract ──
-                llm_calls += 1
-                judged = _judge_and_extract(content, context, max_chars=content_max)
-                if not judged.get("relevant"):
-                    continue
+                for r in results:
+                    if total_new + project_new >= max_per_domain or llm_calls >= max_llm_calls:
+                        break
+                    url = (r.get("url") or "").strip()
+                    if not url or url in seen_urls:
+                        continue
+                    seen_urls.add(url)
 
-                title = judged.get("title", "").strip()
-                if not title:
-                    continue
-                if title.lower() in recent_titles:
-                    continue
+                    # 内容获取：优先用 Tavily snippet（快），公众号才做全文抓取
+                    content = (r.get("content") or "").strip()
+                    if "mp.weixin.qq.com" in url:
+                        # 公众号需要完整正文
+                        full = _read_content(url)
+                        if full:
+                            content = full
+                    if not content or len(content) < 50:
+                        continue
 
-                # Create intelligence
-                category = judged.get("category") or target_type or "market"
-                summary = (judged.get("summary") or "").strip()
-                # 附来源（markdown 引用行），来源清晰；链接文本优先用搜索结果原标题
-                if summary and url:
-                    link_text = (r.get("title") or "").strip() or url
-                    content_final = summary + f"\n\n> 来源：[{link_text}]({url})"
-                else:
-                    content_final = summary
-                intel_id = create_intelligence(
-                    db_path,
-                    title=title,
-                    content=content_final,
-                    category=category,
-                    contact_name="",
-                    metadata={"source_url": url},
-                    project_id=pid,
-                )
-                if intel_id:
-                    recent_titles.add(title.lower())
-                    update_intelligence_status(db_path, intel_id, "done")
-                    project_new += 1
-                    total_new += 1
+                    # ── LLM ②: judge + extract ──
+                    llm_calls += 1
+                    judged = _judge_and_extract(content, context, max_chars=content_max)
+                    if not judged.get("relevant"):
+                        continue
 
-        project_summaries.append({
-            "project_id": pid,
-            "project_name": project.get("name", ""),
-            "target_name": target_name,
-            "new_intel": project_new,
+                    title = judged.get("title", "").strip()
+                    if not title:
+                        continue
+                    if title.lower() in recent_titles:
+                        continue
+
+                    # Create intelligence
+                    category = judged.get("category") or target_type or "market"
+                    summary = (judged.get("summary") or "").strip()
+                    # 附来源（markdown 引用行），来源清晰；链接文本优先用搜索结果原标题
+                    if summary and url:
+                        link_text = (r.get("title") or "").strip() or url
+                        content_final = summary + f"\n\n> 来源：[{link_text}]({url})"
+                    else:
+                        content_final = summary
+                    intel_id = create_intelligence(
+                        db_path,
+                        title=title,
+                        content=content_final,
+                        category=category,
+                        contact_name="",
+                        metadata={"source_url": url},
+                        project_id=pid,
+                    )
+                    if intel_id:
+                        recent_titles.add(title.lower())
+                        update_intelligence_status(db_path, intel_id, "done")
+                        project_new += 1
+                        total_new += 1
+                        intel_items.append({
+                            "title": title,
+                            "url": url,
+                            "intel_id": intel_id,
+                            "project": project.get("name", ""),
+                        })
+
+            project_summaries.append({
+                "project_id": pid,
+                "project_name": project.get("name", ""),
+                "target_name": target_name,
+                "new_intel": project_new,
+            })
+
+        logger.info(
+            f"[search_cycle] domain={db_slug} projects={len(project_summaries)} "
+            f"new_intel={total_new} llm_calls={llm_calls}"
+        )
+        acc.update({
+            "status": "success",
+            "projects_processed": len(project_summaries),
+            "new_intel": total_new,
+            "llm_calls": llm_calls,
+            "intel_items": intel_items,
         })
-
-    logger.info(
-        f"[search_cycle] domain={db_slug} projects={len(project_summaries)} "
-        f"new_intel={total_new} llm_calls={llm_calls}"
-    )
-    return {
-        "domain": db_slug,
-        "projects_processed": len(project_summaries),
-        "new_intel": total_new,
-        "llm_calls": llm_calls,
-        "project_summaries": project_summaries,
-    }
+        return {
+            "domain": db_slug,
+            "projects_processed": len(project_summaries),
+            "new_intel": total_new,
+            "llm_calls": llm_calls,
+            "run_id": run_id,
+            "intel": intel_items,
+            "project_summaries": project_summaries,
+        }
+    except Exception as e:
+        logger.exception(f"[search_cycle] cycle failed: {e}")
+        acc["status"] = "failed"
+        acc["error_msg"] = f"{type(e).__name__}: {e}"[:500]
+        raise
+    finally:
+        if run_id:
+            try:
+                record_search_run_end(
+                    db_path, run_id, acc["status"],
+                    projects_processed=acc["projects_processed"],
+                    new_intel=acc["new_intel"],
+                    llm_calls=acc["llm_calls"],
+                    intel_items=acc["intel_items"],
+                    duration_sec=int(time.time() - t0),
+                    error_msg=acc["error_msg"],
+                )
+            except Exception as e:
+                logger.warning(f"[search_cycle] failed to record run end: {e}")
 
 
 # ── Manual trigger ──────────────────────────────────────────
 
 def trigger_search_once() -> dict:
-    """Synchronously run one search cycle (for API manual trigger)."""
-    return run_search_cycle()
+    """Synchronously run one search cycle (used by the scheduler / tests)."""
+    return run_search_cycle(trigger_type='manual')
+
+
+def trigger_search_async() -> dict:
+    """Start one manual search cycle in a background thread, return immediately.
+
+    A full cycle can exceed gunicorn's worker timeout (~120s), so the manual
+    API trigger must not block the request. The cycle runs in a daemon thread;
+    its result is recorded in the search_run history (visible via
+    /api/system/search/runs).
+    """
+    import threading
+
+    def _worker():
+        try:
+            result = run_search_cycle(trigger_type='manual')
+            logger.info(f"[search_cycle] manual run done: {result}")
+        except Exception as e:
+            logger.exception(f"[search_cycle] manual run failed: {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"ok": True, "started": True}

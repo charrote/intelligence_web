@@ -15,7 +15,7 @@
 <script src="js/auth.js"></script>
 <script src="js/init.js"></script>
 <style>
-.main{padding:24px 28px;max-width:720px;margin:0 auto}
+.main{padding:24px 28px;max-width:1180px;margin:0 auto}
 h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
 .sub{font-size:13px;color:var(--gray-400);margin-bottom:24px}
 
@@ -42,6 +42,7 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
 .toast{position:fixed;top:70px;right:24px;padding:10px 18px;border-radius:var(--radius);font-size:13px;z-index:999;animation:slideIn 0.2s ease}
 .toast.success{background:var(--green);color:#fff}
 .toast.error{background:var(--red);color:#fff}
+.toast.info{background:var(--gray-600);color:#fff}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0}
 .toggle-row .label{font-size:13px;color:var(--gray-700)}
@@ -88,6 +89,44 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
 .mcp-tools-table tr:last-child td{border-bottom:none}
 .mcp-tools-table tr:hover td{background:var(--gray-50)}
 .mcp-tools-table .tool-name{font-weight:500;color:var(--accent)}
+
+/* 情报搜刮调度履历 */
+.search-history{margin-top:20px;border-top:1px solid var(--gray-200);padding-top:16px}
+.sh-head{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+.sh-title{font-size:14px;font-weight:600;color:var(--gray-800)}
+.sh-sub{font-size:12px;color:var(--gray-400)}
+.sh-table-wrap{overflow-x:auto;border:1px solid var(--gray-200);border-radius:var(--radius);max-height:440px;overflow-y:auto}
+.sh-table{width:100%;min-width:0}
+.sh-table th{white-space:nowrap}
+.sh-table .empty{text-align:center;color:var(--gray-400);padding:24px 10px}
+.sh-table td.time{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--gray-600)}
+.sh-table .sh-trigger{white-space:nowrap}
+.sh-tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:500;white-space:nowrap}
+.sh-tag.t-scheduled{color:var(--accent);background:var(--accent-light)}
+.sh-tag.t-manual{color:#722ed1;background:#f0e6ff}
+.sh-status{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-weight:500}
+.sh-status .dot{width:7px;height:7px;border-radius:50%}
+.sh-status.st-success{color:var(--green)}
+.sh-status.st-success .dot{background:var(--green)}
+.sh-status.st-failed{color:var(--red)}
+.sh-status.st-failed .dot{background:var(--red)}
+.sh-status.st-running{color:#d97706}
+.sh-status.st-running .dot{background:#d97706}
+.sh-status.st-skipped{color:var(--gray-400)}
+.sh-status.st-skipped .dot{background:var(--gray-300)}
+.sh-count{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--gray-500)}
+.sh-count b{color:var(--gray-800)}
+/* 产出情报：计数 + 情报标题链接（超长自动省略号，hover 显示全名+来源） */
+.sh-intel{min-width:160px}
+.sh-intel > b{display:inline-block;margin-bottom:3px;font-size:12px;color:var(--gray-700)}
+.sh-intel .i-empty{color:var(--gray-300);font-size:12px}
+.sh-intel a{display:block;max-width:100%;font-size:12px;color:var(--accent);text-decoration:none;line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sh-intel a:hover{text-decoration:underline}
+.sh-intel a .i-proj{color:var(--gray-400);font-size:11px}
+.sh-intel .i-more{display:block;font-size:11px;color:var(--gray-400);cursor:pointer;margin-top:2px}
+.sh-intel .i-more:hover{color:var(--accent)}
+.sh-foot{display:flex;align-items:center;gap:12px;margin-top:10px}
+.sh-hint{font-size:12px;color:var(--gray-400)}
 
 .form-row{display:flex;gap:12px}
 .form-row .form-group{flex:1}
@@ -521,6 +560,37 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
           <button class="btn btn-primary" onclick="saveSearchSettings()">保存搜刮配置</button>
           <button class="btn btn-ghost" onclick="triggerSearchCycle()" id="triggerSearchBtn">立即搜刮一次</button>
         </div>
+
+        <!-- 调度履历简报 -->
+        <div class="search-history">
+          <div class="sh-head">
+            <span class="sh-title">调度履历</span>
+            <span class="sh-sub" id="searchHistoryMeta">加载中…</span>
+          </div>
+          <div class="sh-table-wrap">
+            <table class="mcp-tools-table sh-table">
+              <thead>
+                <tr>
+                  <th>开始</th>
+                  <th>结束</th>
+                  <th>域</th>
+                  <th>触发</th>
+                  <th>结果</th>
+                  <th>耗时</th>
+                  <th>项目 / 新增 / LLM</th>
+                  <th>产出情报</th>
+                </tr>
+              </thead>
+              <tbody id="searchHistoryBody">
+                <tr><td colspan="8" class="empty">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="sh-foot">
+            <button class="btn btn-ghost btn-sm" onclick="loadSearchRuns()">刷新</button>
+            <span class="sh-hint" id="searchHistoryNote"></span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -571,6 +641,7 @@ function switchSettingsTab(tab) {
     document.getElementById('pane-scheduler').classList.add('active');
     loadSchedulerSettings();
     loadSearchSettings();
+    loadSearchRuns();
   } else if (tab === 'mcp') {
     document.getElementById('pane-mcp').classList.add('active');
     loadMcpInfo();
@@ -590,8 +661,9 @@ function switchSettingsTab(tab) {
 function detectInitialTab() {
   var params = new URLSearchParams(window.location.search);
   var tab = params.get('tab');
-  if (tab === 'system') {
-    switchSettingsTab('system');
+  if (tab === 'system' || tab === 'scheduler' || tab === 'mcp' ||
+      tab === 'infra' || tab === 'domains') {
+    switchSettingsTab(tab);
   }
 }
 
@@ -938,17 +1010,192 @@ async function triggerSearchCycle() {
     var r = await apiFetch(systemApiBase() + '/api/system/search/trigger', { method: 'POST' });
     var res;
     try { res = await r.json(); } catch(e) { res = {}; }
-    if (r.ok) {
-      var msg = '搜刮完成：' + (res.projects_processed || 0) + ' 个项目，新增 ' + (res.new_intel || 0) + ' 条情报，LLM 调用 ' + (res.llm_calls || 0) + ' 次';
-      showToast(msg, 'success');
-    } else {
-      showToast(res.error || ('HTTP ' + r.status + ' 失败'), 'error');
+    if (!r.ok) {
+      showToast(res.error || ('HTTP ' + r.status + ' 触发失败'), 'error');
+      return; // finally 恢复按钮
     }
+    // 异步执行：立即返回，轮询调度履历直到本轮 manual 运行结束
+    showToast('搜刮已启动，正在后台运行…', 'info');
+    loadSearchRuns();
+    await _pollManualRun();
   } catch(e) {
     showToast('网络错误: ' + e.message, 'error');
   } finally {
     btn.textContent = origText;
     btn.disabled = false;
+  }
+}
+
+// 轮询调度履历：等待本轮（触发后产生的）manual 运行从 running → 终态
+function _pollManualRun() {
+  return new Promise(function(resolve){
+    var maxTries = 60;   // ~5 分钟上限
+    var curDomain = (localStorage.getItem('domainPort') === '8767') ? 'intelligence_sales' : 'intelligence_web';
+    var startedAfter = new Date().toISOString(); // 只认触发后产生的记录
+    function tick(n) {
+      apiFetch(systemApiBase() + '/api/system/search/runs?limit=10')
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(data){
+          if (!data) { resolve(); return; }
+          var runs = data.runs || [];
+          // 找当前域、触发后开始、最新的一条 manual 运行
+          var mine = null;
+          for (var i = 0; i < runs.length; i++) {
+            var run = runs[i];
+            if (run.domain === curDomain && run.trigger_type === 'manual' &&
+                (run.started_at || '') >= startedAfter) {
+              if (!mine || (run.started_at || '') > (mine.started_at || '')) mine = run;
+            }
+          }
+
+          if (mine && mine.status !== 'running') {
+            // 本轮运行已到达终态
+            loadSearchRuns();
+            if (mine.status === 'success') {
+              showToast('搜刮完成：' + (mine.projects_processed||0) + ' 个项目，新增 ' + (mine.new_intel||0) + ' 条情报', 'success');
+            } else {
+              showToast('搜刮失败：' + (mine.error_msg || mine.status), 'error');
+            }
+            resolve();
+            return;
+          }
+          if (mine && mine.status === 'running') {
+            if (n < maxTries) setTimeout(function(){ tick(n+1); }, 5000);
+            else { showToast('搜刮仍在运行，稍后可刷新查看', 'info'); loadSearchRuns(); resolve(); }
+            return;
+          }
+          // 本轮运行仍未出现在记录里
+          if (n < maxTries) setTimeout(function(){ tick(n+1); }, 5000);
+          else { loadSearchRuns(); resolve(); }
+        })
+        .catch(function(){ loadSearchRuns(); resolve(); });
+    }
+    setTimeout(function(){ tick(0); }, 3000); // 给 worker 一点启动时间
+  });
+}
+
+// ── 情报搜刮调度履历 ──
+var __shCache = {};   // run.id -> {domain, items:[...]}（展开/收起复用）
+
+function shFmtTime(iso) {
+  if (!iso) return '-';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  function p(n){ return String(n).padStart(2,'0'); }
+  return p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function shStatusHtml(s) {
+  var map = {
+    'success': ['st-success', '成功'],
+    'failed':  ['st-failed', '失败'],
+    'running': ['st-running', '运行中'],
+    'skipped': ['st-skipped', '跳过']
+  };
+  var m = map[s] || ['st-skipped', s || '-'];
+  return '<span class="sh-status ' + m[0] + '"><span class="dot"></span>' + escapeHtml(m[1]) + '</span>';
+}
+
+// 打开情报详情：本域情报走工作台详情面板；跨域情报降级为打开来源链接
+function goIntelDetail(runDomain, intelId, title, url) {
+  if (window.parent === window) {
+    if (url) window.open(url, '_blank');
+    return;
+  }
+  var curDomain = (localStorage.getItem('domainPort') === '8767') ? 'intelligence_sales' : 'intelligence_web';
+  if (runDomain === curDomain) {
+    localStorage.setItem('qm_open_intel', String(intelId));
+    window.parent.openTab('');
+  } else if (url) {
+    window.open(url, '_blank');
+  } else {
+    showToast('跨域情报：请切换到对应域查看', 'info');
+  }
+}
+
+function shIntelLinkHtml(run, it) {
+  var label = escapeHtml(it.title || ('情报 #' + it.intel_id));
+  if (it.project) label += ' <span class="i-proj">' + escapeHtml(it.project) + '</span>';
+  var args = JSON.stringify({
+    domain: run.domain, id: it.intel_id, title: it.title, url: it.url
+  }).replace(/"/g, '&quot;');
+  var titleAttr = ' title="' + escapeHtml(it.url ? it.title + '（' + it.url + '）' : (it.title || '')) + '"';
+  // 有来源 URL：真实超链接（新标签页打开原文）+ 点击时同时定位系统内详情
+  if (it.url) {
+    return '<a' + titleAttr + ' href="' + escapeHtml(it.url) + '" target="_blank" rel="noopener" onclick="shOpenIntel(' + args + ');">' + label + '</a>';
+  }
+  // 无 URL：仅定位系统内详情
+  return '<a' + titleAttr + ' href="javascript:void(0)" onclick="shOpenIntel(' + args + ');">' + label + '</a>';
+}
+
+function shIntelHtml(run, full) {
+  var items = run.intel || [];
+  var n = items.length;
+  __shCache[run.id] = { domain: run.domain, items: items };
+  if (!n) return '<span class="i-empty">无新增</span>';
+  var shown = full ? items : items.slice(0, 3);
+  var html = '<b>' + n + ' 条</b>';
+  shown.forEach(function(it){
+    html += shIntelLinkHtml(run, it);
+  });
+  if (!full && n > 3) {
+    html += '<span class="i-more" onclick="shToggle(' + run.id + ',true)">展开全部 ' + n + ' 条</span>';
+  } else if (full && n > 3) {
+    html += '<span class="i-more" onclick="shToggle(' + run.id + ',false)">收起</span>';
+  }
+  return html;
+}
+
+// 重新渲染某条运行记录的"产出情报"单元格（展开/收起）
+function shToggle(runId, full) {
+  var cell = document.querySelector('#shrun_' + runId + ' .sh-intel');
+  var cache = __shCache[runId];
+  if (cell && cache) {
+    cell.innerHTML = shIntelHtml({ id: runId, domain: cache.domain, intel: cache.items }, full);
+  }
+}
+
+function shOpenIntel(p) { goIntelDetail(p.domain, p.id, p.title, p.url); }
+
+async function loadSearchRuns() {
+  var body = document.getElementById('searchHistoryBody');
+  var meta = document.getElementById('searchHistoryMeta');
+  var note = document.getElementById('searchHistoryNote');
+  if (body) body.innerHTML = '<tr><td colspan="8" class="empty">加载中…</td></tr>';
+  try {
+    var r = await apiFetch(systemApiBase() + '/api/system/search/runs?limit=30');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    var runs = data.runs || [];
+    if (!runs.length) {
+      if (body) body.innerHTML = '<tr><td colspan="8" class="empty">暂无调度履历 — 触发一次搜刮后这里会记录每轮的开始/结束、结果与产出的情报</td></tr>';
+    } else {
+      var html = '';
+      runs.forEach(function(run){
+        html += '<tr id="shrun_' + run.id + '">'
+          + '<td class="time">' + shFmtTime(run.started_at) + '</td>'
+          + '<td class="time">' + shFmtTime(run.completed_at) + '</td>'
+          + '<td class="sh-trigger">' + escapeHtml(run.domain_label || run.domain || '-') + '</td>'
+          + '<td class="sh-trigger"><span class="sh-tag t-' + (run.trigger_type === 'manual' ? 'manual' : 'scheduled') + '">' + (run.trigger_type === 'manual' ? '手动' : '定时') + '</span></td>'
+          + '<td>' + shStatusHtml(run.status) + '</td>'
+          + '<td class="time">' + (run.duration_sec != null ? run.duration_sec + 's' : '-') + '</td>'
+          + '<td class="sh-count">' + (run.projects_processed||0) + ' / <b>' + (run.new_intel||0) + '</b> / ' + (run.llm_calls||0) + '</td>'
+          + '<td class="sh-intel">' + shIntelHtml(run, false) + '</td>'
+          + '</tr>';
+      });
+      if (body) body.innerHTML = html;
+    }
+    if (meta) meta.textContent = runs.length ? ('最近 ' + runs.length + ' 次运行') : '';
+    // 来源可用性提示（跨域降级时提示）
+    var src = data.sources || {};
+    var salesBad = src.sales && src.sales.indexOf('unavailable') === 0;
+    if (note) {
+      note.textContent = salesBad ? '销售域暂不可达（' + src.sales + '），仅显示本域记录' : '';
+      note.style.display = salesBad ? '' : 'none';
+    }
+  } catch(e) {
+    if (body) body.innerHTML = '<tr><td colspan="8" class="empty">加载失败：' + escapeHtml(e.message || e) + '</td></tr>';
+    if (meta) meta.textContent = '';
   }
 }
 
