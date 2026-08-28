@@ -104,7 +104,9 @@ def create_app(project_root, spec):
     init_db(project_root, spec)
     
     # --- Migrate (create new tables for projects/datasources/target_types) ---
-    migrate_db(db_path)
+    # Pass the domain key so the empty-DB built-in seed creates only THIS domain's
+    # built-in rule/template (never a cross-domain record).
+    migrate_db(db_path, domain_key=spec.get("domain_key"))
 
     # --- Seed demo data (research domain, empty db only) ---
     _seed_research_demos(db_path, spec)
@@ -2798,15 +2800,26 @@ def create_app(project_root, spec):
     @app.route('/api/extract/rules', methods=['POST'])
     @require_auth
     def create_extract_rule():
-        """Create a new extraction rule."""
+        """Create a new extraction rule.
+
+        Domain is SERVER-ENFORCED: the rule always belongs to THIS domain
+        (spec['domain_key']). A client-supplied domain value is ignored, and a
+        value pointing at another domain is rejected outright — cross-domain
+        configuration is not allowed.
+        """
         data = request.get_json()
+        if not data or not data.get("name"):
+            return jsonify({"error": "规则名称为必填项"}), 400
+        _dom = (data.get("domain") or "").strip()
+        if _dom and _dom != spec.get("domain_key"):
+            return jsonify({"error": "跨域配置被禁止：抽取规则只能属于本域（%s）" % spec.get("domain_key")}), 400
         now = _now_iso()
         with get_db(db_path) as conn:
             cursor = conn.execute(
                 """INSERT INTO intel_extraction_rule
                    (name, domain, description, scope, max_fields, enabled, built_in, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)""",
-                (data.get("name", ""), data.get("domain", "research"),
+                (data.get("name", ""), spec.get("domain_key"),
                  data.get("description", ""), data.get("scope", "full"),
                  data.get("max_fields", 15),
                  1 if data.get("enabled", True) else 0,
@@ -2854,15 +2867,23 @@ def create_app(project_root, spec):
     @app.route('/api/extract/rules/<int:rule_id>', methods=['PUT'])
     @require_auth
     def update_extract_rule(rule_id):
-        """Update extraction rule (replace fields)."""
+        """Update extraction rule (replace fields).
+
+        Domain is SERVER-ENFORCED: the rule always stays in THIS domain
+        (spec['domain_key']). A client-supplied domain value pointing at another
+        domain is rejected outright — cross-domain reassignment is not allowed.
+        """
         data = request.get_json()
+        _dom = (data.get("domain") or "").strip()
+        if _dom and _dom != spec.get("domain_key"):
+            return jsonify({"error": "跨域配置被禁止：抽取规则只能属于本域（%s）" % spec.get("domain_key")}), 400
         with get_db(db_path) as conn:
             conn.execute(
                 """UPDATE intel_extraction_rule SET
                    name=?, domain=?, description=?, scope=?, max_fields=?,
                    enabled=?, updated_at=?
                    WHERE id=?""",
-                (data.get("name"), data.get("domain", "research"),
+                (data.get("name"), spec.get("domain_key"),
                  data.get("description", ""), data.get("scope", "full"),
                  data.get("max_fields", 15),
                  1 if data.get("enabled", True) else 0,
@@ -2954,8 +2975,18 @@ def create_app(project_root, spec):
     @app.route('/api/reports/templates', methods=['POST'])
     @require_auth
     def create_report_template():
-        """Create a report template."""
+        """Create a report template.
+
+        Domain is SERVER-ENFORCED: the template always belongs to THIS domain
+        (spec['domain_key']). A client-supplied domain value pointing at another
+        domain is rejected outright — cross-domain configuration is not allowed.
+        """
         data = request.get_json()
+        if not data or not data.get("name"):
+            return jsonify({"error": "报告名称为必填项"}), 400
+        _dom = (data.get("domain") or "").strip()
+        if _dom and _dom != spec.get("domain_key"):
+            return jsonify({"error": "跨域配置被禁止：报告模板只能属于本域（%s）" % spec.get("domain_key")}), 400
         now = _now_iso()
         with get_db(db_path) as conn:
             rule = conn.execute(
@@ -2970,7 +3001,7 @@ def create_app(project_root, spec):
                     chart_config, prompt_template, schedule_minutes, lookback_days,
                     enabled, next_run, status, built_in, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)""",
-                (data.get("domain", "research"), data.get("name"),
+                (spec.get("domain_key"), data.get("name"),
                  data.get("description", ""), data.get("rule_id"),
                  data.get("group_by", "entity_name"),
                  json.dumps(data.get("metrics", [])),
@@ -3007,8 +3038,16 @@ def create_app(project_root, spec):
     @app.route('/api/reports/templates/<int:template_id>', methods=['PUT'])
     @require_auth
     def update_report_template(template_id):
-        """Update report template."""
+        """Update report template.
+
+        Domain is SERVER-ENFORCED: the template always stays in THIS domain
+        (spec['domain_key']). A client-supplied domain value pointing at another
+        domain is rejected outright — cross-domain reassignment is not allowed.
+        """
         data = request.get_json()
+        _dom = (data.get("domain") or "").strip()
+        if _dom and _dom != spec.get("domain_key"):
+            return jsonify({"error": "跨域配置被禁止：报告模板只能属于本域（%s）" % spec.get("domain_key")}), 400
         with get_db(db_path) as conn:
             conn.execute(
                 """UPDATE intel_aggregate SET
@@ -3016,7 +3055,7 @@ def create_app(project_root, spec):
                    metrics=?, filters=?, chart_config=?, prompt_template=?,
                    schedule_minutes=?, lookback_days=?, enabled=?, updated_at=?
                    WHERE id=?""",
-                (data.get("domain"), data.get("name"), data.get("description", ""),
+                (spec.get("domain_key"), data.get("name"), data.get("description", ""),
                  data.get("rule_id"), data.get("group_by", "entity_name"),
                  json.dumps(data.get("metrics", [])),
                  json.dumps(data.get("filters", [])),

@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 
-from core.db import get_db, get_setting, get_db_path
+from core.db import get_db, get_setting, get_db_path, get_engine_domain_key
 from core.scheduler.llm_client import call_llm, parse_json_from_response
 from core.scheduler.prompt_renderer import render_report_prompt
 from core.scheduler.sql_aggregator import aggregate
@@ -61,6 +61,11 @@ def run_scheduled_reports(db_path: str) -> dict:
         templates = conn.execute(
             "SELECT * FROM intel_aggregate WHERE enabled = 1 AND status != 'fused' ORDER BY next_run"
         ).fetchall()
+        # Cross-domain guard: run only templates belonging to THIS domain's own key.
+        # A stray cross-domain row can never be executed for this domain.
+        _own = get_engine_domain_key(conn)
+        if _own is not None:
+            templates = [t for t in templates if t["domain"] == _own]
 
         for tmpl in templates:
             next_run = _parse_dt(tmpl["next_run"])

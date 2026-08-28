@@ -448,6 +448,37 @@ def _seed_research_demos(db_path, spec):
     return inserted
 
 
+def get_engine_domain_key(conn):
+    """Return the domain key the running engine should operate on (this DB's own domain).
+
+    Used as a cross-domain guard by the extraction / report engines: rules and
+    templates are filtered to this key so a stray cross-domain row can never be
+    applied to this domain's data.
+
+    Resolution order:
+      1. DOMAIN_KEY env var (authoritative — set per container, same pattern as
+         ANALYZER_DB_SLUG).
+      2. Fallback: the single domain value present in this DB's rule/template
+         tables (each DB holds exactly one domain's records, enforced by the
+         per-domain seed + server-forced writes).
+    Returns None when it cannot be determined (guard then degrades to no-filter).
+    """
+    import os
+    env_key = os.environ.get("DOMAIN_KEY")
+    if env_key:
+        return env_key
+    try:
+        row = conn.execute("SELECT DISTINCT domain FROM intel_extraction_rule LIMIT 1").fetchone()
+        if row and row[0] is not None:
+            return row[0]
+        row2 = conn.execute("SELECT DISTINCT domain FROM intel_aggregate LIMIT 1").fetchone()
+        if row2 and row2[0] is not None:
+            return row2[0]
+    except Exception:
+        return None
+    return None
+
+
 @contextmanager
 def get_db(db_path):
     conn = sqlite3.connect(db_path, timeout=30)
@@ -1566,11 +1597,16 @@ def _record_counts(db_path):
     return counts
 
 
-def migrate_db(db_path):
+def migrate_db(db_path, domain_key=None):
     """Create the projects / datasources / project_datasources tables if missing.
 
     Safe to call on every startup — uses CREATE TABLE IF NOT EXISTS.
     Backs up the database before migration and verifies data integrity after.
+
+    domain_key: this domain's canonical key (e.g. 'research' / 'sales'). The built-in
+    extraction rule + report template seeded for an EMPTY database is chosen by this
+    key, so each domain only ever gets its OWN built-ins and a cross-domain record can
+    never be seeded into the wrong DB.
     """
     # Step 1: Backup before migration
     backup_path = _backup_db(db_path)
@@ -1952,73 +1988,71 @@ def migrate_db(db_path):
                 c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_status ON ai_analysis_run(status)')
 
 
-                # Seed built-in rules (only if table is empty)
+                # Seed built-in rules/templates for THIS domain only (empty db).
+                # Each domain gets exactly its own built-in, so no cross-domain
+                # record is ever seeded into the wrong database.
+                _BUILTIN_SEEDS = {
+                    "research": {
+                        "rule": ("厂商市场数据", "从情报中抽取厂商市场相关结构化数据", "full",
+                                 [("company_name", "厂商名称", "company", 1),
+                                  ("market_share", "市场份额", "pct", 0),
+                                  ("market_size", "市场规模", "currency", 0),
+                                  ("currency", "币种", "currency_code", 0),
+                                  ("country", "国家/地区", "location", 0),
+                                  ("year", "年份", "year", 0),
+                                  ("growth_rate", "增长率", "pct", 0),
+                                  ("data_source", "数据来源", "text", 0)]),
+                        "template": ("市场份额概览", "基于市场数据生成市场份额分析报告",
+                                     [{"field_key": "market_share", "agg": "avg", "unit": "%"},
+                                      {"field_key": "market_size", "agg": "sum", "unit": "USD"},
+                                      {"field_key": "growth_rate", "agg": "avg", "unit": "%"}],
+                                     '你是一个情报分析师。请基于以下已聚合的数据，撰写市场份额分析报告。\\n\\n【报告名称】{{ report_name }}\\n【分析范围】{{ start_date }} 至 {{ end_date }}\\n【参与分析的数据】{{ fact_count }} 条结构化事实\\n\\n=== 数据聚合结果 ===\\n{{ aggregated_data }}\\n\\n=== 图表数据 ===\\n{{ chart_data }}\\n\\n请按 JSON 格式返回：\\n{\\n  "analysis": "文字分析内容（不少于 200 字，描述市场份额分布、趋势变化、关键厂商对比...）",\\n  "summary": "一段话总结市场份额核心发现..."\\n}'),
+                    },
+                    "sales": {
+                        "rule": ("竞争情报摘要", "从情报中抽取竞争对手动态和竞争情报", "full+tables",
+                                 [("competitor_name", "竞争对手名称", "company", 1),
+                                  ("action_type", "动作类型", "text", 1),
+                                  ("action_desc", "动作描述", "text", 0),
+                                  ("market_impact", "市场影响", "text", 0),
+                                  ("date", "事件日期", "date", 0),
+                                  ("source", "信息来源", "text", 0)]),
+                        "template": ("竞争情报摘要", "基于竞争情报数据生成竞争态势摘要",
+                                     [{"field_key": "competitor_name", "agg": "count", "unit": ""}],
+                                     '你是竞争情报分析员。请基于以下数据，撰写竞争情报摘要。\\n\\n【报告名称】{{ report_name }}\\n【分析范围】{{ start_date }} 至 {{ end_date }}\\n【参与分析的数据】{{ fact_count }} 条结构化事实\\n\\n=== 数据聚合结果 ===\\n{{ aggregated_data }}\\n\\n=== 图表数据 ===\\n{{ chart_data }}\\n\\n请按 JSON 格式返回：\\n{\\n  "analysis": "文字分析内容（不少于 200 字，描述竞争对手最新动态、市场影响、趋势判断...）",\\n  "summary": "一段话总结竞争情报核心发现..."\\n}'),
+                    },
+                }
+
                 try:
                     rule_count = c.execute('SELECT COUNT(*) FROM intel_extraction_rule').fetchone()[0]
                 except Exception:
                     rule_count = 0
 
-                if rule_count == 0:
+                seed = _BUILTIN_SEEDS.get(domain_key)
+                if rule_count == 0 and seed is not None:
                     now = datetime.now().isoformat()
+                    _key = domain_key
 
-                    # Insert rules and capture their auto-generated IDs
+                    # Insert the domain's built-in rule + its fields
+                    rname, rdesc, rscope, rfields = seed["rule"]
                     c.execute(
                         'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        ('research', '厂商市场数据', '从情报中抽取厂商市场相关结构化数据', 'full', 15, 1, 1, now, now)
+                        (_key, rname, rdesc, rscope, 15, 1, 1, now, now)
                     )
-                    rule1_id = c.lastrowid
-
-                    c.execute(
-                        'INSERT INTO intel_extraction_rule (domain, name, description, scope, max_fields, enabled, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        ('sales', '竞争情报摘要', '从情报中抽取竞争对手动态和竞争情报', 'full+tables', 15, 1, 1, now, now)
-                    )
-                    rule2_id = c.lastrowid
-
-                    # Seed fields for Rule 1: 厂商市场数据
-                    rule1_fields = [
-                        (rule1_id, 'company_name', '厂商名称', 'company', 1, '', 1, ''),
-                        (rule1_id, 'market_share', '市场份额', 'pct', 0, '', 2, ''),
-                        (rule1_id, 'market_size', '市场规模', 'currency', 0, '', 3, ''),
-                        (rule1_id, 'currency', '币种', 'currency_code', 0, '', 4, ''),
-                        (rule1_id, 'country', '国家/地区', 'location', 0, '', 5, ''),
-                        (rule1_id, 'year', '年份', 'year', 0, '', 6, ''),
-                        (rule1_id, 'growth_rate', '增长率', 'pct', 0, '', 7, ''),
-                        (rule1_id, 'data_source', '数据来源', 'text', 0, '', 8, ''),
-                    ]
-                    for f in rule1_fields:
+                    rule_id = c.lastrowid
+                    for i, (fkey, flabel, ftype, freq) in enumerate(rfields, start=1):
                         c.execute(
                             'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                            f
+                            (rule_id, fkey, flabel, ftype, freq, '', i, '')
                         )
 
-                    # Seed fields for Rule 2: 竞争情报摘要
-                    rule2_fields = [
-                        (rule2_id, 'competitor_name', '竞争对手名称', 'company', 1, '', 1, ''),
-                        (rule2_id, 'action_type', '动作类型', 'text', 1, '', 2, ''),
-                        (rule2_id, 'action_desc', '动作描述', 'text', 0, '', 3, ''),
-                        (rule2_id, 'market_impact', '市场影响', 'text', 0, '', 4, ''),
-                        (rule2_id, 'date', '事件日期', 'date', 0, '', 5, ''),
-                        (rule2_id, 'source', '信息来源', 'text', 0, '', 6, ''),
-                    ]
-                    for f in rule2_fields:
-                        c.execute(
-                            'INSERT INTO intel_extraction_field (rule_id, field_key, field_label, field_type, is_required, default_value, sort_order, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                            f
-                        )
-
-                    # Seed built-in report templates
+                    # Seed the domain's built-in report template
                     next_run = (datetime.now() + timedelta(minutes=10)).isoformat()
+                    tname, tdesc, tmetrics, tprompt = seed["template"]
                     c.execute(
                         'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        ('research', '市场份额概览', '基于市场数据生成市场份额分析报告', rule1_id, 'entity_name', '[{"field_key":"market_share","agg":"avg","unit":"%"},{"field_key":"market_size","agg":"sum","unit":"USD"},{"field_key":"growth_rate","agg":"avg","unit":"%"}]', '[]', '[]',
-                         '你是一个情报分析师。请基于以下已聚合的数据，撰写市场份额分析报告。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述市场份额分布、趋势变化、关键厂商对比...）",\n  "summary": "一段话总结市场份额核心发现..."\n}',
-                         1440, 30, 1, next_run, 'active', 0, 0, now, now)
-                    )
-                    c.execute(
-                        'INSERT INTO intel_aggregate (domain, name, description, rule_id, group_by, metrics, filters, chart_config, prompt_template, schedule_minutes, lookback_days, enabled, next_run, status, fail_count, built_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        ('sales', '竞争情报摘要', '基于竞争情报数据生成竞争态势摘要', rule2_id, 'entity_name', '[{"field_key":"competitor_name","agg":"count","unit":""}]', '[]', '[]',
-                         '你是竞争情报分析员。请基于以下数据，撰写竞争情报摘要。\n\n【报告名称】{{ report_name }}\n【分析范围】{{ start_date }} 至 {{ end_date }}\n【参与分析的数据】{{ fact_count }} 条结构化事实\n\n=== 数据聚合结果 ===\n{{ aggregated_data }}\n\n=== 图表数据 ===\n{{ chart_data }}\n\n请按 JSON 格式返回：\n{\n  "analysis": "文字分析内容（不少于 200 字，描述竞争对手最新动态、市场影响、趋势判断...）",\n  "summary": "一段话总结竞争情报核心发现..."\n}',
-                         1440, 30, 1, next_run, 'active', 0, 0, now, now)
+                        (_key, tname, tdesc, rule_id, 'entity_name',
+                         json.dumps(tmetrics, ensure_ascii=False), '[]', '[]',
+                         tprompt, 1440, 30, 1, next_run, 'active', 0, 0, now, now)
                     )
 
                 conn.commit()

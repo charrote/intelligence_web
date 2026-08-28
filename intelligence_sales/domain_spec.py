@@ -11,6 +11,7 @@ SPEC = build_spec(
     theme_color="#1890ff",
     inbox_rel="../sales_inbox/",
     db_filename="intelligence_sales",
+    domain_key="sales",
 
     statuses=[
         ("pending", "待核实"),

@@ -19,6 +19,7 @@ SPEC = build_spec(
     theme_color="#722ed1",
     inbox_rel="../inbox/",
     db_filename="intelligence",
+    domain_key="research",
 
     default_data_sources=[
         {"name": "智能制造产业联盟", "type": "website", "url": "https://www.afmii.org.cn",

@@ -74,13 +74,6 @@
 
   <!-- Filter Toolbar -->
   <div class="toolbar">
-    <select id="filterDomain" onchange="loadTemplates()">
-      <option value="">全部域</option>
-      <option value="research">research</option>
-      <option value="sales">sales</option>
-      <option value="competitive">competitive</option>
-      <option value="market">market</option>
-    </select>
     <select id="filterStatus" onchange="loadTemplates()">
       <option value="">全部状态</option>
       <option value="enabled">启用</option>
@@ -95,7 +88,7 @@
     <table>
       <thead>
         <tr>
-          <th>名称</th><th>域</th><th>关联规则</th><th>聚合维度</th><th>状态</th><th>上次成功</th><th>操作</th>
+          <th>名称</th><th>关联规则</th><th>聚合维度</th><th>状态</th><th>上次成功</th><th>操作</th>
         </tr>
       </thead>
       <tbody id="templateList"></tbody>
@@ -112,15 +105,6 @@
     <div class="form-group">
       <label>报告名称 *</label>
       <input type="text" id="ed_name" placeholder="例：市场份额概览">
-    </div>
-    <div class="form-group">
-      <label>所属域</label>
-      <select id="ed_domain">
-        <option value="research">research</option>
-        <option value="sales">sales</option>
-        <option value="competitive">competitive</option>
-        <option value="market">market</option>
-      </select>
     </div>
     <div class="form-group">
       <label>描述</label>
@@ -262,11 +246,9 @@ function runAll() {
 
 /* ── Load Templates ── */
 function loadTemplates() {
-  var domain = document.getElementById('filterDomain').value;
   var status = document.getElementById('filterStatus').value;
   var search = document.getElementById('filterSearch').value.trim();
   var params = [];
-  if (domain) params.push('domain=' + encodeURIComponent(domain));
   if (status) params.push('status=' + encodeURIComponent(status));
   if (search) params.push('search=' + encodeURIComponent(search));
 
@@ -308,7 +290,6 @@ function renderTemplates(list) {
 
     return '<tr>'
       + '<td><strong>' + escapeHtml(t.name || '—') + '</strong>' + (t.description ? '<br><span style="font-size:11px;color:var(--gray-400)">' + escapeHtml(t.description) + '</span>' : '') + '</td>'
-      + '<td>' + escapeHtml(t.domain || '—') + '</td>'
       + '<td>' + escapeHtml(ruleName) + '</td>'
       + '<td>' + escapeHtml(groupBy) + '</td>'
       + '<td>' + statusHtml + '</td>'
@@ -360,7 +341,7 @@ function populateRuleSelect(rules) {
   var sel = document.getElementById('ed_rule_id');
   sel.innerHTML = '<option value="">— 请选择抽取规则 —</option>';
   rules.forEach(function(r) {
-    sel.innerHTML += '<option value="' + r.id + '">' + escapeHtml(r.name || r.id) + (r.domain ? ' (' + r.domain + ')' : '') + '</option>';
+    sel.innerHTML += '<option value="' + r.id + '">' + escapeHtml(r.name || r.id) + '</option>';
   });
 }
 
@@ -370,7 +351,6 @@ function openCreate() {
   document.getElementById('ed_id').value = '';
   document.getElementById('ed_name').value = '';
   document.getElementById('ed_name').disabled = false;
-  document.getElementById('ed_domain').value = 'research';
   document.getElementById('ed_description').value = '';
   document.getElementById('ed_rule_id').value = '';
   document.getElementById('ed_lookback_days').value = '30';
@@ -395,7 +375,6 @@ function openEdit(id) {
     document.getElementById('ed_id').value = t.id;
     document.getElementById('ed_name').value = t.name || '';
     document.getElementById('ed_name').disabled = !!t.built_in;
-    document.getElementById('ed_domain').value = t.domain || 'research';
     document.getElementById('ed_description').value = t.description || '';
     document.getElementById('ed_rule_id').value = t.rule_id || '';
     document.getElementById('ed_lookback_days').value = t.lookback_days || '30';
@@ -527,7 +506,6 @@ function saveTemplate() {
 
   var body = {
     name: name,
-    domain: document.getElementById('ed_domain').value,
     description: document.getElementById('ed_description').value.trim(),
     rule_id: document.getElementById('ed_rule_id').value ? parseInt(document.getElementById('ed_rule_id').value) : null,
     lookback_days: parseInt(document.getElementById('ed_lookback_days').value),

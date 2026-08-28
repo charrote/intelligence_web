@@ -68,11 +68,6 @@
       <option value="active">🟢 启用</option>
       <option value="inactive">⚪ 已禁用</option>
     </select>
-    <select id="filterDomain">
-      <option value="">全部域</option>
-      <option value="research">research</option>
-      <option value="sales">sales</option>
-    </select>
     <span class="spacer"></span>
     <button class="btn btn-primary" onclick="openCreate()">+ 新建规则</button>
   </div>
@@ -82,7 +77,6 @@
       <thead>
         <tr>
           <th>名称</th>
-          <th>域</th>
           <th>状态</th>
           <th>字段数</th>
           <th>操作</th>
@@ -105,13 +99,6 @@
           <input type="text" id="ruleName" placeholder="输入规则名称">
         </div>
         <div class="form-row">
-          <div class="form-group">
-            <label>域 *</label>
-            <select id="ruleDomain">
-              <option value="research">research</option>
-              <option value="sales">sales</option>
-            </select>
-          </div>
           <div class="form-group">
             <label>范围</label>
             <select id="ruleScope">
@@ -184,10 +171,8 @@ async function init() {
 
 function renderTable() {
   var statusF = document.getElementById('filterStatus').value;
-  var domainF = document.getElementById('filterDomain').value;
   var filtered = rules;
   if (statusF) filtered = filtered.filter(function(r) { return r.enabled === (statusF === 'active'); });
-  if (domainF) filtered = filtered.filter(function(r) { return r.domain === domainF; });
 
   var html = '';
   if (!filtered.length) {
@@ -195,10 +180,8 @@ function renderTable() {
   } else {
     filtered.forEach(function(r) {
       var builtIn = r.built_in === 1 || r.built_in === true;
-      var domainLabel = r.domain === 'sales' ? 'sales' : 'research';
       html += '<tr>'
         + '<td><strong>' + escapeHtml(r.name || '-') + '</strong></td>'
-        + '<td><span class="tag">' + escapeHtml(domainLabel) + '</span></td>'
         + '<td><span class="status-dot ' + (r.enabled ? 'on' : 'off') + '"></span>' + (r.enabled ? '启用' : '停用') + '</td>'
         + '<td>' + (r.field_count || 0) + '</td>'
         + '<td class="action-cell">'
@@ -236,7 +219,6 @@ function openCreate() {
   editingId = null;
   document.getElementById('modalTitle').textContent = '新建抽取规则';
   document.getElementById('ruleName').value = '';
-  document.getElementById('ruleDomain').value = 'research';
   document.getElementById('ruleScope').value = 'full';
   document.getElementById('ruleMaxFields').value = 20;
   document.getElementById('ruleEnabled').checked = true;
@@ -255,7 +237,6 @@ async function editRule(id) {
     editingId = id;
     document.getElementById('modalTitle').textContent = '编辑抽取规则';
     document.getElementById('ruleName').value = rule.name || '';
-    document.getElementById('ruleDomain').value = rule.domain || 'research';
     document.getElementById('ruleScope').value = rule.scope || 'full';
     document.getElementById('ruleMaxFields').value = rule.max_fields || 20;
     document.getElementById('ruleEnabled').checked = rule.enabled !== false;
@@ -313,7 +294,6 @@ function removeFieldRow(btn) {
 
 async function saveRule() {
   var name = document.getElementById('ruleName').value.trim();
-  var domain = document.getElementById('ruleDomain').value;
   var scope = document.getElementById('ruleScope').value;
   var maxFields = parseInt(document.getElementById('ruleMaxFields').value) || 20;
   var enabled = document.getElementById('ruleEnabled').checked;
@@ -348,7 +328,7 @@ async function saveRule() {
     }
   });
 
-  var payload = { name: name, domain: domain, scope: scope, max_fields: maxFields, enabled: enabled, description: desc, fields: fields };
+  var payload = { name: name, scope: scope, max_fields: maxFields, enabled: enabled, description: desc, fields: fields };
 
   try {
     var method = editingId ? 'PUT' : 'POST';
@@ -409,7 +389,6 @@ async function deleteRule(id) {
 }
 
 document.getElementById('filterStatus').onchange = renderTable;
-document.getElementById('filterDomain').onchange = renderTable;
 
 init();
 </script>

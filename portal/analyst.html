@@ -203,13 +203,6 @@
             <label><input type="radio" name="lookback" value="90"> 近 90 天</label>
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">所属域</label>
-          <select class="form-select" id="domainSelect">
-            <option value="research">research</option>
-            <option value="sales">sales</option>
-          </select>
-        </div>
       </div>
 
       <div class="exec-wrap">
@@ -398,7 +391,6 @@ function toggleAdv() {
 async function quickReport() {
   var intent = document.getElementById('intentInput').value.trim();
   var lookback = document.querySelector('input[name="lookback"]:checked').value;
-  var domain = document.getElementById('domainSelect').value;
   var btn = document.getElementById('quickBtn');
   var fb = document.getElementById('genFeedback');
 
@@ -415,12 +407,10 @@ async function quickReport() {
     var res = await apiFetch(APP_API_BASE + '/api/ai/generate-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intent: intent, lookback_days: parseInt(lookback), domain: domain })
+      body: JSON.stringify({ intent: intent, lookback_days: parseInt(lookback) })
     });
     var data = await res.json();
     if (!data.ok || !data.config) throw new Error(data.error || '生成配置失败');
-    data.config.extraction_rule.domain = domain;
-    data.config.report_template.domain = domain;
     var cfg = data.config;
 
     // 2. 创建抽取规则
@@ -461,7 +451,6 @@ async function quickReport() {
 async function generateConfig() {
   var intent = document.getElementById('intentInput').value.trim();
   var lookback = document.querySelector('input[name="lookback"]:checked').value;
-  var domain = document.getElementById('domainSelect').value;
   var btn = document.getElementById('genBtn');
   var fb = document.getElementById('genFeedback');
 
@@ -486,14 +475,11 @@ async function generateConfig() {
     var res = await apiFetch(APP_API_BASE + '/api/ai/generate-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intent: intent, lookback_days: parseInt(lookback), domain: domain })
+      body: JSON.stringify({ intent: intent, lookback_days: parseInt(lookback) })
     });
     var data = await res.json();
 
     if (data.ok && data.config) {
-      // 覆盖 domain（用户选择的域优先）
-      data.config.extraction_rule.domain = domain;
-      data.config.report_template.domain = domain;
       generatedConfig = data.config;
       setGenProgress(3, '配置已生成');
       renderConfigPreview(generatedConfig);
@@ -680,7 +666,6 @@ function removeRow(btn) { btn.closest('.cfg-field, .cfg-metric, .cfg-chart').rem
 function collectConfig() {
   var rule = {
     name: document.getElementById('cfg_rule_name').value.trim(),
-    domain: generatedConfig.extraction_rule.domain,
     description: document.getElementById('cfg_rule_desc').value.trim(),
     scope: 'full',
     max_fields: 20,
@@ -699,7 +684,6 @@ function collectConfig() {
 
   var tpl = {
     name: document.getElementById('cfg_tpl_name').value.trim(),
-    domain: generatedConfig.report_template.domain,
     description: document.getElementById('cfg_tpl_desc').value.trim(),
     group_by: document.getElementById('cfg_group_by').value,
     schedule_minutes: parseInt(document.getElementById('cfg_schedule').value),
@@ -802,7 +786,7 @@ async function loadTemplates() {
       list.forEach(function(t) {
         var opt = document.createElement('option');
         opt.value = t.id;
-        opt.textContent = t.name + ' (' + (t.domain || '-') + ')';
+        opt.textContent = t.name;
         select.appendChild(opt);
       });
       updateMeta(list[0]);
@@ -817,7 +801,7 @@ async function loadTemplates() {
 
 function updateMeta(t) {
   var meta = document.getElementById('templateMeta');
-  var parts = ['域: <strong>' + (t.domain || '-') + '</strong>'];
+  var parts = [];
   if (t.schedule_time) parts.push('下次执行: ' + t.schedule_time);
   meta.innerHTML = parts.join(' | ');
 }

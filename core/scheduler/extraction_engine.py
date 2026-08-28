@@ -15,7 +15,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-from core.db import get_db, get_setting
+from core.db import get_db, get_setting, get_engine_domain_key
 from core.scheduler.llm_client import call_llm, parse_json_from_response
 from core.scheduler.prompt_renderer import render_extraction_prompt_multi
 from core.scheduler.field_extractor import extract_fields_regex
@@ -62,8 +62,13 @@ def extract_all_pending(db_path: str) -> dict:
             return {"processed": 0, "success": 0, "failed": 0}
 
         rules = conn.execute(
-            "SELECT id, name FROM intel_extraction_rule WHERE enabled = 1"
+            "SELECT id, name, domain FROM intel_extraction_rule WHERE enabled = 1"
         ).fetchall()
+        # Cross-domain guard: apply only rules belonging to THIS domain's own key.
+        # A stray cross-domain row can never be used on this domain's intelligence.
+        _own = get_engine_domain_key(conn)
+        if _own is not None:
+            rules = [r for r in rules if r["domain"] == _own]
 
         if not rules:
             # 无启用规则：整批直接标记完成
@@ -225,6 +230,7 @@ def _get_db_path() -> str:
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     db_slug = os.environ.get("ANALYZER_DB_SLUG", "intelligence")
     return get_db_path(project_root, db_slug)
+
 
 
 def _save_facts(conn, intel_id: int, rule_id: int, fields: list,
