@@ -376,7 +376,6 @@ function openEdit(id) {
     document.getElementById('ed_name').value = t.name || '';
     document.getElementById('ed_name').disabled = !!t.built_in;
     document.getElementById('ed_description').value = t.description || '';
-    document.getElementById('ed_rule_id').value = t.rule_id || '';
     document.getElementById('ed_lookback_days').value = t.lookback_days || '30';
     document.getElementById('ed_group_by').value = t.group_by || 'entity_name';
     document.getElementById('ed_enabled').checked = t.enabled !== false;
@@ -396,8 +395,8 @@ function openEdit(id) {
     document.getElementById('ed_prompt_template').value = t.prompt_template || '';
 
     populateRuleSelect(enabledRules);
-    if (document.getElementById('ed_rule_id').value) {
-      document.getElementById('ed_rule_id').value = t.rule_id;
+    if (t.rule_id) {
+      document.getElementById('ed_rule_id').value = String(t.rule_id);
     }
 
     renderMetrics(t.metrics || []);

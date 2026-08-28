@@ -3049,6 +3049,22 @@ def create_app(project_root, spec):
         if _dom and _dom != spec.get("domain_key"):
             return jsonify({"error": "跨域配置被禁止：报告模板只能属于本域（%s）" % spec.get("domain_key")}), 400
         with get_db(db_path) as conn:
+            _rule_id = data.get("rule_id")
+            if _rule_id is None:
+                # rule_id 是 NOT NULL；前端未提供时保留原值，避免写 NULL
+                row = conn.execute(
+                    "SELECT rule_id FROM intel_aggregate WHERE id = ?", (template_id,)
+                ).fetchone()
+                if not row:
+                    return jsonify({"error": "Not found"}), 404
+                _rule_id = row[0]
+            else:
+                rule = conn.execute(
+                    "SELECT id FROM intel_extraction_rule WHERE id = ? AND enabled = 1",
+                    (_rule_id,)
+                ).fetchone()
+                if not rule:
+                    return jsonify({"error": "指定的抽取规则不存在或已禁用"}), 400
             conn.execute(
                 """UPDATE intel_aggregate SET
                    domain=?, name=?, description=?, rule_id=?, group_by=?,
@@ -3056,7 +3072,7 @@ def create_app(project_root, spec):
                    schedule_minutes=?, lookback_days=?, enabled=?, updated_at=?
                    WHERE id=?""",
                 (spec.get("domain_key"), data.get("name"), data.get("description", ""),
-                 data.get("rule_id"), data.get("group_by", "entity_name"),
+                 _rule_id, data.get("group_by", "entity_name"),
                  json.dumps(data.get("metrics", [])),
                  json.dumps(data.get("filters", [])),
                  json.dumps(data.get("chart_config", [])),
