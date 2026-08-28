@@ -16,11 +16,34 @@ function formatDate(iso) {
 }
 
 // ===== 未读/已读（本地浏览器缓存，同源 iframe 共享）=====
-// 存 {id: 标记时间戳}；点开详情即标记已读；列表已读标题颜色浅一档
-var READ_KEY = 'intel_read_ids';
+// 存 {id: 标记时间戳}；点开详情即标记已读；列表已读标题颜色浅一档。
+//
+// 2026-08 起按域命名空间隔离：intel_read_ids:<port>
+// 根因：两个域各自独立的 SQLite 库，情报 ID 都从 1 开始且互相重叠
+// （制造情报 #1 与销售情报 #1 是两条不同记录）。若共用一个全局已读表，
+// 在 A 域读过的 #1 会把 B 域的 #1 也标成已读，导致工作台"未读情报"
+// 按错误状态过滤当前域的条目。按域隔离后，未读/已读严格跟随当前选择的域。
+var READ_KEY_PREFIX = 'intel_read_ids:';
+var READ_KEY_LEGACY = 'intel_read_ids'; // 旧全局 key（2026-08 前），加载时一次性清除
+
+function domainReadKey() {
+  var port = (typeof getDomainPort === 'function') ? getDomainPort() : '';
+  return READ_KEY_PREFIX + port;
+}
+
+function _migrateReadKeys() {
+  // 一次性迁移：旧全局已读表在新语义下无意义（跨域 ID 撞车），直接清除。
+  // 幂等，开销一次 getItem。
+  try {
+    if (localStorage.getItem(READ_KEY_LEGACY) != null) {
+      localStorage.removeItem(READ_KEY_LEGACY);
+    }
+  } catch (e) {}
+}
 
 function getReadMap() {
-  try { return JSON.parse(localStorage.getItem(READ_KEY)) || {}; }
+  _migrateReadKeys();
+  try { return JSON.parse(localStorage.getItem(domainReadKey())) || {}; }
   catch (e) { return {}; }
 }
 
@@ -33,7 +56,7 @@ function markRead(id) {
   var m = getReadMap();
   if (m[id]) return;
   m[id] = Date.now();
-  try { localStorage.setItem(READ_KEY, JSON.stringify(m)); } catch (e) {}
+  try { localStorage.setItem(domainReadKey(), JSON.stringify(m)); } catch (e) {}
 }
 
 // ===== 外链安全打开（情报详情超链接统一走这里）=====
