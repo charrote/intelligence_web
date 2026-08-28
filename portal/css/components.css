@@ -103,8 +103,10 @@ tr:hover td{background:var(--gray-50)}
 .tag.rss{background:var(--amber-light);color:var(--amber)}
 .tag.api{background:var(--blue-light);color:var(--blue)}
 .tag.daily{background:var(--green-light);color:var(--green)}
+.tag.hourly{background:var(--amber-light);color:var(--amber)}
 .tag.weekly{background:var(--accent-light);color:var(--accent)}
 .tag.monthly{background:var(--gray-100);color:var(--gray-600)}
+.tag.oneshot{background:var(--gray-100);color:var(--gray-400)}
 
 /* Stats Cards */
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}

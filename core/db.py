@@ -47,7 +47,7 @@ def init_db(project_root, spec):
         status_names = [s[1] for s in spec["statuses"]]
         extra_defs = " ".join(f"{c[0]} {c[1]}" for c in spec["extra_columns"])
 
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=30)
         c = conn.cursor()
 
         default_status = status_names[0] if status_names else "pending"
@@ -450,9 +450,11 @@ def _seed_research_demos(db_path, spec):
 
 @contextmanager
 def get_db(db_path):
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
+        # WAL 让并发读写不互相阻塞（调度 tick 与 web 进程/手动触发共用同一库）
+        conn.execute("PRAGMA journal_mode=WAL")
         yield conn
     finally:
         conn.close()
@@ -1606,10 +1608,16 @@ def migrate_db(db_path):
                     frequency TEXT NOT NULL DEFAULT 'weekly',
                     status TEXT NOT NULL DEFAULT 'active',
                     instruction TEXT DEFAULT '',
+                    last_search_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             ''')
+            # Migration: 存量库补 last_search_at（采集到期判定用）
+            try:
+                c.execute("ALTER TABLE projects ADD COLUMN last_search_at TEXT")
+            except Exception:
+                pass  # column already exists
 
             # Datasources table
             c.execute('''

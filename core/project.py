@@ -23,15 +23,19 @@ def _get_db(db_path):
 
 def create_project(db_path, name, target_type, target_name, scope='',
                    frequency='weekly', instruction='', datasource_ids=None):
-    """Create a new project. Optionally link existing datasource IDs."""
+    """Create a new project. Optionally link existing datasource IDs.
+
+    last_search_at 初始化为当前时间：oneshot 项目因此永远不会进入自动调度
+    （到期判定只认 >=1h 的频率）；其余项目从创建时刻起算第一个完整周期。
+    """
     now = datetime.now().isoformat()
     with _get_db(db_path) as conn:
         cursor = conn.execute(
             '''INSERT INTO projects (name, target_type, target_name, scope,
-               frequency, status, instruction, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)''',
+               frequency, status, instruction, last_search_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)''',
             (name.strip(), target_type, target_name.strip(), scope.strip(),
-             frequency, instruction or '', now, now)
+             frequency, instruction or '', now, now, now)
         )
         project_id = cursor.lastrowid
 
@@ -105,6 +109,9 @@ def get_project_by_id(db_path, project_id):
 def update_project(db_path, project_id, data):
     """Update project fields. Returns updated project or None."""
     allowed = {'name', 'target_type', 'target_name', 'scope', 'frequency', 'instruction'}
+    _FREQS = ('hourly', 'daily', 'weekly', 'monthly', 'oneshot')
+    if data.get('frequency') is not None and data.get('frequency') not in _FREQS:
+        raise ValueError(f"frequency 必须是 {_FREQS} 之一，收到 {data.get('frequency')!r}")
     updates = {k: v for k, v in data.items() if k in allowed and v is not None}
     if not updates:
         return get_project_by_id(db_path, project_id)
@@ -121,6 +128,17 @@ def update_project(db_path, project_id, data):
         conn.commit()
 
     return get_project_by_id(db_path, project_id)
+
+
+def touch_project_last_search(db_path, project_id, ts=None):
+    """记录项目最近一次自动/手动采集时间（到期判定用）。"""
+    now = (ts or datetime.now().isoformat())
+    with _get_db(db_path) as conn:
+        conn.execute(
+            'UPDATE projects SET last_search_at = ? WHERE id = ?',
+            (now, project_id)
+        )
+        conn.commit()
 
 
 def toggle_project_status(db_path, project_id, enabled):

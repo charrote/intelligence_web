@@ -51,31 +51,21 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    # 搜刮调度（从 config/search.json 读取时间）
+    # 搜刮调度（方案B：每小时 tick + 每项目到期判定，频率见 projects.frequency）
     try:
         from config import get_search_config
         scfg = get_search_config()
         if scfg.get("enabled", True):
-            h1 = int(scfg.get("cron_hour", 8))
-            h2 = int(scfg.get("cron_hour2", 14))
             scheduler.add_job(
-                func=_run_search_cycle,
-                trigger=CronTrigger(hour=h1, minute=0),
-                id="search_cycle",
+                func=_run_search_tick,
+                trigger=IntervalTrigger(hours=1),
+                id="search_tick",
                 replace_existing=True,
                 misfire_grace_time=120,
             )
-            if h2 != h1:
-                scheduler.add_job(
-                    func=_run_search_cycle,
-                    trigger=CronTrigger(hour=h2, minute=0),
-                    id="search_cycle_2",
-                    replace_existing=True,
-                    misfire_grace_time=120,
-                )
-            logger.info(f"[scheduler] search_cycle registered: {h1}:00, {h2}:00")
+            logger.info("[scheduler] search_tick registered: hourly")
     except Exception as e:
-        logger.warning(f"[scheduler] Failed to register search_cycle: {e}")
+        logger.warning(f"[scheduler] Failed to register search_tick: {e}")
 
     logger.info("Scheduler starting...")
     scheduler.start()
@@ -153,22 +143,25 @@ def _run_cleanup():
     _update_scheduler("last_cleanup_time", _now_iso())
 
 
-def _run_search_cycle():
-    """Search cycle — run self-driven intelligence search for this domain."""
-    from core.scheduler.search_cycle import run_search_cycle
+def _run_search_tick():
+    """Search tick — hourly heartbeat: only projects whose frequency is due."""
+    from core.scheduler.search_cycle import run_search_tick
 
-    logger.info("[search_cycle] Running self-driven search cycle")
+    logger.info("[search_tick] Running hourly search tick")
     try:
-        result = run_search_cycle()
-        logger.info(
-            f"[search_cycle] Done: domain={result.get('domain')}, "
-            f"projects={result.get('projects_processed')}, "
-            f"new_intel={result.get('new_intel')}, "
-            f"llm_calls={result.get('llm_calls')}"
-        )
-        _update_scheduler("last_search_time", _now_iso())
+        result = run_search_tick()
+        if result.get("skipped"):
+            logger.info(f"[search_tick] Skipped: {result.get('reason')}")
+        else:
+            logger.info(
+                f"[search_tick] Done: domain={result.get('domain')}, "
+                f"due={result.get('due')}, "
+                f"new_intel={result.get('new_intel')}, "
+                f"llm_calls={result.get('llm_calls')}"
+            )
+            _update_scheduler("last_search_time", _now_iso())
     except Exception as e:
-        logger.error(f"[search_cycle] Error: {e}")
+        logger.error(f"[search_tick] Error: {e}")
 
 
 def _update_scheduler(field: str, value):

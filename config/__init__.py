@@ -154,8 +154,6 @@ def save_tavily_config(cfg: dict):
 _SEARCH_CONFIG_PATH = Path(__file__).parent.parent / 'config' / 'search.json'
 _DEFAULT_SEARCH = {
     "enabled": True,
-    "cron_hour": 8,          # 每天第几次执行（小时）
-    "cron_hour2": 14,        # 第二次执行时间
     "max_per_domain": 20,    # 每域每轮最多采集条数
     "max_keywords_per_project": 5,  # 每项目最多关键词数
     "max_llm_calls_per_cycle": 50,  # 每轮 LLM 调用安全上限

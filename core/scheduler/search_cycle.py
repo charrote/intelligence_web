@@ -17,7 +17,7 @@ import json
 import re
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from bs4 import BeautifulSoup
 
@@ -28,6 +28,14 @@ _UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 _REQUEST_TIMEOUT = 20
+
+# 采集频率 → 到期间隔（小时）。oneshot 无自动调度（tick 到期判定只认 >=1h 的频率）。
+_FREQ_HOURS = {
+    'hourly': 1,
+    'daily': 24,
+    'weekly': 7 * 24,
+    'monthly': 30 * 24,
+}
 
 
 # ── Config ──────────────────────────────────────────────────
@@ -235,12 +243,16 @@ def _read_web(url: str) -> str:
 
 # ── Main cycle ──────────────────────────────────────────────
 
-def run_search_cycle(trigger_type='scheduled') -> dict:
+def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
     """Execute one search cycle for the current domain.
 
-    Called by scheduler (cron trigger) or manually via API.
-    Records a search_run history row (start/end, result, produced intel).
-    Returns a summary dict (includes ``run_id``).
+    Called by the hourly tick (only for projects whose frequency is due,
+    passed via ``project_ids``), the legacy cron trigger, or manually via API.
+    Records a search_run history row (start/end, result, produced intel) and
+    returns a summary dict (includes ``run_id``).
+
+    Projects that enter the run get ``last_search_at`` updated (even when they
+    produce zero new items) so the next tick judges "due" from this run.
     """
     from core.db import (
         get_db_path, create_intelligence,
@@ -248,7 +260,7 @@ def run_search_cycle(trigger_type='scheduled') -> dict:
         record_search_run_start, record_search_run_end,
         finalize_stale_search_runs,
     )
-    from core.project import get_projects
+    from core.project import get_projects, touch_project_last_search
 
     cfg = _get_config()
     if not cfg.get("enabled", True):
@@ -291,6 +303,9 @@ def run_search_cycle(trigger_type='scheduled') -> dict:
     }
     try:
         projects = get_projects(db_path, {"status": "active"})
+        if project_ids is not None:
+            idset = set(project_ids)
+            projects = [p for p in projects if p["id"] in idset]
         if not projects:
             return {
                 "domain": db_slug, "projects_processed": 0, "new_intel": 0,
@@ -312,6 +327,13 @@ def run_search_cycle(trigger_type='scheduled') -> dict:
             scope = project.get("scope", "")
             instruction = project.get("instruction", "")
             target_type = project.get("target_type", "")
+
+            # 进入即记时：本次 run 对该项目的采集"已发生"，下轮到期判定以此为基准
+            # （即使本轮没采到新情报，也不该在下一个 tick 重复触发）
+            try:
+                touch_project_last_search(db_path, pid)
+            except Exception as e:
+                logger.warning(f"[search_cycle] touch last_search_at failed for project {pid}: {e}")
 
             # Collect indicators from datasources
             datasources = project.get("datasources", [])
@@ -486,3 +508,68 @@ def trigger_search_async() -> dict:
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"ok": True, "started": True}
+
+
+# ── 频率感知调度（方案B：单一 tick + 每项目到期判定） ──────────
+
+def _due_project_ids(db_path) -> list:
+    """查询本域 active 项目中已到期的项目 id。
+
+    到期 = last_search_at 为空（存量项目首次调度）或距上次采集
+    >= 该频率的间隔（hourly=1h / daily=24h / weekly=168h / monthly=720h）。
+    oneshot 无自动调度（_FREQ_HOURS 里查不到 → 永不到期）。
+    """
+    now = datetime.now()
+    ids = []
+    from core.db import get_db
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, frequency, last_search_at FROM projects WHERE status = 'active'"
+        ).fetchall()
+    for r in rows:
+        freq = r["frequency"]
+        hours = _FREQ_HOURS.get(freq)
+        if hours is None:
+            continue  # oneshot / 未知频率：不参与自动调度
+        last = r["last_search_at"]
+        if not last:
+            ids.append(r["id"])  # 存量项目：首次到期，立即采集
+            continue
+        try:
+            last_dt = datetime.fromisoformat(last)
+        except ValueError:
+            ids.append(r["id"])  # 时间戳损坏：视为到期，下一轮会修复
+            continue
+        if (now - last_dt) >= timedelta(hours=hours):
+            ids.append(r["id"])
+    return ids
+
+
+def run_search_tick(trigger_type='tick') -> dict:
+    """每小时心跳：检查本域项目的采集频率，只跑"到期"的项目。
+
+    无到期项目时零成本直接返回（不调 LLM、不写 search_run）。
+    有到期项目时复用 run_search_cycle（project_ids 子集），
+    调度履历里能看到每轮实际采集了哪些项目。
+    """
+    from core.db import get_db_path
+    from core.project import get_projects
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    db_slug = os.environ.get("ANALYZER_DB_SLUG", "intelligence")
+    db_path = get_db_path(project_root, db_slug)
+
+    cfg = _get_config()
+    if not cfg.get("enabled", True):
+        return {"domain": db_slug, "due": [], "skipped": True, "reason": "disabled"}
+
+    due = _due_project_ids(db_path)
+    if not due:
+        # 轻量计数（仅用于日志，不写库）
+        n_active = len(get_projects(db_path, {"status": "active"}))
+        logger.info(f"[search_tick] domain={db_slug} due=0/{n_active} active, nothing to do")
+        return {"domain": db_slug, "due": [], "skipped": True, "reason": "none_due"}
+
+    result = run_search_cycle(trigger_type=trigger_type, project_ids=due)
+    result["due"] = due
+    return result

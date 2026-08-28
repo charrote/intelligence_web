@@ -2681,7 +2681,7 @@ def create_app(project_root, spec):
         from config import get_search_config, save_search_config
         data = request.json or {}
         current = get_search_config()
-        for k in ('enabled', 'cron_hour', 'cron_hour2', 'max_per_domain',
+        for k in ('enabled', 'max_per_domain',
                   'max_keywords_per_project', 'max_llm_calls_per_cycle',
                   'results_per_keyword', 'content_max_chars'):
             if k in data and data[k] is not None:

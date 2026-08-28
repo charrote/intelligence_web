@@ -521,17 +521,14 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
           <label>启用自动搜刮</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
             <input type="checkbox" id="search_enabled" style="width:18px;height:18px">
-            <span style="font-size:13px;color:var(--gray-600)">启用后系统按下方时间自动搜刮情报，不再依赖外部 Agent</span>
+            <span style="font-size:13px;color:var(--gray-600)">启用后系统每小时检查各项目采集频率，到期的自动搜刮，不再依赖外部 Agent</span>
           </label>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>第 1 次执行（时）</label>
-            <input type="number" id="search_cron_hour" min="0" max="23" value="8">
-          </div>
-          <div class="form-group">
-            <label>第 2 次执行（时）</label>
-            <input type="number" id="search_cron_hour2" min="0" max="23" value="14">
+        <div class="form-group">
+          <label>检查节奏</label>
+          <div style="font-size:13px;color:var(--gray-600);line-height:1.7">
+            系统每小时检查一次所有采集项目的到期情况（项目卡片里的"采集频率"决定各项目多久采一次：<br>
+            每小时 / 每日 / 每周 / 每月；一次性项目不参与自动调度）。
           </div>
         </div>
         <div class="form-row">
@@ -964,8 +961,6 @@ async function loadSearchSettings() {
     if (!r.ok) return;
     var cfg = await r.json();
     document.getElementById('search_enabled').checked = cfg.enabled !== false;
-    if (cfg.cron_hour !== undefined) document.getElementById('search_cron_hour').value = cfg.cron_hour;
-    if (cfg.cron_hour2 !== undefined) document.getElementById('search_cron_hour2').value = cfg.cron_hour2;
     if (cfg.max_per_domain !== undefined) document.getElementById('search_max_per_domain').value = cfg.max_per_domain;
     if (cfg.max_keywords_per_project !== undefined) document.getElementById('search_max_keywords').value = cfg.max_keywords_per_project;
     if (cfg.max_llm_calls_per_cycle !== undefined) document.getElementById('search_max_llm_calls').value = cfg.max_llm_calls_per_cycle;
@@ -978,8 +973,6 @@ async function loadSearchSettings() {
 async function saveSearchSettings() {
   var data = {
     enabled: document.getElementById('search_enabled').checked,
-    cron_hour: parseInt(document.getElementById('search_cron_hour').value) || 8,
-    cron_hour2: parseInt(document.getElementById('search_cron_hour2').value) || 14,
     max_per_domain: parseInt(document.getElementById('search_max_per_domain').value) || 20,
     max_keywords_per_project: parseInt(document.getElementById('search_max_keywords').value) || 5,
     max_llm_calls_per_cycle: parseInt(document.getElementById('search_max_llm_calls').value) || 50,

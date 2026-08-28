@@ -166,6 +166,7 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
       <div class="form-group">
         <label>采集频率 *</label>
         <select id="fFrequency">
+          <option value="hourly">每小时</option>
           <option value="daily">每日</option>
           <option value="weekly">每周</option>
           <option value="monthly">每月</option>
@@ -239,6 +240,11 @@ const TARGET_TYPE_LABELS = {
   standard: '标准', investment: '投资'
 };
 let availableTargetTypes = [];
+
+// 采集频率标签
+const FREQ_LABELS = {
+  hourly: '每小时', daily: '每日', weekly: '每周', monthly: '每月', oneshot: '一次性'
+};
 
 // ── Datasource selection state ─────────────────────────────────────────────
 let allDatasources = [];
@@ -369,7 +375,7 @@ async function loadProjects(){
         +'<td><span class="tag '+(p.target_type||'')+'">'+(TARGET_TYPE_LABELS[p.target_type]||p.target_type||p.target_type)+'</span></td>'
         +'<td>'+escapeHtml(p.target_name)+'</td>'
         +'<td>'+dsText+'</td>'
-        +'<td><span class="tag '+p.frequency+'">'+p.frequency+'</span></td>'
+        +'<td><span class="tag '+p.frequency+'">'+(FREQ_LABELS[p.frequency]||p.frequency)+'</span></td>'
         +'<td>'+(p.total_intel||0)+'</td>'
         +'<td><span class="tag '+p.status+'">'+p.status+'</span></td>'
         +'<td>'+formatDate(p.created_at)+'</td>'
@@ -449,7 +455,7 @@ async function openDetail(pid){
     let html='<div class="detail-section"><h3>项目信息</h3><div class="detail-meta">'
       +'<span class="tag '+(p.target_type||'')+'">'+typeLabel+'</span>'
       +'<span class="tag '+p.status+'">'+p.status+'</span>'
-      +'<span class="tag '+p.frequency+'">'+p.frequency+'</span></div>'
+      +'<span class="tag '+p.frequency+'">'+(FREQ_LABELS[p.frequency]||p.frequency)+'</span></div>'
       +'<div class="detail-info"><strong>名称：</strong>'+escapeHtml(p.name)+'</div>'
       +'<div class="detail-info"><strong>目标：</strong>'+escapeHtml(p.target_name)+'</div>'
       +'<div class="detail-info"><strong>范围：</strong>'+(p.scope?escapeHtml(p.scope):'<span style="color:var(--gray-400)">未指定</span>')+'</div>'
@@ -538,7 +544,7 @@ async function openEdit(pid){
     body.innerHTML='<div class="form-group"><label>项目名称 *</label><input type="text" id="editName" value="'+escapeHtml(p.name)+'" maxlength="80"></div>'
       +'<div class="form-row">'
       +'<div class="form-group"><label>目标类型</label><select id="editType">'+availableTargetTypes.map(t=>'<option value="'+t+'" '+(p.target_type===t?'selected':'')+'>'+TARGET_TYPE_LABELS[t]+'<\/option>').join('')+'</select></div>'
-      +'<div class="form-group"><label>采集频率</label><select id="editFrequency"><option value="daily" '+(p.frequency==='daily'?'selected':'')+'>每日<\/option><option value="weekly" '+(p.frequency==='weekly'?'selected':'')+'>每周<\/option><option value="monthly" '+(p.frequency==='monthly'?'selected':'')+'>每月<\/option><option value="oneshot" '+(p.frequency==='oneshot'?'selected':'')+'>一次性<\/option><\/select></div>'
+      +'<div class="form-group"><label>采集频率</label><select id="editFrequency"><option value="hourly" '+(p.frequency==='hourly'?'selected':'')+'>每小时<\/option><option value="daily" '+(p.frequency==='daily'?'selected':'')+'>每日<\/option><option value="weekly" '+(p.frequency==='weekly'?'selected':'')+'>每周<\/option><option value="monthly" '+(p.frequency==='monthly'?'selected':'')+'>每月<\/option><option value="oneshot" '+(p.frequency==='oneshot'?'selected':'')+'>一次性<\/option><\/select></div>'
       +'</div>'
       +'<div class="form-group"><label>目标名称</label><input type="text" id="editTarget" value="'+escapeHtml(p.target_name)+'"></div>'
       +'<div class="form-group"><label>范围/描述</label><textarea id="editScope" rows="3">'+escapeHtml(p.scope||'')+'</textarea></div>';
