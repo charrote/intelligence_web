@@ -1,8 +1,8 @@
 {
   "enabled": true,
-  "max_per_domain": 5,
-  "max_keywords_per_project": 5,
+  "max_per_domain": 20,
+  "max_keywords_per_project": 10,
   "max_llm_calls_per_cycle": 50,
   "results_per_keyword": 5,
-  "content_max_chars": 400
+  "content_max_chars": 600
 }
