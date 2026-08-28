@@ -12,6 +12,10 @@ def aggregate(db_path: str, template: dict) -> dict:
     """
     Aggregate data from intel_fact based on report template configuration.
 
+    单查询完成 fact_count + 全部指标聚合（基于 value_num 列的条件聚合），
+    filters 对实体与指标一致生效（旧版 N+1 子查询漏掉 filters 导致
+    实体被过滤而数值未过滤，报表数字对不上）。
+
     Args:
         db_path: path to the SQLite database
         template: report template dict with group_by, metrics, filters, rule_id, lookback_days
@@ -21,14 +25,15 @@ def aggregate(db_path: str, template: dict) -> dict:
     """
     try:
         with get_db(db_path) as conn:
-            # 1. Build WHERE clause
-            where_clause = f"WHERE main.rule_id = ?"
+            # 1. Build WHERE clause（与旧版相同，但统一走参数化）
+            where_clause = "WHERE rule_id = ?"
             params = [template['rule_id']]
 
             # Time filter
             lookback = template.get("lookback_days", 30)
             cutoff = datetime.now(timezone.utc) - timedelta(days=lookback)
-            where_clause += f" AND main.created_at >= '{cutoff.isoformat()}'"
+            where_clause += " AND created_at >= ?"
+            params.append(cutoff.isoformat())
 
             # Custom filter conditions
             filters = json.loads(template.get("filters", "[]"))
@@ -37,64 +42,58 @@ def aggregate(db_path: str, template: dict) -> dict:
                 where_clause += " AND " + " AND ".join(filter_clauses)
                 params.extend(filter_params)
 
-            # 2. Build GROUP BY
+            # 2. Group field
             group_field = _map_group_field(template.get("group_by", "entity_name"))
-            group_clause = f"GROUP BY main.{group_field}"
 
-            # 3. Build SELECT with metrics
+            # 3. Metrics → 条件聚合列（value_num 只有数值类字段有值；
+            #    AVG/SUM/MAX/MIN 自动忽略 NULL，COUNT 统计非空值）。
+            #    注意参数顺序：SELECT 里的 metric 占位符在 WHERE 之前，
+            #    所以 metric_params 必须放在 where_params 之前执行。
             metrics = json.loads(template.get("metrics", "[]"))
+            metric_cols = []
+            metric_params = []
+            for i, m in enumerate(metrics):
+                field_key = m.get("field_key", "")
+                agg_fn = (m.get("agg") or "avg").lower()
+                fn = {"avg": "AVG", "sum": "SUM", "max": "MAX", "min": "MIN", "count": "COUNT"}.get(agg_fn, "AVG")
+                metric_cols.append(
+                    f"{fn}(CASE WHEN field_key = ? THEN value_num END) AS metric_{i}"
+                )
+                metric_params.append(field_key)
 
-            # 4. Build main query - count facts per entity
+            # 4. 单条查询：实体 + 事实数 + 全部指标
+            select_items = [
+                f"{group_field} AS entity_name",
+                "COUNT(DISTINCT intel_id) AS fact_count",
+            ] + metric_cols
             base_sql = f"""
-                SELECT main.{group_field} AS entity_name,
-                       COUNT(DISTINCT main.intel_id) AS fact_count
-                FROM intel_fact main
+                SELECT {", ".join(select_items)}
+                FROM intel_fact
                 {where_clause}
-                {group_clause}
+                GROUP BY {group_field}
                 ORDER BY entity_name
             """
+            # 参数顺序 = SQL 中 ? 出现顺序：SELECT(metric_params) 在前，WHERE(params) 在后
+            rows = conn.execute(base_sql, metric_params + params).fetchall()
 
-            rows = conn.execute(base_sql, params).fetchall()
-            result_rows = [dict(r) for r in rows]
-
-            # 5. Enrich with metric values via sub-queries
-            #    Value is stored in value_text (all types use one column)
             enriched_rows = []
-            for row in result_rows:
-                enriched = dict(row)
+            for r in rows:
+                d = dict(r)
                 for i, m in enumerate(metrics):
-                    field_key = m.get("field_key", "")
-                    agg_fn = m.get("agg", "avg")
-                    unit = m.get("unit", "")
-
-                    sub_sql = f"""
-                        SELECT value_text
-                        FROM intel_fact
-                        WHERE rule_id = ? AND {group_field} = ?
-                          AND field_key = ?
-                          AND created_at >= ?
-                    """
-                    sub_params = [template['rule_id'], enriched['entity_name'],
-                                  field_key, cutoff.isoformat()]
-                    sub_rows = conn.execute(sub_sql, sub_params).fetchall()
-
-                    # Convert string values to numbers for aggregation
-                    values = []
-                    for r in sub_rows:
-                        raw = r["value_text"]
-                        if raw is not None and raw != "":
-                            try:
-                                values.append(float(str(raw).replace(",", "").replace("，", "")))
-                            except (ValueError, TypeError):
-                                pass
-
-                    enriched[f"metric_{i}"] = _apply_agg(values, agg_fn) if values else 0
-                    enriched[f"metric_{i}_unit"] = unit
-                enriched_rows.append(enriched)
+                    v = d.get(f"metric_{i}")
+                    is_count = (m.get("agg") or "avg").lower() == "count"
+                    if v is None:
+                        d[f"metric_{i}"] = 0
+                    elif is_count:
+                        d[f"metric_{i}"] = int(v)
+                    else:
+                        d[f"metric_{i}"] = round(v, 2)
+                    d[f"metric_{i}_unit"] = m.get("unit", "")
+                enriched_rows.append(d)
 
             return {
                 "rows": enriched_rows,
-                "fact_count": sum(r["fact_count"] for r in result_rows),
+                "fact_count": sum(r["fact_count"] for r in enriched_rows),
                 "error": None
             }
 
@@ -113,21 +112,6 @@ def _map_group_field(group_by: str) -> str:
         "country": "entity_name",
     }
     return mapping.get(group_by, "entity_name")
-
-
-def _apply_agg(values: list, agg: str) -> float:
-    """Apply aggregation function to values."""
-    if not values:
-        return 0.0
-    mapping = {
-        "avg": lambda vs: round(sum(vs) / len(vs), 2),
-        "sum": lambda vs: round(sum(vs), 2),
-        "max": lambda vs: round(max(vs), 2),
-        "min": lambda vs: round(min(vs), 2),
-        "count": lambda vs: len(vs),
-    }
-    fn = mapping.get(agg, mapping["avg"])
-    return fn(values)
 
 
 def _build_filter_clauses(filters: list) -> tuple:

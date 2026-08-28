@@ -13,7 +13,7 @@ P1（合并规则）：同一篇情报只打 1 次 LLM，一次抽完所有启�
 """
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from core.db import get_db, get_setting
 from core.scheduler.llm_client import call_llm, parse_json_from_response
@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 # 不要盲目调高；P1 合并规则后调用数已减半，C=2 即已足够。
 DEFAULT_CONCURRENCY = 2
 DEFAULT_CONTENT_MAX_CHARS = 8000
+# 合并多规则后单篇输出可达 30+ 字段，1500 tokens 会截断导致 JSON 解析失败（线上实锤）。
+# 4000 覆盖 30 字段 × ~100 token/字段的典型输出，留有余量。
+DEFAULT_EXTRACT_MAX_TOKENS = 4000
+# LLM 失败（extracted=2）的情报，距标记超过 24h 后自动重新抽取，避免永久丢数。
+RETRY_AFTER_HOURS = 24
 
 
 def extract_all_pending(db_path: str) -> dict:
@@ -41,10 +46,16 @@ def extract_all_pending(db_path: str) -> dict:
     """
     concurrency = max(1, int(get_setting(db_path, "llm.extract_concurrency") or DEFAULT_CONCURRENCY))
     content_max_chars = max(0, int(get_setting(db_path, "llm.extract_content_max_chars") or DEFAULT_CONTENT_MAX_CHARS))
+    max_tokens = max(1000, int(get_setting(db_path, "llm.extract_max_tokens") or DEFAULT_EXTRACT_MAX_TOKENS))
 
     with get_db(db_path) as conn:
+        # extracted=0 新情报 + extracted=2 且距标记超过 RETRY_AFTER_HOURS 小时的失败情报（自动重试，避免永久丢数）
+        retry_cutoff = (datetime.now(timezone.utc) - timedelta(hours=RETRY_AFTER_HOURS)).isoformat()
         pending = conn.execute(
-            "SELECT id, title, content FROM intelligence WHERE extracted = 0"
+            """SELECT id, title, content, extracted FROM intelligence
+               WHERE extracted = 0
+                  OR (extracted = 2 AND updated_at < ?)""",
+            (retry_cutoff,),
         ).fetchall()
 
         if not pending:
@@ -88,6 +99,7 @@ def extract_all_pending(db_path: str) -> dict:
                 "per_rule": per_rule,
                 "llm_rule_fields": llm_rule_fields,
                 "_content_max_chars": content_max_chars,
+                "_max_tokens": max_tokens,
             })
 
         total = len(tasks)
@@ -122,40 +134,44 @@ def _extract_intel_merged(task: dict) -> dict:
 
     db_path = _get_db_path()
     timeout = int(get_setting(db_path, "llm.extract_timeout") or 60)
+    max_tokens = task.get("_max_tokens", DEFAULT_EXTRACT_MAX_TOKENS)
 
     content = task["content"] or ""
     max_chars = task.get("_content_max_chars", 0)
     if max_chars and len(content) > max_chars:
         content = content[:max_chars]
 
-    try:
-        system_prompt, user_prompt = render_extraction_prompt_multi(
-            llm_rule_fields, task["title"], content
-        )
+    # 最多重试一次：截断/偶发 JSON 解析失败时再给模型一次机会（失败即退避，不循环）
+    for _attempt in range(2):
+        try:
+            system_prompt, user_prompt = render_extraction_prompt_multi(
+                llm_rule_fields, task["title"], content
+            )
 
-        result = call_llm(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.1,
-            max_tokens=1500,
-            timeout=timeout
-        )
+            result = call_llm(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.1,
+                max_tokens=max_tokens,
+                timeout=timeout
+            )
 
-        if not result.get("ok"):
-            task["_llm_values"] = None
-            task["_llm_error"] = result.get("error", "LLM call failed")
+            if not result.get("ok"):
+                task["_llm_values"] = None
+                task["_llm_error"] = result.get("error", "LLM call failed")
+                continue
+
+            parsed, json_ok = parse_json_from_response(result["raw"])
+            if not json_ok:
+                task["_llm_values"] = None
+                task["_llm_error"] = f"JSON parse failed. Raw: {result['raw'][:200]}"
+                continue
+
+            task["_llm_values"] = parsed if isinstance(parsed, dict) else {}
             return task
-
-        parsed, json_ok = parse_json_from_response(result["raw"])
-        if not json_ok:
+        except Exception as e:
             task["_llm_values"] = None
-            task["_llm_error"] = f"JSON parse failed. Raw: {result['raw'][:200]}"
-            return task
-
-        task["_llm_values"] = parsed if isinstance(parsed, dict) else {}
-    except Exception as e:
-        task["_llm_values"] = None
-        task["_llm_error"] = str(e)
+            task["_llm_error"] = str(e)
 
     return task
 
@@ -167,30 +183,30 @@ def _persist_intel(conn, task: dict, rule_fields: dict) -> None:
         logger.warning(f"[extract] LLM failed intel={task['id']}: {task['_llm_error']}")
 
     intel_id = task["id"]
-    row_success = True
+    llm_ok = llm_values is not None
     for rid, rname, fields, regex_values, remaining in task["per_rule"]:
-        if llm_values is None:
-            # LLM 失败 → 该规则整体标记失败
-            row_success = False
-            continue
-
-        # 按规则前缀拆分 LLM 值，并与 regex 合并（regex 优先）
+        # regex 结果不依赖 LLM：LLM 失败时 regex 命中的字段照常落库（信息不丢）
         merged = {}
         for f in fields:
             fk = f["field_key"]
             if fk in regex_values:
                 merged[fk] = regex_values[fk]
-            else:
+            elif llm_ok:
                 prefixed = f"{rid}__{fk}"
                 if prefixed in llm_values and llm_values[prefixed] is not None:
                     merged[fk] = llm_values[prefixed]
 
         _save_facts(conn, intel_id, rid, fields, merged)
 
-    new_status = 1 if row_success else 2
-    conn.execute("UPDATE intelligence SET extracted = ? WHERE id = ?", (new_status, intel_id))
+    # 行级成功 = LLM 成功（纯 regex 行 _llm_values={} 视为成功）；
+    # 更新 updated_at 作为 24h 自动重试计时器（_persist 的标记时间戳）
+    new_status = 1 if llm_ok else 2
+    conn.execute(
+        "UPDATE intelligence SET extracted = ?, updated_at = ? WHERE id = ?",
+        (new_status, datetime.now(timezone.utc).isoformat(), intel_id),
+    )
     conn.commit()
-    task["_row_success"] = row_success
+    task["_row_success"] = llm_ok
 
 
 def _get_rule_fields(conn, rule_id: int) -> list:
@@ -213,9 +229,18 @@ def _get_db_path() -> str:
 
 def _save_facts(conn, intel_id: int, rule_id: int, fields: list,
                 data: dict) -> int:
-    """Save extracted facts to intel_fact table (Plan A: consolidated columns)."""
+    """Save extracted facts to intel_fact table (Plan A: consolidated columns).
+
+    幂等：先删 (intel_id, rule_id) 的旧事实再插入 —— 重抽（手动 retrigger /
+    24h 自动重试）不会重复落库。
+    """
     now = datetime.now(timezone.utc).isoformat()
     count = 0
+
+    conn.execute(
+        "DELETE FROM intel_fact WHERE intel_id = ? AND rule_id = ?",
+        (intel_id, rule_id),
+    )
 
     for field in fields:
         fk = field["field_key"]

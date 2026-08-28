@@ -30,7 +30,7 @@ services:
       - ANALYZER_DB_SLUG=intelligence
     command: >
       bash -c "
-        cd /app && python -m core.scheduler.scheduler &
+        cd /app && python -m core.scheduler &
         cd /app/intelligence_web && gunicorn -b 0.0.0.0:8766 wsgi:app
       "
     volumes:
@@ -58,7 +58,7 @@ services:
       - ANALYZER_DB_SLUG=intelligence_sales
     command: >
       bash -c "
-        cd /app && python -m core.scheduler.scheduler &
+        cd /app && python -m core.scheduler &
         cd /app && gunicorn -w 4 -b 0.0.0.0:8767 --timeout 120 wsgi:app
       "
     volumes:

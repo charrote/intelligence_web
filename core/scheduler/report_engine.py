@@ -12,6 +12,31 @@ from core.scheduler.sql_aggregator import aggregate
 logger = logging.getLogger(__name__)
 
 
+def _parse_dt(value):
+    """Robustly parse a stored datetime string into a timezone-aware UTC datetime.
+
+    兼容三种历史格式（线上实存混用，字符串比较会错位）：
+      - '2026-08-28T04:56:31.072665+00:00'  带时区（ISO）
+      - '2026-08-13T13:26:44.185859'        裸时间（naive，按 UTC）
+      - '2026-08-29 14:41:00'               SQLite 空格格式（naive，按 UTC）
+      - 末尾 'Z' 也接受
+    解析失败返回 None（调用方按"到期"处理，宁早勿漏）。
+    """
+    if not value:
+        return None
+    s = str(value).strip().replace("Z", "+00:00")
+    # SQLite 空格格式 → ISO
+    if "T" not in s and " " in s:
+        s = s.replace(" ", "T", 1)
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _get_db_path():
     """Get the database path for the scheduler (configurable per domain)."""
     import os
@@ -25,16 +50,22 @@ def run_scheduled_reports(db_path: str) -> dict:
     executed = 0
     success = 0
     failed = 0
+    now = datetime.now(timezone.utc)
 
     with get_db(db_path) as conn:
+        _self_heal_stale_runs(conn)
+
+        # 到期判定在 Python 侧做：next_run 历史上有三种格式混存（ISO 带时区 /
+        # naive ISO / SQLite 空格格式），SQL 字符串比较会错位（同日前半段提前
+        # 触发）。全部取出后按解析结果判定，解析失败的按"到期"处理（宁早勿漏）。
         templates = conn.execute(
-            """SELECT * FROM intel_aggregate
-               WHERE enabled = 1 AND next_run <= ? AND status != 'fused'
-               ORDER BY next_run""",
-            (datetime.now(timezone.utc).isoformat(),)
+            "SELECT * FROM intel_aggregate WHERE enabled = 1 AND status != 'fused' ORDER BY next_run"
         ).fetchall()
 
         for tmpl in templates:
+            next_run = _parse_dt(tmpl["next_run"])
+            if next_run is not None and next_run > now:
+                continue
             template_dict = dict(tmpl)
             executed += 1
 
@@ -50,6 +81,27 @@ def run_scheduled_reports(db_path: str) -> dict:
                 _handle_failure(conn, template_dict["id"], result.get("error"))
 
     return {"executed": executed, "success": success, "failed": failed}
+
+
+def _self_heal_stale_runs(conn, max_age_sec: int = 600):
+    """Mark 'running' report_run rows older than max_age_sec as failed.
+
+    对齐 search_run 的自愈逻辑：进程被杀/容器重启后，手动或调度的报告
+    不应永远卡在 'running'。
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=max_age_sec)
+    cur = conn.execute(
+        """UPDATE report_run SET
+           status = 'failed',
+           completed_at = ?,
+           error_msg = '运行超时或进程中断，自动标记为失败'
+           WHERE status = 'running' AND started_at < ?""",
+        (now.isoformat(), cutoff.isoformat()),
+    )
+    if cur.rowcount:
+        conn.commit()
+        logger.warning(f"[report] self-healed {cur.rowcount} stale 'running' run(s)")
 
 
 def _execute_report_steps(db_path: str, conn, run_id: int, template_dict: dict) -> dict:
@@ -231,8 +283,12 @@ def _update_run_result(conn, run_id: int, data: dict) -> None:
 
 
 def _update_template_success(conn, template_id: int):
-    """Update template after successful execution."""
-    now = datetime.now(timezone.utc).isoformat()
+    """Update template after successful execution.
+
+    next_run 统一写 ISO+时区（与 created_at 等字段一致），到期判定在
+    run_scheduled_reports 里按解析后的时间戳比较，不再依赖字符串序。
+    """
+    now = datetime.now(timezone.utc)
     schedule_min = 1440
     try:
         schedule_min = int(conn.execute(
@@ -241,13 +297,14 @@ def _update_template_success(conn, template_id: int):
     except Exception:
         pass
 
+    next_run = (now + timedelta(minutes=schedule_min)).isoformat()
     conn.execute(
         """UPDATE intel_aggregate SET
            fail_count = 0,
            last_success_time = ?,
-           next_run = datetime(?, '+' || ? || ' minutes')
+           next_run = ?
            WHERE id = ?""",
-        (now, now, schedule_min, template_id)
+        (now.isoformat(), next_run, template_id)
     )
     conn.commit()
 
