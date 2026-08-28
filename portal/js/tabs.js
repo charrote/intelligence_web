@@ -11,6 +11,7 @@ var ROUTES = {
   'analyst': { page: 'analyst.html', label: 'AI 分析师' },
   'intel-extract': { page: 'intel-extract.html', label: '抽取规则' },
   'reports': { page: 'reports.html', label: '报告模板' },
+  'report-files': { page: 'report-files.html', label: '报告文件' },
   'report-view': { page: 'report-view.html', label: '查看报告' },
   'users': { page: 'users.html', label: '用户管理' },
   'roles': { page: 'roles.html', label: '角色管理' },

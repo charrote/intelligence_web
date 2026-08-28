@@ -138,6 +138,7 @@
 <script>
 var templateId = null;
 var currentRunId = null;
+var targetRunId = null;
 var runHistory = [];
 var chartInstances = [];
 var pollingTimer = null;
@@ -156,15 +157,30 @@ function showLoading(show) {
 }
 
 async function fetchRuns(tid) {
-  var url = systemApiBase() + '/api/reports/runs/' + tid;
+  var url = apiBase() + '/api/reports/runs?template_id=' + tid + '&limit=100';
   var res = await apiFetch(url);
   if (!res.ok) throw new Error('获取运行记录失败: ' + res.status);
   var data = await res.json();
-  return data || [];
+  return data.runs || [];
+}
+
+function getRunId() {
+  // From hash: #report-view?template_id=X&run_id=Y  or #run_id=Y
+  var hash = (window.parent.location.hash || '').replace(/^#report-view\??/, '').replace(/^#/, '');
+  if (hash) {
+    var hp = new URLSearchParams(hash.replace(/^\?/, ''));
+    var fromHash = hp.get('run_id');
+    if (fromHash) { var p = parseInt(fromHash); if (!isNaN(p) && p > 0) return p; }
+  }
+  // From iframe own query: report-view.html?...&run_id=Y
+  var params = new URLSearchParams(window.location.search);
+  var fromParams = params.get('run_id');
+  if (fromParams) { var q = parseInt(fromParams); if (!isNaN(q) && q > 0) return q; }
+  return null;
 }
 
 async function fetchRun(runId) {
-  var url = systemApiBase() + '/api/reports/runs/' + runId;
+  var url = apiBase() + '/api/reports/runs/' + runId;
   var res = await apiFetch(url);
   if (!res.ok) throw new Error('获取运行详情失败: ' + res.status);
   var data = await res.json();
@@ -408,6 +424,9 @@ async function loadRun(runId) {
   try {
     var run = await fetchRun(runId);
     currentRunId = runId;
+    if (run.template_name) {
+      document.getElementById('reportTitle').textContent = run.template_name;
+    }
     renderSections(run);
     document.getElementById('reportMeta').style.display = 'flex';
     document.getElementById('runTime').textContent = formatRunTime(run.scheduled_time);
@@ -439,7 +458,7 @@ async function rerunReport() {
   showLoading(true);
 
   try {
-    var url = systemApiBase() + '/api/reports/run/' + templateId;
+    var url = apiBase() + '/api/reports/run/' + templateId;
     var res = await apiFetch(url, { method: 'POST' });
     if (!res.ok) {
       var errData = await res.json().catch(function() { return {}; });
@@ -498,16 +517,17 @@ async function rerunReport() {
 }
 
 function goBack() {
-  if (window.history.length > 1) {
-    window.history.back();
+  if (window.parent && window.parent.openTab) {
+    window.parent.openTab('report-files');
   } else {
-    window.location.href = 'reports.html';
+    window.location.hash = '#report-files';
   }
 }
 
 function init() {
   templateId = getTemplateId();
   localStorage.setItem('lastTemplateId', templateId);
+  targetRunId = getRunId();
   document.getElementById('reportTitle').textContent = '市场份额概览';
 
   document.getElementById('versionSelect').addEventListener('change', function() {
@@ -522,6 +542,11 @@ async function loadReports() {
   try {
     runHistory = await fetchRuns(templateId);
     renderVersionOptions(runHistory);
+    // 若从报告文件列表点进某条具体运行，优先定位它
+    if (targetRunId) {
+      var targetRun = runHistory.find(function(r) { return r.id === targetRunId; });
+      if (targetRun) { loadRun(targetRun.id); return; }
+    }
     var latest = runHistory.filter(function(r) { return r.scheduled_time && r.status !== 'failed'; }).reverse()[0];
     if (latest) {
       loadRun(latest.id);

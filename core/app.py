@@ -3233,14 +3233,16 @@ def create_app(project_root, spec):
 
     @app.route('/api/reports/run/<int:template_id>', methods=['POST'])
     @require_auth
+    @require_permission('reports.manage')
     def run_report(template_id):
-        """Manually trigger a single report execution."""
+        """Manually trigger a single report execution (management action)."""
         result = trigger_report_once(template_id)
         return jsonify(result)
 
 
     @app.route('/api/reports/runs', methods=['GET'])
     @require_auth
+    @require_permission('reports.view')
     def list_report_runs(template_id=None):
         """Get execution history (optionally filtered by template_id)."""
         template_id = request.args.get('template_id', type=int)
@@ -3248,20 +3250,22 @@ def create_app(project_root, spec):
         offset = int(request.args.get('offset', 0))
         with get_db(db_path) as conn:
             if template_id is not None:
-                where = "WHERE template_id = ?"
+                where = "WHERE r.template_id = ?"
                 wp = [template_id]
             else:
                 where = ""
                 wp = []
             total = conn.execute(
-                f"SELECT COUNT(*) FROM report_run {where}", wp
+                f"SELECT COUNT(*) FROM report_run r {where}", wp
             ).fetchone()[0]
             rows = conn.execute(
-                f"""SELECT id, template_id, domain, scheduled_time, completed_at,
-                          status, duration_sec, retry_count, fact_count, error_msg
-                   FROM report_run
+                f"""SELECT r.id, r.template_id, a.name AS template_name, r.domain,
+                          r.scheduled_time, r.completed_at,
+                          r.status, r.duration_sec, r.retry_count, r.fact_count, r.error_msg
+                   FROM report_run r
+                   LEFT JOIN intel_aggregate a ON r.template_id = a.id
                    {where}
-                   ORDER BY scheduled_time DESC
+                   ORDER BY r.scheduled_time DESC
                    LIMIT ? OFFSET ?""",
                 wp + [limit, offset]
             ).fetchall()
@@ -3275,6 +3279,7 @@ def create_app(project_root, spec):
 
     @app.route('/api/reports/runs/<int:run_id>', methods=['GET'])
     @require_auth
+    @require_permission('reports.view')
     def get_report_run(run_id):
         """Get single report run details."""
         with get_db(db_path) as conn:

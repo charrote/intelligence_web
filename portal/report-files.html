@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>报告文件</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<style>
+.page-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.page-title span{font-size:18px;font-weight:600;color:var(--gray-800)}
+.page-title .sub{font-size:13px;color:var(--gray-400);font-weight:400;margin-left:10px}
+
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.toolbar select,.toolbar input{padding:7px 10px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-700);background:#fff;min-width:130px}
+.toolbar input{min-width:200px;flex:1;max-width:280px}
+.toolbar select:focus,.toolbar input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.toolbar .btn-reset{padding:7px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:13px;color:var(--gray-500);background:#fff;cursor:pointer}
+.toolbar .btn-reset:hover{border-color:var(--accent);color:var(--accent)}
+
+.table-wrap{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);overflow:hidden}
+table.rep{width:100%;border-collapse:collapse;font-size:13px}
+table.rep th{padding:10px 14px;font-size:11px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);text-align:left;white-space:nowrap}
+table.rep td{padding:12px 14px;border-bottom:1px solid var(--gray-100);color:var(--gray-700);vertical-align:middle}
+table.rep tr:last-child td{border-bottom:none}
+table.rep tbody tr{cursor:pointer;transition:background 0.12s}
+table.rep tbody tr:hover{background:var(--gray-50)}
+.rep-name{font-weight:600;color:var(--gray-800)}
+.rep-name .desc{display:block;font-size:11px;color:var(--gray-400);font-weight:400;margin-top:2px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.tag{display:inline-flex;align-items:center;padding:2px 9px;border-radius:4px;font-size:12px;font-weight:500;white-space:nowrap}
+.tag.research{background:var(--blue-light);color:var(--blue)}
+.tag.sales{background:var(--green-light);color:var(--green)}
+.tag.other{background:var(--gray-100);color:var(--gray-500)}
+
+.st{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;white-space:nowrap}
+.st .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.st.completed{color:var(--green)} .st.completed .dot{background:var(--green)}
+.st.failed{color:var(--red)} .st.failed .dot{background:var(--red)}
+.st.no_data{color:var(--amber)} .st.no_data .dot{background:var(--amber)}
+.st.pending,.st.running{color:var(--gray-500)} .st.pending .dot,.st.running .dot{background:var(--gray-400)}
+
+.num{font-variant-numeric:tabular-nums;color:var(--gray-600);white-space:nowrap}
+.link-btn{padding:4px 10px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px;color:var(--accent);background:#fff;cursor:pointer;white-space:nowrap}
+.link-btn:hover{border-color:var(--accent);background:var(--accent-light)}
+
+.empty-state{padding:48px 20px;text-align:center;color:var(--gray-400);font-size:14px}
+.empty-state .ico{font-size:32px;margin-bottom:10px;opacity:0.5}
+
+.pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;font-size:12px;color:var(--gray-500);border-top:1px solid var(--gray-100)}
+.pagination .pg-btns{display:flex;gap:6px}
+.pagination button{padding:4px 12px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);font-size:12px;color:var(--gray-600);background:#fff;cursor:pointer}
+.pagination button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.pagination button:disabled{opacity:0.4;cursor:not-allowed}
+
+.loading{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+.no-perm{padding:48px 20px;text-align:center}
+.no-perm .ico{font-size:32px;margin-bottom:10px;opacity:0.5}
+.no-perm .t{font-size:14px;color:var(--gray-600);margin-bottom:6px}
+.no-perm .d{font-size:13px;color:var(--gray-400)}
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="page-title">
+    <span>报告文件<span class="sub">查看已生成的报告运行记录与结果</span></span>
+  </div>
+
+  <div class="toolbar">
+    <select id="domainFilter" onchange="applyFilter()">
+      <option value="">全部域</option>
+      <option value="research">制造情报</option>
+      <option value="sales">销售情报</option>
+    </select>
+    <select id="statusFilter" onchange="applyFilter()">
+      <option value="">全部状态</option>
+      <option value="completed">已完成</option>
+      <option value="failed">失败</option>
+      <option value="no_data">无数据</option>
+      <option value="pending">待执行</option>
+    </select>
+    <input type="text" id="searchBox" placeholder="搜索报告名称..." oninput="onSearch()">
+    <button class="btn-reset" onclick="resetFilters()">重置</button>
+  </div>
+
+  <div class="table-wrap">
+    <div id="tableBody"><div class="loading">加载中...</div></div>
+    <div class="pagination" id="pagination" style="display:none">
+      <span id="pgInfo"></span>
+      <div class="pg-btns">
+        <button id="pgPrev" onclick="prevPage()">上一页</button>
+        <button id="pgNext" onclick="nextPage()">下一页</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+var PAGE_SIZE = 20;
+var page = 0;
+var allRuns = [];
+var total = 0;
+var loading = false;
+
+var STATUS_LABEL = { completed:'已完成', failed:'失败', no_data:'无数据', pending:'待执行', running:'执行中' };
+var DOMAIN_LABEL = { research:'制造情报', sales:'销售情报' };
+
+function statusHtml(s) {
+  var label = STATUS_LABEL[s] || s || '-';
+  var cls = (s && STATUS_LABEL[s]) ? s : 'pending';
+  return '<span class="st ' + cls + '"><span class="dot"></span>' + escapeHtml(label) + '</span>';
+}
+
+function domainTag(d) {
+  var label = DOMAIN_LABEL[d] || d || '-';
+  var cls = (d === 'research' || d === 'sales') ? d : 'other';
+  return '<span class="tag ' + cls + '">' + escapeHtml(label) + '</span>';
+}
+
+function fmtTime(iso) {
+  if (!iso) return '-';
+  var d = new Date(iso);
+  if (isNaN(d)) return escapeHtml(iso);
+  var m = d.getMonth() + 1, day = d.getDate();
+  var h = String(d.getHours()).padStart(2, '0'), min = String(d.getMinutes()).padStart(2, '0');
+  return m + '-' + day + ' ' + h + ':' + min;
+}
+
+function fmtDur(sec) {
+  if (sec == null) return '-';
+  if (sec < 60) return sec + ' 秒';
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return m + ' 分 ' + s + ' 秒';
+}
+
+function currentFilters() {
+  return {
+    domain: document.getElementById('domainFilter').value,
+    status: document.getElementById('statusFilter').value,
+    q: (document.getElementById('searchBox').value || '').trim()
+  };
+}
+
+async function loadRuns() {
+  if (loading) return;
+  loading = true;
+  var body = document.getElementById('tableBody');
+  body.innerHTML = '<div class="loading">加载中...</div>';
+  try {
+    var url = apiBase() + '/api/reports/runs?limit=100';
+    var res = await apiFetch(url);
+    if (res.status === 403) {
+      body.innerHTML = '<div class="no-perm"><div class="ico">&#128274;</div><div class="t">没有查看报告的权限</div><div class="d">请联系管理员为你的角色分配「查看报告」权限</div></div>';
+      document.getElementById('pagination').style.display = 'none';
+      loading = false;
+      return;
+    }
+    if (!res.ok) throw new Error('获取报告列表失败: ' + res.status);
+    var data = await res.json();
+    allRuns = data.runs || [];
+    page = 0;
+    renderTable();
+  } catch(e) {
+    console.error('[report-files] load error:', e);
+    body.innerHTML = '<div class="empty-state"><div class="ico">&#9888;</div>加载失败：' + escapeHtml(e.message) + '</div>';
+    document.getElementById('pagination').style.display = 'none';
+  } finally {
+    loading = false;
+  }
+}
+
+function renderTable() {
+  var f = currentFilters();
+  var rows = allRuns;
+  if (f.domain) rows = rows.filter(function(r) { return r.domain === f.domain; });
+  if (f.status) rows = rows.filter(function(r) { return r.status === f.status; });
+  if (f.q) {
+    var q = f.q.toLowerCase();
+    rows = rows.filter(function(r) { return (r.template_name || '').toLowerCase().indexOf(q) >= 0; });
+  }
+  total = rows.length;
+  var totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (page >= totalPages) page = totalPages - 1;
+  var slice = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  var body = document.getElementById('tableBody');
+  if (total === 0) {
+    body.innerHTML = '<div class="empty-state"><div class="ico">&#128196;</div>暂无报告运行记录</div>';
+    document.getElementById('pagination').style.display = 'none';
+    return;
+  }
+
+  var html = '<table class="rep"><thead><tr>'
+    + '<th style="min-width:220px">报告名称</th>'
+    + '<th>域</th>'
+    + '<th>状态</th>'
+    + '<th>完成时间</th>'
+    + '<th>耗时</th>'
+    + '<th>事实数</th>'
+    + '<th>操作</th>'
+    + '</tr></thead><tbody>';
+
+  slice.forEach(function(r) {
+    var name = r.template_name || ('报告 #' + r.template_id);
+    html += '<tr onclick="openRun(' + r.id + ',' + r.template_id + ')">'
+      + '<td><span class="rep-name">' + escapeHtml(name) + '</span>'
+      + (r.error_msg ? '<span class="desc" title="' + escapeHtml(r.error_msg) + '">⚠ ' + escapeHtml(r.error_msg) + '</span>' : '')
+      + '</td>'
+      + '<td>' + domainTag(r.domain) + '</td>'
+      + '<td>' + statusHtml(r.status) + '</td>'
+      + '<td class="num">' + fmtTime(r.completed_at || r.scheduled_time) + '</td>'
+      + '<td class="num">' + fmtDur(r.duration_sec) + '</td>'
+      + '<td class="num">' + (r.fact_count != null ? r.fact_count : '-') + '</td>'
+      + '<td><button class="link-btn" onclick="event.stopPropagation();openRun(' + r.id + ',' + r.template_id + ')">查看</button></td>'
+      + '</tr>';
+  });
+  html += '</tbody></table>';
+  body.innerHTML = html;
+
+  var pg = document.getElementById('pagination');
+  pg.style.display = 'flex';
+  document.getElementById('pgInfo').textContent = '第 ' + (page + 1) + ' / ' + totalPages + ' 页 · 共 ' + total + ' 条';
+  document.getElementById('pgPrev').disabled = (page <= 0);
+  document.getElementById('pgNext').disabled = (page >= totalPages - 1);
+}
+
+function openRun(runId, templateId) {
+  // 复用 report-view 详情页，通过 iframe src 参数定位到具体运行
+  window.parent.openTab('report-view');
+  var t = (window.parent.TABS || []).find(function(x) { return x.hash === 'report-view'; });
+  if (t && t.iframe) {
+    t.iframe.src = 'report-view.html?template_id=' + templateId + '&run_id=' + runId + '&_=' + Date.now();
+  }
+}
+
+function prevPage() { if (page > 0) { page--; renderTable(); } }
+function nextPage() { page++; renderTable(); }
+function applyFilter() { page = 0; loadRuns(); }
+function onSearch() { page = 0; renderTable(); } // 前端即时搜索（已拉取批次内）
+function resetFilters() {
+  document.getElementById('domainFilter').value = '';
+  document.getElementById('statusFilter').value = '';
+  document.getElementById('searchBox').value = '';
+  page = 0; loadRuns();
+}
+
+function init() { loadRuns(); }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>

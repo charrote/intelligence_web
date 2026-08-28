@@ -881,6 +881,7 @@ PERMISSION_CATALOG = [
     ('intel.share', '开放情报分享', '情报'),
     ('rules.manage', '抽取规则', '配置'),
     ('reports.manage', '报告模板', '配置'),
+    ('reports.view', '查看报告', '配置'),
     ('projects.manage', '采集项目', '配置'),
     ('datasources.manage', '数据源管理', '配置'),
     ('target_types.manage', '目标类型', '配置'),
@@ -896,9 +897,9 @@ ALL_PERMISSION_CODES = {code for code, _, _ in PERMISSION_CATALOG}
 BUILTIN_ROLES = [
     ('admin', '管理员', '拥有全部权限', ['all']),
     ('power_user', '高级用户', '日常运营与配置权限',
-     ['intel.view', 'intel.import', 'intel.share', 'rules.manage', 'reports.manage',
+     ['intel.view', 'intel.import', 'intel.share', 'rules.manage', 'reports.manage', 'reports.view',
       'projects.manage', 'datasources.manage', 'target_types.manage', 'audit.view']),
-    ('user', '普通用户', '只读查看情报', ['intel.view']),
+    ('user', '普通用户', '只读查看情报与报告', ['intel.view', 'reports.view']),
     ('agent', '智能体', '系统智能体账号', ['intel.view']),
 ]
 
