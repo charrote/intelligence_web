@@ -92,7 +92,7 @@
 <main class="main">
   <div class="stats" id="statsRow">
     <div class="stat"><div class="stat-num accent" id="kTotal">-</div><div class="stat-label">全部情报</div></div>
-    <div class="stat"><div class="stat-num gold" id="kUnread">-</div><div class="stat-label">未读</div></div>
+    <div class="stat"><div class="stat-num gold" id="kToday">-</div><div class="stat-label">今日新增</div></div>
     <div class="stat"><div class="stat-num blue" id="kRecent">-</div><div class="stat-label">近7天新增</div></div>
     <div class="stat"><div class="stat-num" id="kReports">-</div><div class="stat-label">报告模板</div></div>
   </div>
@@ -177,11 +177,13 @@ async function loadReports() {
 
 function renderKpis() {
   var t = allItems.length;
-  var unread = allItems.filter(function(i){ return !isRead(i.id); }).length;
+  // 自然日口径：00:00 起算，跨零点后旧条目不再计入
+  var start = new Date(); start.setHours(0, 0, 0, 0);
+  var today = allItems.filter(function(i){ var d = parseDate(i.created_at); return d && d.getTime() >= start.getTime(); }).length;
   var now = Date.now(), W = 7 * 86400000;
   var recent = allItems.filter(function(i){ var d = parseDate(i.created_at); return d && (now - d.getTime()) < W; }).length;
   document.getElementById('kTotal').textContent = t;
-  document.getElementById('kUnread').textContent = unread;
+  document.getElementById('kToday').textContent = today;
   document.getElementById('kRecent').textContent = recent;
   document.getElementById('kReports').textContent = repList.length;
 }
@@ -246,7 +248,7 @@ async function previewIntel(id) {
     // 面板打开期间列表项可能已被处理，刷新数据
     if (currentPv.type !== 'intel' || currentPv.id !== id) return;
     renderIntelPanel(d);
-    // 刷新 KPI（未读计数实时更新）+ "未读情报"列表（移除刚读项）
+    // 刷新 KPI + "未读情报"列表（移除刚读项）
     renderKpis();
     renderTodo();
   } catch (e) {

@@ -61,7 +61,7 @@
 <main class="main">
   <div class="stats" id="statsRow">
     <div class="stat"><div class="stat-num accent" id="statTotal">-</div><div class="stat-label">全部情报</div></div>
-    <div class="stat"><div class="stat-num gold" id="statUnread">-</div><div class="stat-label">未读</div></div>
+    <div class="stat"><div class="stat-num gold" id="statToday">-</div><div class="stat-label">今日新增</div></div>
     <div class="stat"><div class="stat-num blue" id="statRecent">-</div><div class="stat-label">近7天新增</div></div>
     <div class="stat"><div class="stat-num green" id="statCats">-</div><div class="stat-label">分类</div></div>
   </div>
@@ -231,12 +231,14 @@ function buildSidebarCats() {
 
 function render() {
   var t=allItems.length;
-  var unread=allItems.filter(function(i){return !isRead(i.id)}).length;
+  // 自然日口径：00:00 起算，跨零点后旧条目不再计入
+  var start=new Date(); start.setHours(0,0,0,0);
+  var today=allItems.filter(function(i){var d=parseDate(i.created_at);return d&&d.getTime()>=start.getTime()}).length;
   var now=Date.now(), W=7*86400000;
   var recent=allItems.filter(function(i){var d=parseDate(i.created_at);return d&&(now-d.getTime())<W}).length;
   var catset={};allItems.forEach(function(i){if(i.category)catset[i.category]=1});
   document.getElementById('statTotal').textContent=t;
-  document.getElementById('statUnread').textContent=unread;
+  document.getElementById('statToday').textContent=today;
   document.getElementById('statRecent').textContent=recent;
   document.getElementById('statCats').textContent=Object.keys(catset).length;
   // 状态维度已对用户隐藏，不再渲染状态筛选
