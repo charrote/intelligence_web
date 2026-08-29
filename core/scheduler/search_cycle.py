@@ -37,6 +37,10 @@ _FREQ_HOURS = {
     'monthly': 30 * 24,
 }
 
+# 受控分类词表（closed vocabulary）：LLM 只能从这里选，杜绝分类膨胀。
+# 单一事实来源在 core/db.py；这里 re-export 供提示词与入库校验使用。
+from core.db import CATEGORIES, OTHER_CATEGORY, normalize_category as _normalize_category
+
 
 # ── Config ──────────────────────────────────────────────────
 
@@ -104,6 +108,11 @@ def _judge_and_extract(content: str, context: dict, max_chars: int = 400) -> dic
         "输出纯 JSON 对象：\n"
         '{"relevant": true/false, "title": "文章标题(简短)", "category": "分类", '
         '"summary": "摘要正文"}\n'
+        f"category 必须且只能从以下列表中选择一项（不要自创新分类）：{CATEGORIES}\n"
+        "选择依据：政策/法规/标准类→政策法规；新技术/专利/研发→技术进展；"
+        "市场/价格/供应链→市场动态；竞争对手的产品或动作→竞品动态；"
+        "客户/经销商/供应商→客户动态；财报/人事/投融资/并购→企业公告；"
+        "一般行业新闻→行业动态；都不符合→其他。\n"
         "若文章与项目无关，relevant=false，其余字段为空字符串。\n"
         "不要输出 JSON 以外的任何文字。\n\n"
         "summary 格式要求（严格遵守）：\n"
@@ -411,8 +420,10 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                     if title.lower() in recent_titles:
                         continue
 
-                    # Create intelligence
-                    category = judged.get("category") or target_type or "market"
+                    # Create intelligence（分类强制归一到受控词表，防止词表外值再次进入）
+                    category = _normalize_category(
+                        judged.get("category") or target_type or "market"
+                    )
                     summary = (judged.get("summary") or "").strip()
                     # 附来源（markdown 引用行），来源清晰；链接文本优先用搜索结果原标题
                     if summary and url:

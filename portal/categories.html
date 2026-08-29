@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分类管理</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/responsive.css">
+<script src="js/dom.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/init.js"></script>
+<script src="js/tabs.js"></script>
+<style>
+.badge{display:inline-flex;align-items:center;padding:1px 8px;border-radius:3px;font-size:11px;font-weight:500;line-height:18px}
+.badge-controlled{color:var(--green);background:#eafaf1}
+.badge-custom{color:#b8862d;background:#fef7e6}
+.badge-count{color:var(--gray-500);background:var(--gray-100);font-variant-numeric:tabular-nums}
+.badge-suggest{color:var(--accent);background:#eef1fb}
+.summary-strip{display:flex;gap:28px;padding:14px 18px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;margin-bottom:16px}
+.summary-strip .item{display:flex;align-items:baseline;gap:8px}
+.summary-strip .num{font-size:20px;font-weight:600;color:var(--gray-800);font-variant-numeric:tabular-nums}
+.summary-strip .num.warn{color:#b8862d}
+.summary-strip .lbl{font-size:12px;color:var(--gray-500)}
+.help-box{font-size:12px;color:var(--gray-500);line-height:1.7;background:#f7f9fc;border:1px solid var(--gray-200);border-radius:6px;padding:10px 14px;margin-bottom:18px}
+.help-box strong{color:var(--gray-700)}
+.section-title{font-size:13px;font-weight:600;color:var(--gray-700);margin:20px 0 10px;display:flex;align-items:center;gap:8px}
+.section-title .hint{font-weight:400;color:var(--gray-400);font-size:12px}
+.group-card{border:1px solid var(--gray-200);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.group-head{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)}
+.group-target{font-size:14px;font-weight:600;color:var(--gray-800)}
+.group-target .arrow{color:var(--accent);margin:0 8px}
+.group-total{margin-left:auto;font-size:12px;color:var(--gray-500)}
+.group-body{padding:8px 16px}
+.src-item{display:flex;align-items:center;gap:10px;padding:7px 4px;font-size:13px;color:var(--gray-700);border-bottom:1px solid var(--gray-100)}
+.src-item:last-child{border-bottom:none}
+.src-item input[type=checkbox]{width:15px;height:15px;cursor:pointer;flex-shrink:0}
+.src-item .cnt{margin-left:auto;color:var(--gray-400);font-size:12px;font-variant-numeric:tabular-nums}
+.group-foot{display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--gray-200);background:#fff}
+.group-foot .sel-info{font-size:12px;color:var(--gray-400);margin-right:auto}
+.btn-sm{padding:6px 14px;font-size:12px;border-radius:4px;border:1px solid var(--gray-200);background:#fff;color:var(--gray-700);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .12s}
+.btn-sm:hover{border-color:var(--accent);color:var(--accent)}
+.btn-sm.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-sm.btn-primary:hover{background:#2f3f70;color:#fff}
+.btn-sm.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.btn-sm.ghost-warn{color:#b8862d;border-color:#f0d9a8}
+.btn-sm.ghost-warn:hover{background:#fef7e6;border-color:#e8b84a}
+.empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
+.action-cell{position:sticky;right:0;background:#fff;z-index:1;min-width:150px;text-align:right;padding:10px 12px!important}
+.all-done{padding:24px;text-align:center;font-size:13px;color:var(--green);background:#eafaf1;border:1px solid #c7ecd6;border-radius:6px}
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>分类管理</h1>
+  <p class="sub">维护情报分类受控词表，把历史自定义分类合并到标准分类</p>
+
+  <div class="help-box">
+    <strong>说明：</strong>系统采用受控词表（8 个标准分类）防止分类膨胀，新采集的情报自动归一到标准分类。
+    历史数据里 LLM 随手生成的自定义分类会被标记为 <span class="badge badge-custom">自定义</span>，
+    下方按语义自动建议归组，确认后一键合并（不可撤销）。
+  </div>
+
+  <div class="summary-strip" id="summaryStrip">
+    <div class="item"><span class="num" id="statTotalCats">-</span><span class="lbl">当前分类数</span></div>
+    <div class="item"><span class="num" id="statControlled">-</span><span class="lbl">标准分类</span></div>
+    <div class="item"><span class="num warn" id="statCustom">-</span><span class="lbl">自定义分类</span></div>
+    <div class="item"><span class="num" id="statRecords">-</span><span class="lbl">情报总数</span></div>
+  </div>
+
+  <div class="section-title">智能合并建议 <span class="hint">按语义将自定义分类归入标准分类，可微调勾选</span></div>
+  <div id="groupArea"></div>
+
+  <div class="section-title">全部分类一览 <span class="hint">含标准分类与自定义分类</span></div>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>分类名称</th>
+          <th style="width:90px">情报数</th>
+          <th style="width:100px">类型</th>
+          <th style="width:160px">建议归组</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+var data = { controlled: [], current: [], uncontrolled: [] };
+
+// 关键词 → 标准分类 建议规则（按优先级，首个命中即返回）。
+// 未命中一律建议「其他」。
+var SUGGEST_RULES = [
+  [['政策','标准','合规','法规','规范'], '政策法规'],
+  [['竞品','厂商'], '竞品动态'],
+  [['客户','成单','后服务','经销商','项目'], '客户动态'],
+  [['公司','财报','人事','并购','投融资'], '企业公告'],
+  [['市场','市場','增长预测'], '市场动态'],
+  [['技术','评测','产品','模型','开源','人工智能','算法','MES','系统','软件'], '技术进展'],
+  [['行业','展会','产业','制造业','数字化','数字经济','智能制造','工业','案例','洞察'], '行业动态'],
+];
+
+function suggestTarget(name) {
+  var n = (name || '');
+  for (var i = 0; i < SUGGEST_RULES.length; i++) {
+    var kws = SUGGEST_RULES[i][0];
+    for (var j = 0; j < kws.length; j++) {
+      if (n.indexOf(kws[j]) >= 0) return SUGGEST_RULES[i][1];
+    }
+  }
+  return '其他';
+}
+
+function countOf(name) {
+  var item = data.current.find(function (c) { return c.name === name; });
+  return item ? item.count : 0;
+}
+
+async function init() {
+  try {
+    var r = await apiFetch(APP_API_BASE + '/api/categories/with-counts');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+    renderSummary();
+    renderGroups();
+    renderTable();
+  } catch (e) {
+    document.getElementById('tableBody').innerHTML =
+      '<tr><td colspan="4" class="empty">加载失败：' + escapeHtml(e.message || String(e)) + '</td></tr>';
+  }
+}
+
+function renderSummary() {
+  var totalRecords = data.current.reduce(function (s, c) { return s + c.count; }, 0);
+  document.getElementById('statTotalCats').textContent = data.current.length;
+  document.getElementById('statControlled').textContent =
+    data.current.filter(function (c) { return data.controlled.indexOf(c.name) >= 0; }).length;
+  document.getElementById('statCustom').textContent = data.uncontrolled.length;
+  document.getElementById('statRecords').textContent = totalRecords;
+}
+
+function renderGroups() {
+  var area = document.getElementById('groupArea');
+  if (!data.uncontrolled.length) {
+    area.innerHTML = '<div class="all-done">当前所有分类均在标准词表内，无需合并。新采集情报将自动归一。</div>';
+    return;
+  }
+  // 按建议目标分组
+  var groups = {};
+  data.uncontrolled.forEach(function (name) {
+    var t = suggestTarget(name);
+    if (!groups[t]) groups[t] = [];
+    groups[t].push(name);
+  });
+  // 排序：先标准分类（按 controlled 顺序），其他放最后
+  var order = data.controlled.slice();
+  var keys = order.filter(function (t) { return groups[t] && groups[t].length; });
+  var html = '';
+  keys.forEach(function (target) {
+    html += renderGroup(target, groups[target]);
+  });
+  area.innerHTML = html;
+}
+
+function renderGroup(target, sources) {
+  var total = sources.reduce(function (s, n) { return s + countOf(n); }, 0);
+  var rows = '';
+  sources.forEach(function (name) {
+    var idx = data.uncontrolled.indexOf(name);
+    rows += '<label class="src-item">'
+      + '<input type="checkbox" checked data-idx="' + idx + '"><span>' + escapeHtml(name) + '</span>'
+      + '<span class="cnt">' + countOf(name) + ' 条</span>'
+      + '</label>';
+  });
+  return '<div class="group-card">'
+    + '<div class="group-head">'
+    + '<span class="group-target">' + sources.length + ' 个分类 <span class="arrow">→</span> ' + escapeHtml(target) + '</span>'
+    + '<span class="group-total">共 ' + total + ' 条情报</span>'
+    + '</div>'
+    + '<div class="group-body">' + rows + '</div>'
+    + '<div class="group-foot">'
+    + '<span class="sel-info" data-sel="' + target + '"></span>'
+    + '<button class="btn-sm" data-selectall="' + target + '">全选/取消</button>'
+    + '<button class="btn-sm btn-primary" data-merge="' + target + '">合并本组到「' + escapeHtml(target) + '」</button>'
+    + '</div>'
+    + '</div>';
+}
+
+function renderTable() {
+  var rows = data.current.slice().sort(function (a, b) { return b.count - a.count; });
+  var html = '';
+  if (!rows.length) {
+    html = '<tr><td colspan="4" class="empty">暂无分类数据</td></tr>';
+  } else {
+    rows.forEach(function (c) {
+      var isControlled = data.controlled.indexOf(c.name) >= 0;
+      var badge = isControlled
+        ? '<span class="badge badge-controlled">标准</span>'
+        : '<span class="badge badge-custom">自定义</span>';
+      var suggest = isControlled
+        ? '<span style="color:var(--gray-300);font-size:12px">—</span>'
+        : '<span class="badge badge-suggest">' + escapeHtml(suggestTarget(c.name)) + '</span>';
+      html += '<tr>'
+        + '<td><strong>' + escapeHtml(c.name) + '</strong></td>'
+        + '<td><span class="badge badge-count">' + c.count + '</span></td>'
+        + '<td>' + badge + '</td>'
+        + '<td>' + suggest + '</td>'
+        + '</tr>';
+    });
+  }
+  document.getElementById('tableBody').innerHTML = html;
+}
+
+// 事件委托
+document.addEventListener('click', function (e) {
+  var mergeBtn = e.target.closest('[data-merge]');
+  if (mergeBtn) { doMergeGroup(mergeBtn.getAttribute('data-merge')); return; }
+  var selBtn = e.target.closest('[data-selectall]');
+  if (selBtn) { toggleGroupSelect(selBtn.getAttribute('data-selectall')); }
+});
+
+function selectedIdxs(target) {
+  var card = document.querySelector('[data-merge="' + target + '"]').closest('.group-card');
+  var idxs = [];
+  card.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) {
+    idxs.push(parseInt(cb.getAttribute('data-idx'), 10));
+  });
+  return idxs;
+}
+
+function updateSelInfo(target) {
+  var info = document.querySelector('[data-sel="' + target + '"]');
+  if (!info) return;
+  var n = selectedIdxs(target).length;
+  var total = data.uncontrolled.slice()
+    .filter(function (_, i) { return selectedIdxs(target).indexOf(i) >= 0; })
+    .reduce(function (s, name) { return s + countOf(name); }, 0);
+  info.textContent = '已选 ' + n + ' 个分类 / ' + total + ' 条情报';
+  var btn = document.querySelector('[data-merge="' + target + '"]');
+  if (btn) btn.disabled = n === 0;
+}
+
+document.addEventListener('change', function (e) {
+  if (e.target.matches('input[type=checkbox][data-idx]')) {
+    var target = e.target.closest('.group-card').querySelector('[data-merge]').getAttribute('data-merge');
+    updateSelInfo(target);
+  }
+});
+
+function toggleGroupSelect(target) {
+  var card = document.querySelector('[data-merge="' + target + '"]').closest('.group-card');
+  var cbs = card.querySelectorAll('input[type=checkbox]');
+  var allChecked = Array.prototype.every.call(cbs, function (cb) { return cb.checked; });
+  cbs.forEach(function (cb) { cb.checked = !allChecked; });
+  updateSelInfo(target);
+}
+
+function doMergeGroup(target) {
+  var idxs = selectedIdxs(target);
+  if (!idxs.length) return;
+  var names = idxs.map(function (i) { return data.uncontrolled[i]; });
+  var total = names.reduce(function (s, n) { return s + countOf(n); }, 0);
+  var msg = '把以下 ' + names.length + ' 个分类（共 ' + total + ' 条情报）合并到「' + target + '」？\n\n'
+    + names.map(function (n) { return '  ' + n + '（' + countOf(n) + ' 条）'; }).join('\n')
+    + '\n\n此操作不可撤销。';
+  if (!confirm(msg)) return;
+
+  var btn = document.querySelector('[data-merge="' + target + '"]');
+  btn.disabled = true; btn.textContent = '合并中…';
+  apiFetch(APP_API_BASE + '/api/categories/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sources: names, target: target })
+  }).then(function (r) {
+    var d; return r.json().then(function (x) { d = x; return r; }).then(function (rr) { return { r: rr, d: d }; });
+  }).then(function (res) {
+    if (res.r.ok) { init(); }
+    else { alert('合并失败：' + (res.d.error || 'HTTP ' + res.r.status)); btn.disabled = false; btn.textContent = '合并本组到「' + target + '」'; }
+  }).catch(function (e) {
+    alert('请求失败：' + (e.message || String(e)));
+    btn.disabled = false; btn.textContent = '合并本组到「' + target + '」';
+  });
+}
+
+init();
+</script>
+</body>
+</html>

@@ -449,6 +449,40 @@ def create_app(project_root, spec):
     def categories():
         return jsonify(get_categories(db_path))
 
+    @app.route('/api/categories/with-counts')
+    @require_permission('intel.view')
+    def categories_with_counts():
+        """Categories with record counts + the controlled vocabulary.
+
+        Returns {controlled: [...], current: [{name, count}], uncontrolled: [names]}
+        so the category-manager UI can flag out-of-vocabulary entries.
+        """
+        from core.db import CATEGORIES, get_categories_with_counts
+        current = get_categories_with_counts(db_path)
+        uncontrolled = [c["name"] for c in current if c["name"] not in CATEGORIES]
+        return jsonify({
+            "controlled": CATEGORIES,
+            "current": current,
+            "uncontrolled": uncontrolled,
+        })
+
+    @app.route('/api/categories/merge', methods=['POST'])
+    @require_permission('intel.import')
+    def categories_merge():
+        """Merge one or more source categories into a target.
+
+        Body: {sources: ["A","B"], target: "行业动态"}
+        Idempotent; returns {updated, merged: [actually changed source names]}.
+        """
+        from core.db import merge_categories
+        data = request.get_json(silent=True) or {}
+        sources = data.get('sources') or []
+        target = (data.get('target') or '').strip()
+        if not isinstance(sources, list) or not sources or not target:
+            return jsonify({'error': '需要 sources 数组和 target 分类'}), 400
+        updated, changed = merge_categories(db_path, sources, target)
+        return jsonify({'updated': updated, 'merged': changed, 'target': target})
+
     # ========================================================================
     # Batch Import API
     # ========================================================================

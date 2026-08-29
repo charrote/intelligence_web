@@ -16,6 +16,7 @@ var ROUTES = {
   'users': { page: 'users.html', label: '用户管理' },
   'roles': { page: 'roles.html', label: '角色管理' },
   'import': { page: 'import.html', label: '批量导入' },
+  'categories': { page: 'categories.html', label: '分类管理' },
   'audit': { page: 'audit.html', label: '操作日志' },
   'settings': { page: 'settings.html', label: '个人设置' },
   'sys-settings': { page: 'settings.html', label: '系统设置' },

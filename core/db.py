@@ -507,10 +507,14 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
         industry = metadata.get("industry", "") if metadata else ""
         source_url = metadata.get("source_url", "") if metadata else ""
         now = datetime.now().isoformat()
+        # 分类归一到受控词表（空值保持"未分类"语义，不强制归类）
+        category_norm = (category or "").strip()
+        if category_norm:
+            category_norm = normalize_category(category_norm)
         try:
             cursor = conn.execute(
                 'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, source_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (title.strip(), content, category or '', 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, now, now)
+                (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, now, now)
             )
             conn.commit()
             return cursor.lastrowid
@@ -1396,10 +1400,73 @@ def get_history(db_path, intelligence_id):
         return [dict(r) for r in rows]
 
 
+# 受控分类词表（closed vocabulary）。采集/导入/手动创建都应归一到该表。
+# 与 core/scheduler/search_cycle.py 中的 CATEGORIES 保持一致（那边 import 自这里）。
+CATEGORIES = [
+    "行业动态",
+    "政策法规",
+    "技术进展",
+    "市场动态",
+    "竞品动态",
+    "客户动态",
+    "企业公告",
+    "其他",
+]
+OTHER_CATEGORY = "其他"
+
+
+def normalize_category(raw):
+    """Force any category string into the closed CATEGORIES vocabulary."""
+    raw = (raw or "").strip()
+    if not raw:
+        return OTHER_CATEGORY
+    if raw in CATEGORIES:
+        return raw
+    norm = raw.replace("\u3000", "").strip()
+    if norm in CATEGORIES:
+        return norm
+    return OTHER_CATEGORY
+
+
 def get_categories(db_path):
     with get_db(db_path) as conn:
         rows = conn.execute('SELECT DISTINCT category FROM intelligence WHERE category != ""').fetchall()
         return [r[0] for r in rows]
+
+
+def get_categories_with_counts(db_path):
+    """Return [{name, count}] sorted by count desc — for the category manager UI."""
+    with get_db(db_path) as conn:
+        rows = conn.execute(
+            'SELECT category, COUNT(*) AS c FROM intelligence '
+            'WHERE category != "" GROUP BY category ORDER BY c DESC, category'
+        ).fetchall()
+        return [{"name": r[0], "count": r[1]} for r in rows]
+
+
+def merge_categories(db_path, source_names, target_name):
+    """Merge one or more source categories into target_name.
+
+    Returns (updated_count, list of merged source names actually changed).
+    Refuses to run if target itself would be merged into itself.
+    """
+    target = (target_name or "").strip()
+    sources = [s.strip() for s in (source_names or []) if s and s.strip() and s.strip() != target]
+    if not target or not sources:
+        return 0, []
+    updated = 0
+    changed = []
+    with get_db(db_path) as conn:
+        for s in sources:
+            n = conn.execute(
+                'UPDATE intelligence SET category = ?, updated_at = datetime(\'now\',\'localtime\') '
+                'WHERE category = ?', (target, s)
+            ).rowcount
+            updated += n
+            if n:
+                changed.append(s)
+        conn.commit()
+    return updated, changed
 
 
 def get_intelligence_count_for_project(db_path, project_id):
