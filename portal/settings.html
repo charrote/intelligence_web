@@ -611,7 +611,32 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
 var currentUser = null;
 
 // ── Tab switching ──
+// System-related tabs (system/scheduler/mcp/infra/domains) require settings.manage.
+// Hides them for users without the permission — their APIs return 403 anyway,
+// but the UI should not offer entry points that dead-end in errors.
+function canManageSettings() {
+  var u = null;
+  try { u = JSON.parse(localStorage.getItem('user') || 'null'); } catch (e) {}
+  if (!u) return true; // token not loaded yet — keep visible (avoids hiding admin)
+  if (u.role === 'admin') return true;
+  var perms = null;
+  try { perms = JSON.parse(localStorage.getItem('permissions') || 'null'); } catch (e) {}
+  return !!(perms && perms.indexOf('settings.manage') >= 0);
+}
+
+function applySettingsPermissions() {
+  if (canManageSettings()) return;
+  ['system', 'scheduler', 'mcp', 'infra', 'domains'].forEach(function(tab) {
+    var el = document.querySelector('.settings-tab[data-tab="' + tab + '"]');
+    if (el) el.style.display = 'none';
+  });
+}
+
 function switchSettingsTab(tab) {
+  // Re-check on switch: blocks ?tab=system deep links for unauthorized users.
+  if (['system', 'scheduler', 'mcp', 'infra', 'domains'].indexOf(tab) >= 0 && !canManageSettings()) {
+    tab = 'personal';
+  }
   console.log('[Tab Switch] 切换到:', tab);
   
   document.querySelectorAll('.settings-tab').forEach(function(el) {
@@ -1554,6 +1579,7 @@ async function loadSystemInfo() {
 
 // ── Init ──
 loadUser();
+applySettingsPermissions();
 detectInitialTab();
 </script>
 </body>

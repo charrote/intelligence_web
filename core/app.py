@@ -1,6 +1,6 @@
 """Shared Flask app factory for intelligence domains."""
 
-import os, sys, sqlite3
+import os, sys, sqlite3, hashlib
 import json
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, Response
@@ -100,6 +100,83 @@ def create_app(project_root, spec):
 
     db_path = get_db_path(project_root, spec.get("db_filename") or spec["slug"])
 
+    # ========================================================================
+    # Auth / RBAC helpers
+    # MUST be defined before any route uses @require_auth / @require_permission
+    # (decorators are evaluated when create_app runs, top to bottom).
+    # ========================================================================
+
+    JWT_SECRET = os.environ.get('JWT_SECRET', 'default-dev-secret-change-in-production')
+    JWT_ALGORITHM = 'HS256'
+    JWT_EXPIRY_HOURS = 24
+
+    def _generate_token(user):
+        """Generate a JWT token for the given user."""
+        payload = {
+            'user_id': user['id'],
+            'username': user['username'],
+            'role': user['role'],
+            # Domain access whitelist (slugs). Empty list = all enabled domains
+            # (backward compatible with pre-gating users/tokens).
+            'domains': user.get('domains') or [],
+            # System-level RBAC (platform-wide). Computed at login on the primary
+            # domain. Absent on pre-existing tokens -> endpoints fall back to DB.
+            'role_ids': user.get('role_ids') or [],
+            'permission_codes': user.get('permission_codes') or [],
+            'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+            'iat': datetime.utcnow(),
+        }
+        return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    def _verify_token(token):
+        """Verify a JWT token and return the payload, or None if invalid."""
+        try:
+            return pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError):
+            return None
+
+    def require_auth(f):
+        """Decorator to require JWT auth."""
+        from functools import wraps
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            auth_header = request.headers.get('Authorization', '')
+            token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+            user = _verify_token(token) if token else None
+            if not user:
+                return jsonify({'error': 'Unauthorized'}), 401
+            return f(*args, **kwargs)
+        return decorated
+
+    def require_permission(code):
+        """Decorator factory: require a specific permission code (RBAC).
+        Usage: @require_permission('roles.manage')
+        admin always passes; others must have the code in their role's permissions."""
+        from functools import wraps
+        def decorator(f):
+            @wraps(f)
+            def decorated(*args, **kwargs):
+                auth_header = request.headers.get('Authorization', '')
+                token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+                user = _verify_token(token) if token else None
+                if not user:
+                    return jsonify({'error': 'Unauthorized'}), 401
+                role = user.get('role')
+                if role == 'admin':
+                    return f(*args, **kwargs)
+                # System-level RBAC: prefer the permission codes embedded at login
+                # (platform-wide, works across domains). Fall back to this domain's
+                # DB only for pre-existing tokens that predate the claim.
+                if 'permission_codes' in user:
+                    codes = set(user.get('permission_codes') or [])
+                else:
+                    codes = get_user_permission_codes(db_path, user.get('user_id'), role)
+                if code not in codes:
+                    return jsonify({'error': '没有权限执行此操作'}), 403
+                return f(*args, **kwargs)
+            return decorated
+        return decorator
+
     # --- Init (create base tables if missing) ---
     init_db(project_root, spec)
     
@@ -155,12 +232,14 @@ def create_app(project_root, spec):
 
     # --- Dashboard Stats ---
     @app.route('/api/dashboard/stats')
+    @require_permission('dashboard.view')
     def dashboard_stats():
         stats = get_dashboard_stats(db_path)
         return jsonify(stats)
 
     # --- Intelligence CRUD ---
     @app.route('/api/intelligence', methods=['GET'])
+    @require_permission('intel.view')
     def list_intelligence():
         limit = request.args.get('limit', 100, type=int)
         filters = {
@@ -174,8 +253,9 @@ def create_app(project_root, spec):
         return jsonify(get_intelligences(db_path, filters))
 
     @app.route('/api/intelligence', methods=['POST'])
+    @require_auth
     def create_intel():
-        data = request.json
+        data = request.get_json(silent=True) or {}
         if not data.get('title') or not data.get('content'):
             return jsonify({'error': 'title and content are required'}), 400
         project_id = data.get('project_id')
@@ -198,6 +278,7 @@ def create_app(project_root, spec):
         return jsonify({'id': intel_id, 'status': 'pending'}), 201
 
     @app.route('/api/intelligence/<int:id>', methods=['GET'])
+    @require_permission('intel.view')
     def get_intel(id):
         intel = get_intelligence_by_id(db_path, id)
         if intel is None:
@@ -275,21 +356,28 @@ def create_app(project_root, spec):
         return jsonify({'error': 'not found'}), 404
 
     @app.route('/api/intelligence/<int:id>/status', methods=['PUT'])
+    @require_auth
     def update_status(id):
-        data = request.json
+        data = request.get_json(silent=True) or {}
         status = data.get('status', '')
         opinion = data.get('opinion', '')
+        if not status:
+            return jsonify({'error': 'status required'}), 400
+        if not get_intelligence_by_id(db_path, id):
+            return jsonify({'error': 'not found'}), 404
         update_intelligence_status(db_path, id, status, opinion)
         return jsonify({'ok': True, 'status': status})
 
     @app.route('/api/intelligence/<int:id>/comments', methods=['GET'])
+    @require_permission('intel.view')
     def get_intel_comments(id):
         limit = request.args.get('limit', 20, type=int)
         return jsonify(get_comments(db_path, id, limit))
 
     @app.route('/api/intelligence/<int:id>/comments', methods=['POST'])
+    @require_auth
     def add_intel_comment(id):
-        data = request.json
+        data = request.get_json(silent=True) or {}
         if not data.get('content'):
             return jsonify({'error': 'content required'}), 400
         agent_name = data.get('agent_name', 'unknown')
@@ -334,10 +422,12 @@ def create_app(project_root, spec):
         }), 201
 
     @app.route('/api/intelligence/<int:id>/history', methods=['GET'])
+    @require_permission('intel.view')
     def get_intel_history(id):
         return jsonify(get_history(db_path, id))
 
     @app.route('/api/intelligence/<int:id>/summary', methods=['GET'])
+    @require_permission('intel.view')
     def get_intel_summary(id):
         summary = get_summary(db_path, id)
         if summary:
@@ -345,8 +435,9 @@ def create_app(project_root, spec):
         return jsonify({'content': ''})
 
     @app.route('/api/intelligence/<int:id>/summary', methods=['POST'])
+    @require_auth
     def add_intel_summary(id):
-        data = request.json
+        data = request.get_json(silent=True) or {}
         if not data.get('content'):
             return jsonify({'error': 'content required'}), 400
         sid = add_summary(db_path, id, data['content'])
@@ -354,6 +445,7 @@ def create_app(project_root, spec):
 
     # --- Categories ---
     @app.route('/api/categories')
+    @require_permission('intel.view')
     def categories():
         return jsonify(get_categories(db_path))
 
@@ -557,6 +649,7 @@ def create_app(project_root, spec):
             return None
 
     @app.route('/api/intelligence/import', methods=['POST'])
+    @require_permission('intel.import')
     def batch_import():
         """Batch import intelligence from uploaded Excel/CSV files.
 
@@ -627,10 +720,12 @@ def create_app(project_root, spec):
 
     # --- Commands ---
     @app.route('/api/commands', methods=['GET'])
+    @require_auth
     def commands():
         return jsonify(get_commands(db_path))
 
     @app.route('/api/commands', methods=['POST'])
+    @require_auth
     def add_command_endpoint():
         data = request.json
         if not data.get('content'):
@@ -639,6 +734,7 @@ def create_app(project_root, spec):
         return jsonify({'id': cid}), 201
 
     @app.route('/api/commands/<int:id>', methods=['DELETE'])
+    @require_auth
     def delete_command_endpoint(id):
         _db = sqlite3.connect(db_path)
         _db.execute('DELETE FROM commands WHERE id = ?', (id,))
@@ -647,81 +743,10 @@ def create_app(project_root, spec):
         return jsonify({'ok': True})
 
     # ========================================================================
-    # Auth / RBAC helpers
-    # Defined early so @require_auth / @require_permission are available to the
-    # Projects / Datasources / Target-Types endpoints below.
+    # Auth / RBAC inline-check helpers
+    # (JWT verification and the @require_auth / @require_permission decorators
+    # are defined at the top of create_app, before the first decorated route.)
     # ========================================================================
-
-    JWT_SECRET = os.environ.get('JWT_SECRET', 'default-dev-secret-change-in-production')
-    JWT_ALGORITHM = 'HS256'
-    JWT_EXPIRY_HOURS = 24
-
-    def _generate_token(user):
-        """Generate a JWT token for the given user."""
-        payload = {
-            'user_id': user['id'],
-            'username': user['username'],
-            'role': user['role'],
-            # Domain access whitelist (slugs). Empty list = all enabled domains
-            # (backward compatible with pre-gating users/tokens).
-            'domains': user.get('domains') or [],
-            # System-level RBAC (platform-wide). Computed at login on the primary
-            # domain. Absent on pre-existing tokens -> endpoints fall back to DB.
-            'role_ids': user.get('role_ids') or [],
-            'permission_codes': user.get('permission_codes') or [],
-            'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
-            'iat': datetime.utcnow(),
-        }
-        return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-    def _verify_token(token):
-        """Verify a JWT token and return the payload, or None if invalid."""
-        try:
-            return pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        except (pyjwt.ExpiredSignatureError, pyjwt.InvalidTokenError):
-            return None
-
-    def require_auth(f):
-        """Decorator to require JWT auth."""
-        from functools import wraps
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            auth_header = request.headers.get('Authorization', '')
-            token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
-            user = _verify_token(token) if token else None
-            if not user:
-                return jsonify({'error': 'Unauthorized'}), 401
-            return f(*args, **kwargs)
-        return decorated
-
-    def require_permission(code):
-        """Decorator factory: require a specific permission code (RBAC).
-        Usage: @require_permission('roles.manage')
-        admin always passes; others must have the code in their role's permissions."""
-        from functools import wraps
-        def decorator(f):
-            @wraps(f)
-            def decorated(*args, **kwargs):
-                auth_header = request.headers.get('Authorization', '')
-                token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
-                user = _verify_token(token) if token else None
-                if not user:
-                    return jsonify({'error': 'Unauthorized'}), 401
-                role = user.get('role')
-                if role == 'admin':
-                    return f(*args, **kwargs)
-                # System-level RBAC: prefer the permission codes embedded at login
-                # (platform-wide, works across domains). Fall back to this domain's
-                # DB only for pre-existing tokens that predate the claim.
-                if 'permission_codes' in user:
-                    codes = set(user.get('permission_codes') or [])
-                else:
-                    codes = get_user_permission_codes(db_path, user.get('user_id'), role)
-                if code not in codes:
-                    return jsonify({'error': '没有权限执行此操作'}), 403
-                return f(*args, **kwargs)
-            return decorated
-        return decorator
 
     def _user_perm_codes(user):
         """Resolve a token user's effective permission-code set.
@@ -869,6 +894,31 @@ def create_app(project_root, spec):
             return None  # legacy token / user without a whitelist: allow
         if spec['slug'] not in domains:
             return jsonify({'error': '没有访问「%s」的权限' % spec['title_prefix']}), 403
+        return None
+
+    # --- Global auth gate (RBAC last line of defense) ---
+    # nginx's auth_request is only the first line — the container ports (8766/8767)
+    # are published directly, so every /api/* route must verify the JWT itself.
+    # Whitelist: pre-login self-service (/api/auth/*) and the health probe.
+    _AUTH_GATE_EXCLUDE_EXACT = {
+        '/api/health',
+    }
+
+    @app.before_request
+    def enforce_api_auth():
+        path = request.path
+        if not path.startswith('/api/'):
+            return None
+        if path in _AUTH_GATE_EXCLUDE_EXACT:
+            return None
+        if path.startswith('/api/auth/'):
+            return None
+        auth_header = request.headers.get('Authorization', '')
+        token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else ''
+        if not token:
+            return jsonify({'error': '未登录或登录已过期'}), 401
+        if _verify_token(token) is None:
+            return jsonify({'error': '未登录或登录已过期'}), 401
         return None
 
     # ========================================================================
@@ -1292,6 +1342,7 @@ def create_app(project_root, spec):
     SENSITIVE_KEYS = {'model.api_key', 'mcp.agent_key', 'system.jwt_secret'}
 
     @app.route('/api/system/settings', methods=['GET'])
+    @require_permission('settings.manage')
     def get_system_settings():
         all_settings = get_all_settings(db_path)
         result = {}
@@ -1306,6 +1357,7 @@ def create_app(project_root, spec):
         return jsonify(result)
 
     @app.route('/api/system/settings', methods=['PUT'])
+    @require_permission('settings.manage')
     def update_system_settings():
         data = request.json
         if not data:
@@ -1315,6 +1367,7 @@ def create_app(project_root, spec):
         return jsonify({'success': True, 'count': len(data)})
 
     @app.route('/api/system/services/health')
+    @require_permission('settings.manage')
     def services_health():
         import urllib.request as _urlopen
         import json as _json
@@ -1341,6 +1394,7 @@ def create_app(project_root, spec):
     # ========================================================================
 
     @app.route('/api/system/mcp/info')
+    @require_permission('settings.manage')
     def get_mcp_info():
         """自动检测 MCP 服务器信息，用于 AI Agent 集成配置"""
         import secrets
@@ -1429,6 +1483,7 @@ def create_app(project_root, spec):
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/system/mcp/key/reset', methods=['POST'])
+    @require_permission('settings.manage')
     def reset_mcp_key():
         """重置 MCP Server API Key"""
         import secrets
@@ -1437,6 +1492,7 @@ def create_app(project_root, spec):
         return jsonify({'success': True, 'agent_key': new_key})
 
     @app.route('/api/system/mcp/auth/toggle', methods=['POST'])
+    @require_permission('settings.manage')
     def toggle_mcp_auth():
         """切换 MCP 服务器 API Key 验证开关"""
         import json
@@ -1473,6 +1529,7 @@ def create_app(project_root, spec):
         })
 
     @app.route('/api/system/mcp/auth/status')
+    @require_permission('settings.manage')
     def get_mcp_auth_status():
         """获取 MCP 服务器 API Key 验证开关状态"""
         import json
@@ -1511,6 +1568,7 @@ def create_app(project_root, spec):
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     @app.route('/api/system/domains')
+    @require_permission('settings.manage')
     def list_domains():
         """List all registered domains (admin endpoint)."""
         data = _load_domains()
@@ -1541,6 +1599,7 @@ def create_app(project_root, spec):
         return jsonify({'domains': [d for d in enabled if d.get('slug') in domains]})
 
     @app.route('/api/system/domains/<int:port>/toggle', methods=['PUT'])
+    @require_permission('settings.manage')
     def toggle_domain(port):
         """Enable or disable a domain by port (admin endpoint)."""
         body = request.json or {}
@@ -1648,6 +1707,7 @@ def create_app(project_root, spec):
     # ========================================================================
 
     @app.route('/api/audit/logs')
+    @require_permission('audit.view')
     def list_audit_logs():
         """List audit logs with filtering and pagination."""
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
@@ -1718,6 +1778,7 @@ def create_app(project_root, spec):
         return jsonify({'items': logs, 'total': total})
 
     @app.route('/api/audit/logs/<int:log_id>')
+    @require_permission('audit.view')
     def get_audit_log(log_id):
         """Get single audit log detail."""
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
@@ -1896,6 +1957,31 @@ def create_app(project_root, spec):
         updated['role_ids'] = get_user_role_ids(db_path, user_id)
         updated['role_names'] = get_user_role_names(db_path, user_id)
         return jsonify(updated)
+
+    @app.route('/api/users/me/password', methods=['PUT'])
+    def change_own_password():
+        """Change the current user's own password. Requires the old password
+        for verification (self-service, any authenticated user)."""
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        data = request.get_json(silent=True) or {}
+        old_password = data.get('old_password', '')
+        new_password = data.get('new_password', '')
+        if not old_password or not new_password:
+            return jsonify({'error': '请输入当前密码和新密码'}), 400
+        if len(new_password) < 6:
+            return jsonify({'error': '新密码至少6位'}), 400
+        # Verify the old password against the current user's credentials
+        row = get_user_by_id(db_path, user.get('user_id'))
+        if row is None:
+            return jsonify({'error': '用户不存在'}), 404
+        h = hashlib.sha256((row.get('salt', '') + old_password).encode('utf-8')).hexdigest()
+        if h != row.get('password_hash'):
+            return jsonify({'error': '当前密码不正确'}), 400
+        if update_user_password(db_path, user.get('user_id'), new_password):
+            return jsonify({'ok': True})
+        return jsonify({'error': '修改失败'}), 500
 
     @app.route('/api/users/batch/domains', methods=['PUT'])
     def batch_set_user_domains_endpoint():
@@ -2236,6 +2322,7 @@ def create_app(project_root, spec):
 
     # Deprecated: AI Analyst real-time Q&A (replaced by scheduled reports)
     @app.route('/api/analyst/analyze', methods=['POST'])
+    @require_permission('analyst.use')
     def analyst_analyze():
         """AI 分析师：基于情报数据回答用户问题。
 
@@ -2536,7 +2623,7 @@ def create_app(project_root, spec):
     # ─── 平台级 LLM 配置（所有域共享） ─────────────────────────
 
     @app.route('/api/system/llm', methods=['GET'])
-    @require_auth
+    @require_permission('settings.manage')
     def get_llm_settings():
         """获取平台级 LLM 配置（api_key 脱敏）"""
         from config import get_llm_config
@@ -2550,7 +2637,7 @@ def create_app(project_root, spec):
         return jsonify(cfg)
 
     @app.route('/api/system/llm', methods=['PUT'])
-    @require_auth
+    @require_permission('settings.manage')
     def update_llm_settings():
         """更新平台级 LLM 配置"""
         from config import get_llm_config, save_llm_config
@@ -2570,7 +2657,7 @@ def create_app(project_root, spec):
         return jsonify({'ok': True})
 
     @app.route('/api/system/llm/test', methods=['POST'])
-    @require_auth
+    @require_permission('settings.manage')
     def test_llm_connection():
         """测试 LLM 连接"""
         from core.scheduler.llm_client import call_llm
@@ -2582,7 +2669,7 @@ def create_app(project_root, spec):
     # ─── Tavily 搜索配置 ──────────────────────────────────────────
 
     @app.route('/api/system/tavily', methods=['GET'])
-    @require_auth
+    @require_permission('settings.manage')
     def get_tavily_settings():
         """获取 Tavily 搜索配置（api_key 脱敏）"""
         from config import get_tavily_config
@@ -2596,7 +2683,7 @@ def create_app(project_root, spec):
         return jsonify(cfg)
 
     @app.route('/api/system/tavily', methods=['PUT'])
-    @require_auth
+    @require_permission('settings.manage')
     def update_tavily_settings():
         """更新 Tavily 搜索配置"""
         from config import get_tavily_config, save_tavily_config
@@ -2623,7 +2710,7 @@ def create_app(project_root, spec):
         return jsonify({'register_enabled': _register_enabled(db_path)})
 
     @app.route('/api/system/register', methods=['GET'])
-    @require_auth
+    @require_permission('settings.manage')
     def get_register_settings():
         """获取注册开放开关（admin）。"""
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
@@ -2632,7 +2719,7 @@ def create_app(project_root, spec):
         return jsonify({'register_enabled': _register_enabled(db_path)})
 
     @app.route('/api/system/register', methods=['PUT'])
-    @require_auth
+    @require_permission('settings.manage')
     def update_register_settings():
         """更新注册开放开关（admin）。enabled: true/false。"""
         user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
@@ -2645,7 +2732,7 @@ def create_app(project_root, spec):
         return jsonify({'ok': True, 'register_enabled': enabled})
 
     @app.route('/api/system/tavily/test', methods=['POST'])
-    @require_auth
+    @require_permission('settings.manage')
     def test_tavily_connection():
         """测试 Tavily API 连通性（发一次真实搜索）"""
         import requests
@@ -2670,14 +2757,14 @@ def create_app(project_root, spec):
     # ─── 搜刮调度配置（系统自驱） ─────────────────────────────────
 
     @app.route('/api/system/search', methods=['GET'])
-    @require_auth
+    @require_permission('settings.manage')
     def get_search_settings():
         """获取搜刮调度配置。"""
         from config import get_search_config
         return jsonify(get_search_config())
 
     @app.route('/api/system/search', methods=['PUT'])
-    @require_auth
+    @require_permission('settings.manage')
     def update_search_settings():
         """更新搜刮调度配置。"""
         from config import get_search_config, save_search_config
@@ -2692,7 +2779,7 @@ def create_app(project_root, spec):
         return jsonify({'ok': True})
 
     @app.route('/api/system/search/trigger', methods=['POST'])
-    @require_auth
+    @require_permission('settings.manage')
     def trigger_search_cycle():
         """手动触发一次搜刮（后台异步执行，立即返回）。
 
@@ -2710,7 +2797,7 @@ def create_app(project_root, spec):
     }
 
     @app.route('/api/system/search/runs', methods=['GET'])
-    @require_auth
+    @require_permission('settings.manage')
     def list_search_runs():
         """调度履历简报：合并两个域的搜刮运行记录（新 → 旧）。
 
@@ -2774,7 +2861,7 @@ def create_app(project_root, spec):
     # ─── 抽取规则管理 API ──────────────────────────────────────
 
     @app.route('/api/extract/rules', methods=['GET'])
-    @require_auth
+    @require_permission('rules.manage')
     def list_extract_rules():
         """List all extraction rules."""
         domain = request.args.get('domain')
@@ -2798,7 +2885,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/extract/rules', methods=['POST'])
-    @require_auth
+    @require_permission('rules.manage')
     def create_extract_rule():
         """Create a new extraction rule.
 
@@ -2865,7 +2952,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/extract/rules/<int:rule_id>', methods=['PUT'])
-    @require_auth
+    @require_permission('rules.manage')
     def update_extract_rule(rule_id):
         """Update extraction rule (replace fields).
 
@@ -2906,7 +2993,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/extract/rules/<int:rule_id>', methods=['DELETE'])
-    @require_auth
+    @require_permission('rules.manage')
     def delete_extract_rule(rule_id):
         """Delete extraction rule (built-in cannot be deleted)."""
         with get_db(db_path) as conn:
@@ -2921,7 +3008,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/extract/rules/<int:rule_id>/trigger', methods=['POST'])
-    @require_auth
+    @require_permission('rules.manage')
     def trigger_extract(rule_id):
         """Manually trigger extraction for all pending intelligence."""
         with get_db(db_path) as conn:
@@ -2935,7 +3022,7 @@ def create_app(project_root, spec):
         return jsonify(result)
 
     @app.route('/api/extract/trigger', methods=['POST'])
-    @require_auth
+    @require_permission('rules.manage')
     def trigger_extract_all():
         """Manually trigger a full extraction cycle (async).
 
@@ -2948,7 +3035,7 @@ def create_app(project_root, spec):
     # ─── 报告模板管理 API ──────────────────────────────────────
 
     @app.route('/api/reports/templates', methods=['GET'])
-    @require_auth
+    @require_permission('reports.view')
     def list_report_templates():
         """List all report templates."""
         domain = request.args.get('domain')
@@ -2973,7 +3060,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/templates', methods=['POST'])
-    @require_auth
+    @require_permission('reports.manage')
     def create_report_template():
         """Create a report template.
 
@@ -3019,7 +3106,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/templates/<int:template_id>', methods=['GET'])
-    @require_auth
+    @require_permission('reports.view')
     def get_report_template(template_id):
         """Get template details."""
         with get_db(db_path) as conn:
@@ -3036,7 +3123,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/templates/<int:template_id>', methods=['PUT'])
-    @require_auth
+    @require_permission('reports.manage')
     def update_report_template(template_id):
         """Update report template.
 
@@ -3087,7 +3174,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/templates/<int:template_id>', methods=['DELETE'])
-    @require_auth
+    @require_permission('reports.manage')
     def delete_report_template(template_id):
         """Delete report template (built-in cannot be deleted)."""
         with get_db(db_path) as conn:
@@ -3199,7 +3286,7 @@ def create_app(project_root, spec):
     # ─── 调度器管理 API ────────────────────────────────────────
 
     @app.route('/api/reports/scheduler', methods=['GET'])
-    @require_auth
+    @require_permission('reports.view')
     def scheduler_status():
         """Get scheduler status and template summary."""
         with get_db(db_path) as conn:
@@ -3218,7 +3305,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/scheduler/toggle', methods=['POST'])
-    @require_auth
+    @require_permission('reports.manage')
     def toggle_scheduler():
         """Enable/disable scheduler components."""
         data = request.get_json()
@@ -3259,7 +3346,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/scheduler/run-all', methods=['POST'])
-    @require_auth
+    @require_permission('reports.manage')
     def scheduler_run_all():
         """Trigger all due reports now."""
         result = trigger_report_all()
@@ -3267,7 +3354,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/scheduler/reset-fused/<int:template_id>', methods=['POST'])
-    @require_auth
+    @require_permission('reports.manage')
     def reset_fused(template_id):
         """Reset a template from fused state."""
         with get_db(db_path) as conn:
@@ -3355,7 +3442,7 @@ def create_app(project_root, spec):
 
 
     @app.route('/api/reports/overview', methods=['GET'])
-    @require_auth
+    @require_permission('reports.view')
     def report_overview():
         """Get latest execution summary for all templates."""
         with get_db(db_path) as conn:
@@ -3382,7 +3469,7 @@ def create_app(project_root, spec):
     # ──────────────────────────────────────────────
 
     @app.route('/api/ai/analysis/configs', methods=['GET'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_configs():
         """Get analysis config list."""
         domain = request.args.get('domain')
@@ -3393,7 +3480,7 @@ def create_app(project_root, spec):
         return jsonify(configs)
 
     @app.route('/api/ai/analysis/configs/<int:config_id>', methods=['GET'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_config_detail(config_id):
         """Get single analysis config."""
         config = get_ai_analysis_config_by_id(db_path, config_id)
@@ -3402,7 +3489,7 @@ def create_app(project_root, spec):
         return jsonify(config)
 
     @app.route('/api/ai/analysis/configs', methods=['POST'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_config_create():
         """Create analysis config."""
         data = request.json
@@ -3412,7 +3499,7 @@ def create_app(project_root, spec):
         return jsonify({"success": True, "id": config_id})
 
     @app.route('/api/ai/analysis/configs/<int:config_id>', methods=['PUT'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_config_update(config_id):
         """Update analysis config."""
         data = request.json
@@ -3424,7 +3511,7 @@ def create_app(project_root, spec):
         return jsonify({"success": True, "id": config_id})
 
     @app.route('/api/ai/analysis/configs/<int:config_id>/toggle', methods=['POST'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_config_toggle(config_id):
         """Toggle config enabled/disabled."""
         data = request.json
@@ -3433,7 +3520,7 @@ def create_app(project_root, spec):
         return jsonify({"success": True, "enabled": enabled})
 
     @app.route('/api/ai/analysis/configs/<int:config_id>', methods=['DELETE'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_config_delete(config_id):
         """Delete analysis config."""
         delete_ai_analysis_config(db_path, config_id)
@@ -3444,7 +3531,7 @@ def create_app(project_root, spec):
     # ──────────────────────────────────────────────
 
     @app.route('/api/ai/analysis/runs', methods=['GET'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_runs():
         """Get analysis run list."""
         config_id = request.args.get('config_id')
@@ -3454,7 +3541,7 @@ def create_app(project_root, spec):
         return jsonify(runs)
 
     @app.route('/api/ai/analysis/runs/<int:run_id>', methods=['GET'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_run_detail(run_id):
         """Get single analysis run details."""
         run = get_ai_analysis_run_by_id(db_path, run_id)
@@ -3467,14 +3554,14 @@ def create_app(project_root, spec):
         return jsonify(run)
 
     @app.route('/api/ai/analysis/runs/<int:run_id>', methods=['DELETE'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_run_delete(run_id):
         """Delete analysis run."""
         delete_ai_analysis_run(db_path, run_id)
         return jsonify({"success": True})
 
     @app.route('/api/ai/analysis/runs/<int:run_id>/re-run', methods=['POST'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_run_re_run(run_id):
         """Re-run an analysis."""
         run = get_ai_analysis_run_by_id(db_path, run_id)
@@ -3496,7 +3583,7 @@ def create_app(project_root, spec):
     # ──────────────────────────────────────────────
 
     @app.route('/api/ai/analysis/run', methods=['POST'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_analysis_run():
         """Natural language analysis - one-shot execution."""
         data = request.json
@@ -3511,7 +3598,7 @@ def create_app(project_root, spec):
         return jsonify(result)
 
     @app.route('/api/ai/generate-config', methods=['POST'])
-    @require_auth
+    @require_permission('analyst.use')
     def api_ai_generate_config():
         """Generate structured config (extraction rule + report template) from natural language."""
         data = request.get_json(silent=True) or {}
