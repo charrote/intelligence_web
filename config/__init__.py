@@ -159,6 +159,13 @@ _DEFAULT_SEARCH = {
     "max_llm_calls_per_cycle": 50,  # 每轮 LLM 调用安全上限
     "results_per_keyword": 5,       # 每关键词搜索结果数
     "content_max_chars": 400,       # 摘要最大字数
+    "recency_days": 30,             # 全局时效窗口（天）：项目频率未映射时的兜底
+    "fetch_page_for_date": True,    # 搜索结果无发布日期时，抓页面提取发布时间（二次过滤用）
+    "feed_prefer_high_freq": True,  # 高频项目（hourly/daily）有 feed 源时优先走 feed，跳过全网搜索
+    "feed_max_items": 20,           # 每个 feed 每轮最多处理条数
+    "feed_timeout": 15,             # feed 抓取超时（秒）
+    "page_fetch_timeout": 10,       # 抓页面提取发布时间的超时（秒）
+    "page_fetch_workers": 4,        # 抓页面提取发布时间的并发数
 }
 
 

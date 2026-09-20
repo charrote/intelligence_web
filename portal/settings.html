@@ -553,6 +553,29 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
             <input type="number" id="search_content_max" min="50" max="2000" value="400">
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>默认时效窗口（天）</label>
+            <input type="number" id="search_recency_days" min="1" max="365" value="30">
+            <div class="hint">一次性/未知频率项目的采集时效兜底；固定频率项目按频率硬约束：每小时→1天、每日→7天、每周→30天、每月→365天</div>
+          </div>
+          <div class="form-group">
+            <label>无日期时抓页面补发布时间</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="search_fetch_page_for_date" checked style="width:18px;height:18px">
+              <span style="font-size:13px;color:var(--gray-600)">搜索结果缺发布日期时抓页面提取，用于丢弃旧文</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>高频项目优先走 feed</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="search_feed_prefer_high_freq" checked style="width:18px;height:18px">
+              <span style="font-size:13px;color:var(--gray-600)">每小时/每日项目挂了 RSS/Atom 源时，本轮只采 feed（新在前、带发布时间）</span>
+            </label>
+          </div>
+        </div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
           <button class="btn btn-primary" onclick="saveSearchSettings()">保存搜刮配置</button>
           <button class="btn btn-ghost" onclick="triggerSearchCycle()" id="triggerSearchBtn">立即搜刮一次</button>
@@ -991,6 +1014,9 @@ async function loadSearchSettings() {
     if (cfg.max_keywords_per_project !== undefined) document.getElementById('search_max_keywords').value = cfg.max_keywords_per_project;
     if (cfg.max_llm_calls_per_cycle !== undefined) document.getElementById('search_max_llm_calls').value = cfg.max_llm_calls_per_cycle;
     if (cfg.content_max_chars !== undefined) document.getElementById('search_content_max').value = cfg.content_max_chars;
+    if (cfg.recency_days !== undefined) document.getElementById('search_recency_days').value = cfg.recency_days;
+    if (cfg.fetch_page_for_date !== undefined) document.getElementById('search_fetch_page_for_date').checked = cfg.fetch_page_for_date !== false;
+    if (cfg.feed_prefer_high_freq !== undefined) document.getElementById('search_feed_prefer_high_freq').checked = cfg.feed_prefer_high_freq !== false;
   } catch(e) {
     console.error('加载搜刮配置失败:', e);
   }
@@ -1003,6 +1029,9 @@ async function saveSearchSettings() {
     max_keywords_per_project: parseInt(document.getElementById('search_max_keywords').value) || 5,
     max_llm_calls_per_cycle: parseInt(document.getElementById('search_max_llm_calls').value) || 50,
     content_max_chars: parseInt(document.getElementById('search_content_max').value) || 400,
+    recency_days: parseInt(document.getElementById('search_recency_days').value) || 30,
+    fetch_page_for_date: document.getElementById('search_fetch_page_for_date').checked,
+    feed_prefer_high_freq: document.getElementById('search_feed_prefer_high_freq').checked,
   };
   try {
     var r = await apiFetch(systemApiBase() + '/api/system/search', {

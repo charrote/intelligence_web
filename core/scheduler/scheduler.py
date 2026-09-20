@@ -50,6 +50,13 @@ def start_scheduler():
         id="daily_cleanup",
         replace_existing=True,
     )
+    scheduler.add_job(
+        func=_run_intel_ttl,
+        trigger=CronTrigger(hour=4, minute=0),
+        id="intel_ttl",
+        replace_existing=True,
+        misfire_grace_time=600,
+    )
 
     # 搜刮调度（方案B：每小时 tick + 每项目到期判定，频率见 projects.frequency）
     try:
@@ -141,6 +148,38 @@ def _run_cleanup():
         logger.info(f"[cleanup] Deleted {deleted} expired report_run records")
 
     _update_scheduler("last_cleanup_time", _now_iso())
+
+
+def _run_intel_ttl():
+    """Daily TTL job: mark intelligence older than intelligence_ttl_days as expired.
+
+    过期 = 不删除、只降权（看板"陈旧"标 + 搜索排序降权）。
+    TTL 取值：settings 表 intel.ttl_days（由 web 进程启动时从 domain spec 同步，
+    JSON：{"default": N, 分类: 天数...}），缺失时回退 90 天。
+    """
+    from core.db import mark_expired_intelligence
+
+    db_path = _get_db_path()
+    raw = get_setting(db_path, "intel.ttl_days") or ""
+    ttl = None
+    if raw:
+        try:
+            ttl = json.loads(raw)  # 正常形态：JSON 映射
+        except (json.JSONDecodeError, TypeError):
+            try:
+                ttl = int(raw)  # 旧形态：纯天数
+            except (TypeError, ValueError):
+                ttl = None
+    if ttl is None:
+        ttl = 90
+
+    try:
+        marked = mark_expired_intelligence(db_path, ttl)
+        if marked > 0:
+            ttl_desc = ttl if isinstance(ttl, int) else f"default={ttl.get('default', 90)}d, 分类={ {k: v for k, v in ttl.items() if k != 'default'} }"
+            logger.info(f"[intel_ttl] domain={os.environ.get('ANALYZER_DB_SLUG', 'intelligence')} marked {marked} intel expired (ttl={ttl_desc})")
+    except Exception as e:
+        logger.error(f"[intel_ttl] Error: {e}")
 
 
 def _run_search_tick():

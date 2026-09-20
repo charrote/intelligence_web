@@ -185,6 +185,15 @@ def create_app(project_root, spec):
     # built-in rule/template (never a cross-domain record).
     migrate_db(db_path, domain_key=spec.get("domain_key"))
 
+    # --- 情报 TTL 同步：domain spec 的 intelligence_ttl_days 是单一事实来源，
+    #     整体（含按分类的 TTL）落到 settings 表供 scheduler 的每日淘汰任务读取。 ---
+    try:
+        ttl_map = spec.get("intelligence_ttl_days") or {"default": 90}
+        set_setting(db_path, 'intel.ttl_days',
+                    json.dumps(ttl_map, ensure_ascii=False), category='intel')
+    except Exception as e:
+        print(f"[create_app] sync intel.ttl_days failed: {e}")
+
     # --- Seed demo data (research domain, empty db only) ---
     _seed_research_demos(db_path, spec)
 
@@ -2806,7 +2815,10 @@ def create_app(project_root, spec):
         current = get_search_config()
         for k in ('enabled', 'max_per_domain',
                   'max_keywords_per_project', 'max_llm_calls_per_cycle',
-                  'results_per_keyword', 'content_max_chars'):
+                  'results_per_keyword', 'content_max_chars',
+                  'recency_days', 'fetch_page_for_date',
+                  'feed_prefer_high_freq', 'feed_max_items', 'feed_timeout',
+                  'page_fetch_timeout', 'page_fetch_workers'):
             if k in data and data[k] is not None:
                 current[k] = data[k]
         save_search_config(current)

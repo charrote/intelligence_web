@@ -491,7 +491,7 @@ def get_db(db_path):
         conn.close()
 
 
-def create_intelligence(db_path, title, content, category, contact_name, metadata=None, project_id=None):
+def create_intelligence(db_path, title, content, category, contact_name, metadata=None, project_id=None, published_date=""):
     """Create a new intelligence record. Returns the id or None on duplicate."""
     with get_db(db_path) as conn:
         title_norm = title.strip().lower()
@@ -506,16 +506,26 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
         deal_value = metadata.get("deal_value", 0) if metadata else 0
         industry = metadata.get("industry", "") if metadata else ""
         source_url = metadata.get("source_url", "") if metadata else ""
+        published = (published_date or "").strip()[:10]  # 文章发布时间 YYYY-MM-DD（可空）
         now = datetime.now().isoformat()
         # 分类归一到受控词表（空值保持"未分类"语义，不强制归类）
         category_norm = (category or "").strip()
         if category_norm:
             category_norm = normalize_category(category_norm)
         try:
-            cursor = conn.execute(
-                'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, source_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, now, now)
-            )
+            try:
+                cursor = conn.execute(
+                    'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, source_url, published_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, published, now, now)
+                )
+            except sqlite3.OperationalError as col_err:
+                # 滚动发布窗口：旧库尚无 published_date 列（web 进程启动时迁移）→ 降级写入
+                if 'published_date' not in str(col_err):
+                    raise
+                cursor = conn.execute(
+                    'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, source_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, now, now)
+                )
             conn.commit()
             return cursor.lastrowid
         except Exception as e:
@@ -1380,6 +1390,66 @@ def update_intelligence_status(db_path, id, status, opinion=''):
         conn.commit()
 
 
+def mark_expired_intelligence(db_path, ttl):
+    """TTL 淘汰：把超过 TTL 的情报标记 is_expired=1（不删除，仅降权/打陈旧标）。
+
+    ttl 支持两种形态：
+      - int：全局 TTL 天数；
+      - dict：{分类: 天数, "default": N}，按分类分别判定（销售域 domain spec
+        即此形态，如 展会信息=7 / 市场价格=30 / default=180）。
+
+    时效基准：优先文章发布时间 published_date，缺失时退回入库时间 created_at。
+    幂等：已标记的不再处理。返回本次新标记的条数。
+    """
+    # 归一成 {分类: 天数}，'default' 兜底
+    if isinstance(ttl, dict):
+        default_days = _ttl_int(ttl.get('default'), 90)
+        groups = {
+            str(cat): _ttl_int(days, default_days)
+            for cat, days in ttl.items() if str(cat) != 'default'
+        }
+    else:
+        default_days = _ttl_int(ttl, 90)
+        groups = {}
+    if default_days <= 0 and not any(d > 0 for d in groups.values()):
+        return 0
+
+    now = datetime.now()
+
+    def _cutoff(days):
+        return (now - timedelta(days=days)).isoformat()
+
+    groups = {c: d for c, d in groups.items() if d > 0}
+    if groups:
+        params = [now.isoformat()]
+        case_sql = 'CASE'
+        for cat, days in groups.items():
+            case_sql += f' WHEN category = ? THEN ?'
+            params.extend([cat, _cutoff(days)])
+        case_sql += ' ELSE ? END'
+        params.append(_cutoff(default_days))
+        where_sql = f'(COALESCE(NULLIF(published_date, \'\'), created_at) < {case_sql})'
+    else:
+        params = [now.isoformat(), _cutoff(default_days)]
+        where_sql = "(COALESCE(NULLIF(published_date, ''), created_at) < ?)"
+
+    with get_db(db_path) as conn:
+        cur = conn.execute(
+            f"UPDATE intelligence SET is_expired = 1, updated_at = ? WHERE is_expired = 0 AND {where_sql}",
+            params
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def _ttl_int(value, fallback):
+    try:
+        v = int(value)
+        return v if v > 0 else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
 def add_history(db_path, intelligence_id, action, detail='', file_location=''):
     with get_db(db_path) as conn:
         now = datetime.now().isoformat()
@@ -1924,6 +1994,19 @@ def migrate_db(db_path, domain_key=None):
                 pass  # column already exists
             try:
                 c.execute('ALTER TABLE intelligence ADD COLUMN share_enabled INTEGER DEFAULT 0')
+            except Exception:
+                pass  # column already exists
+
+            # Migration: 文章发布时间（采集时从源页面/feed 提取，时效判断与 TTL 用）
+            try:
+                c.execute('ALTER TABLE intelligence ADD COLUMN published_date TEXT DEFAULT ""')
+            except Exception:
+                pass  # column already exists
+
+            # Migration: TTL 过期标记（每日任务把超过 intelligence_ttl_days 的情报置 1，
+            # 看板打"陈旧"标、搜索降权）
+            try:
+                c.execute('ALTER TABLE intelligence ADD COLUMN is_expired INTEGER DEFAULT 0')
             except Exception:
                 pass  # column already exists
 

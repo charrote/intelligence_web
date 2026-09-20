@@ -63,6 +63,7 @@
     <div class="stat"><div class="stat-num accent" id="statTotal">-</div><div class="stat-label">全部情报</div></div>
     <div class="stat"><div class="stat-num gold" id="statToday">-</div><div class="stat-label">今日新增</div></div>
     <div class="stat"><div class="stat-num blue" id="statRecent">-</div><div class="stat-label">近7天新增</div></div>
+    <div class="stat"><div class="stat-num" id="statStale" style="color:var(--gray-400)">-</div><div class="stat-label">陈旧</div></div>
     <div class="stat"><div class="stat-num green" id="statCats">-</div><div class="stat-label">分类</div></div>
   </div>
   <div class="toolbar">
@@ -236,10 +237,12 @@ function render() {
   var today=allItems.filter(function(i){var d=parseDate(i.created_at);return d&&d.getTime()>=start.getTime()}).length;
   var now=Date.now(), W=7*86400000;
   var recent=allItems.filter(function(i){var d=parseDate(i.created_at);return d&&(now-d.getTime())<W}).length;
+  var stale=allItems.filter(function(i){return i.is_expired===1||i.is_expired===true}).length;
   var catset={};allItems.forEach(function(i){if(i.category)catset[i.category]=1});
   document.getElementById('statTotal').textContent=t;
   document.getElementById('statToday').textContent=today;
   document.getElementById('statRecent').textContent=recent;
+  var stEl=document.getElementById('statStale'); if(stEl) stEl.textContent=stale;
   document.getElementById('statCats').textContent=Object.keys(catset).length;
   // 状态维度已对用户隐藏，不再渲染状态筛选
   var cs=document.getElementById('catFilter'); var cats=[]; for(var i=0;i<allItems.length;i++){if(allItems[i].category&&cats.indexOf(allItems[i].category)===-1)cats.push(allItems[i].category)}
@@ -287,12 +290,13 @@ function renderFeed(items) {
       var proj=allProjects.find(function(p){return p.id==item.project_id});
       if(proj) projTag='<span class="tag" style="background:var(--accent-light);color:var(--accent);font-size:10px">'+escapeHtml(proj.name)+'</span>';
     }
+    var staleTag=(item.is_expired===1||item.is_expired===true)?'<span class="tag" style="background:var(--gray-100);color:var(--gray-400);font-size:10px" title="已超过情报 TTL，仅降权保留">陈旧</span>':'';
     return '<div class="row" onclick="openDetail('+item.id+')">'
     +'<div class="row-index">'+(gi+1).toString().padStart(2,'0')+'</div>'
     +'<div class="row-body"><div class="row-title'+(isRead(item.id)?' read':'')+'">'+escapeHtml(item.title||'')+'</div>'
     +'<div class="row-meta">'+(item.category?'<span class="tag">'+escapeHtml(item.category)+'</span>':'')
     +(co?'<span class="tag tag-company">'+co+'</span>':'')+(de?'<span class="deal">'+de+'</span>':'')
-    +projTag+ents
+    +staleTag+projTag+ents
     +'<span>'+formatDate(item.created_at)+'</span>'
     +(item.comment_count>0?'<span style="display:flex;align-items:center;gap:3px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'+item.comment_count+'</span>':'')
     +'</div></div></div>'
@@ -362,9 +366,11 @@ async function openDetail(id) {
 function renderDetail() {
   var d=currentIntel; var body=document.getElementById('panelBody'); var foot=document.getElementById('panelFoot');
   var ents=(d.entities||[]).map(function(e){return '<span class="tag" style="background:#f0e6ff;color:#722ed1">'+escapeHtml(e)+'</span>'}).join('');
+  var staleTag=(d.is_expired===1||d.is_expired===true)?'<span class="tag" style="background:var(--gray-100);color:var(--gray-400)" title="已超过情报 TTL，仅降权保留">陈旧</span>':'';
   body.innerHTML='<div class="detail-meta">'
     +(d.category?'<span class="tag tag-cat">'+escapeHtml(d.category)+'</span>':'')
     +(d.company?'<span class="tag tag-company">'+escapeHtml(d.company)+'</span>':'')
+    +staleTag
     +'</div>'
     +(ents?'<div style="margin-bottom:12px;font-size:12px;color:var(--gray-600)"><span style="color:var(--gray-400);margin-right:4px;">关联实体：</span>'+ents+'</div>':'')
     +(d.opinion?'<div class="detail-opinion">意见：'+escapeHtml(d.opinion)+'</div>':'')

@@ -4,5 +4,12 @@
   "max_keywords_per_project": 10,
   "max_llm_calls_per_cycle": 50,
   "results_per_keyword": 5,
-  "content_max_chars": 600
+  "content_max_chars": 600,
+  "recency_days": 14,
+  "fetch_page_for_date": true,
+  "feed_prefer_high_freq": true,
+  "feed_max_items": 20,
+  "feed_timeout": 15,
+  "page_fetch_timeout": 10,
+  "page_fetch_workers": 4
 }
