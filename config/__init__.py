@@ -159,6 +159,7 @@ _DEFAULT_SEARCH = {
     "max_llm_calls_per_cycle": 50,  # 每轮 LLM 调用安全上限
     "results_per_keyword": 5,       # 每关键词搜索结果数
     "content_max_chars": 400,       # 摘要最大字数
+    "max_items_per_source": 10,     # 仅采集源模式：每个数据源每轮最多取条目数
 }
 
 

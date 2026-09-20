@@ -16,6 +16,7 @@ import os
 import json
 import re
 import time
+import xml.etree.ElementTree as ET
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -39,7 +40,12 @@ _FREQ_HOURS = {
 
 # 受控分类词表（closed vocabulary）：LLM 只能从这里选，杜绝分类膨胀。
 # 单一事实来源在 core/db.py；这里 re-export 供提示词与入库校验使用。
-from core.db import CATEGORIES, OTHER_CATEGORY, normalize_category as _normalize_category
+from core.db import (
+    CATEGORIES, OTHER_CATEGORY,
+    normalize_category as _normalize_category,
+    create_intelligence,
+    update_intelligence_status,
+)
 
 
 # ── Config ──────────────────────────────────────────────────
@@ -250,6 +256,284 @@ def _read_web(url: str) -> str:
         return ""
 
 
+# ── 采集源直采（source_only 模式） ──────────────────────────────
+
+# 采集频率 → 新鲜度窗口（小时）：feed 条目早于窗口的视为旧料丢弃，
+# 避免同一批旧条目每轮反复进 LLM 判断。
+_RECENCY_HOURS = {
+    'hourly': 24,
+    'daily': 48,
+    'weekly': 14 * 24,
+    'monthly': 60 * 24,
+}
+
+_ATOM = '{http://www.w3.org/2005/Atom}'
+_DC_DATE = '{http://purl.org/dc/elements/1.1/}date'
+_RDF_ITEM = '{http://purl.org/rss/1.0/}item'
+
+
+def _recency_cutoff(frequency) -> datetime:
+    """给定频率的新鲜度窗口起点（UTC）。未知频率默认 7 天。"""
+    hours = _RECENCY_HOURS.get(frequency, 7 * 24)
+    return datetime.now(timezone.utc) - timedelta(hours=hours)
+
+
+def _looks_like_feed(text: str) -> bool:
+    head = (text or '').lstrip()[:500].lower()
+    if not head:
+        return False
+    if head.startswith('<rss') or head.startswith('<feed') or head.startswith('<rdf'):
+        return True
+    if head.startswith('<?xml'):
+        return any(k in head for k in ('<rss', '<feed', '<rdf', 'rss/1.0', 'w3.org/2005/atom'))
+    return False
+
+
+def _parse_feed_date(s):
+    """解析 feed 发布时间（RFC822 / ISO8601）。失败返回 None。"""
+    if not s:
+        return None
+    s = str(s).strip()
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(s)
+        if dt:
+            return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _strip_html(s) -> str:
+    if not s:
+        return ''
+    return BeautifulSoup(s, 'lxml').get_text(' ', strip=True)
+
+
+def _feed_item_from_rss(item, base_url) -> dict:
+    def text_of(tag):
+        el = item.find(tag)
+        return (el.text or '').strip() if el is not None and el.text else ''
+
+    title = text_of('title')
+    link = text_of('link')
+    if not link:  # 兼容 <link href="..."/> 写法
+        el = item.find('link')
+        if el is not None:
+            link = (el.get('href') or el.get('url') or '').strip()
+    summary = _strip_html(text_of('description') or text_of('encoded') or text_of('content'))
+    published = _parse_feed_date(text_of('pubDate'))
+    if published is None:
+        el = item.find(_DC_DATE)
+        published = _parse_feed_date(el.text if el is not None else '')
+    return {
+        "title": title,
+        "link": link or base_url,
+        "summary": summary[:3000],
+        "published_dt": published,
+    }
+
+
+def _feed_item_from_atom(item, base_url) -> dict:
+    title_el = item.find(_ATOM + 'title')
+    title = (title_el.text or '').strip() if title_el is not None and title_el.text else ''
+    link = ''
+    for link_el in item.findall(_ATOM + 'link'):
+        href = (link_el.get('href') or '').strip()
+        if href:
+            link = href
+            break
+    summary_el = item.find(_ATOM + 'summary') or item.find(_ATOM + 'content')
+    summary = _strip_html(summary_el.text) if summary_el is not None and summary_el.text else ''
+    pub_el = item.find(_ATOM + 'published') or item.find(_ATOM + 'updated')
+    published = _parse_feed_date(pub_el.text) if pub_el is not None and pub_el.text else None
+    return {
+        "title": title,
+        "link": link or base_url,
+        "summary": summary[:3000],
+        "published_dt": published,
+    }
+
+
+def _parse_feed(text, base_url) -> list:
+    """解析 RSS 2.0 / Atom / RSS 1.0(RDF) feed 文本，失败返回 []。"""
+    try:
+        clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text or '')
+        root = ET.fromstring(clean)
+    except Exception:
+        return []
+    tag = (root.tag or '').rsplit('}', 1)[-1].lower()
+    if tag == 'rss':
+        return [_feed_item_from_rss(it, base_url) for it in root.iter('item')]
+    if tag == 'feed':
+        return [_feed_item_from_atom(it, base_url) for it in root.iter(_ATOM + 'entry')]
+    if tag == 'rdf':
+        return [_feed_item_from_rss(it, base_url) for it in root.iter(_RDF_ITEM)]
+    return []
+
+
+def _extract_page_item(text, url):
+    """普通网页 → 单条目 {title, link, content}；解析失败返回 None。"""
+    try:
+        soup = BeautifulSoup(text, 'lxml')
+        title = soup.title.get_text(strip=True) if soup.title else ''
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            tag.decompose()
+        article = (
+            soup.select_one("article")
+            or soup.select_one("main")
+            or soup.select_one("[role='main']")
+            or soup.body
+        )
+        content = article.get_text(strip=True)[:3000] if article else ''
+    except Exception:
+        return None
+    return {"title": title, "link": url, "content": content, "summary": '', "published_dt": None}
+
+
+def _fetch_source_items(url, max_items=10, cutoff=None) -> list:
+    """抓取一个采集源 URL，返回候选条目列表。
+
+    - RSS/Atom（Content-Type 含 xml 或正文形似 feed）→ 解析条目，
+      按新鲜度窗口过滤（无日期条目保留），最多 max_items 条；
+      摘要过短的条目回退抓取链接全文（复用 _read_web）。
+    - 普通网页 → 单条目（页面标题 + 正文）。
+
+    抓取失败返回 None；抓取成功但无可用内容返回 []。
+    """
+    try:
+        resp = requests.get(
+            url,
+            headers={
+                "User-Agent": _UA,
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            },
+            timeout=_REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"[search_cycle] source fetch HTTP {resp.status_code}: {url[:80]}")
+            return None
+        text = resp.text
+        ctype = (resp.headers.get('Content-Type') or '').lower()
+        if 'xml' in ctype or _looks_like_feed(text):
+            entries = _parse_feed(text, url)
+            if not entries:
+                return []
+            fresh = [
+                e for e in entries
+                if cutoff is None or e.get("published_dt") is None or e["published_dt"] >= cutoff
+            ]
+            items = fresh[:max_items]
+            for it in items:
+                content = (it.get("summary") or '').strip()
+                # 摘要过短且条目带独立链接时，回退抓取链接全文（不把 feed 自身当文章）
+                if len(content) < 50 and it.get("link") and it["link"] != url:
+                    content = _read_web(it["link"]) or content
+                it["content"] = content[:3000]
+            return items
+        item = _extract_page_item(text, url)
+        if item is None:
+            return []
+        return [item]
+    except Exception as e:
+        logger.warning(f"[search_cycle] source fetch error for {url[:80]}: {e}")
+        return None
+
+
+def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
+                          max_per_domain, total_new, max_llm_calls, llm_calls,
+                          content_max, max_items_per_source, intel_items) -> tuple:
+    """source_only 模式：只从项目关联的采集源（datasources）采集。
+
+    数据源缺失/全部不可用时该项目本轮跳过（不做开放式搜索兜底）。
+    每条候选过 LLM ② 判相关，相关则带 source_url 入库，并刷新数据源
+    last_crawled_at。返回 (project_new, llm_used)。
+    """
+    from core.datasource import get_datasources_for_project, update_source_last_crawled
+
+    datasources = [
+        ds for ds in get_datasources_for_project(db_path, project["id"])
+        if ds.get("status", "active") == "active" and (ds.get("url") or '').strip()
+    ]
+    if not datasources:
+        logger.warning(
+            f"[search_cycle] project {project['id']} ({project.get('name', '')}) "
+            f"is source-only but has no active datasource with URL, skipped"
+        )
+        return 0, 0
+
+    cutoff = _recency_cutoff(project.get("frequency"))
+    project_new = 0
+    llm_used = 0
+    seen_links = set()
+
+    for ds in datasources:
+        if total_new + project_new >= max_per_domain or llm_calls + llm_used >= max_llm_calls:
+            break
+        url = (ds.get("url") or '').strip()
+        items = _fetch_source_items(url, max_items=max_items_per_source, cutoff=cutoff)
+        if items is None:
+            logger.warning(f"[search_cycle] source fetch failed, skipped: {url[:80]}")
+            continue
+
+        for it in items:
+            if total_new + project_new >= max_per_domain or llm_calls + llm_used >= max_llm_calls:
+                break
+            link = (it.get("link") or url).strip()
+            if not link or link in seen_links or link in recent_urls:
+                continue
+            seen_links.add(link)
+
+            content = (it.get("content") or '').strip()
+            if len(content) < 50:
+                continue
+
+            llm_used += 1
+            judged = _judge_and_extract(content, context, max_chars=content_max)
+            if not judged.get("relevant"):
+                continue
+            title = judged.get("title", '').strip()
+            if not title or title.lower() in recent_titles:
+                continue
+
+            category = _normalize_category(
+                judged.get("category") or context.get("target_type") or "market"
+            )
+            summary = (judged.get("summary") or '').strip()
+            if summary and link:
+                link_text = (it.get("title") or ds.get("name") or '').strip() or link
+                content_final = summary + f"\n\n> 来源：[{link_text}]({link})"
+            else:
+                content_final = summary
+            intel_id = create_intelligence(
+                db_path,
+                title=title,
+                content=content_final,
+                category=category,
+                contact_name="",
+                metadata={"source_url": link},
+                project_id=project["id"],
+            )
+            if intel_id:
+                recent_titles.add(title.lower())
+                recent_urls.add(link)
+                update_intelligence_status(db_path, intel_id, "done")
+                update_source_last_crawled(db_path, ds["id"])
+                project_new += 1
+                intel_items.append({
+                    "title": title,
+                    "url": link,
+                    "intel_id": intel_id,
+                    "project": project.get("name", ""),
+                })
+
+    return project_new, llm_used
+
+
 # ── Main cycle ──────────────────────────────────────────────
 
 def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
@@ -285,6 +569,7 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
     max_llm_calls = int(cfg.get("max_llm_calls_per_cycle", 50))
     results_per_kw = int(cfg.get("results_per_keyword", 5))
     content_max = int(cfg.get("content_max_chars", 400))
+    max_items_per_source = int(cfg.get("max_items_per_source", 10))
 
     # 本轮使用的 LLM 模型名（config/llm.json），写入调度履历便于追溯
     from config import get_llm_config
@@ -361,14 +646,12 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
             if not target_name:
                 continue
 
-            # Recent intel for dedup
-            recent = get_intelligence_by_project(db_path, pid, limit=20)
+            # Recent intel for dedup（source_only 模式扩大窗口并按 source_url 去重）
+            source_only = bool(project.get("source_only"))
+            recent = get_intelligence_by_project(db_path, pid, limit=50 if source_only else 20)
             recent_titles = {r.get("title", "").lower() for r in recent}
+            recent_urls = {(r.get("source_url") or '').strip() for r in recent if r.get("source_url")}
 
-            # ── LLM ①: build keywords ──
-            if llm_calls >= max_llm_calls:
-                break
-            llm_calls += 1
             context = {
                 "target_name": target_name,
                 "scope": scope,
@@ -376,6 +659,31 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 "indicators": indicators,
                 "target_type": target_type,
             }
+
+            if source_only:
+                # ── 仅采集源模式：只从项目关联的采集源采集，不做开放式搜索 ──
+                if llm_calls >= max_llm_calls:
+                    break
+                project_new, llm_used = _collect_from_sources(
+                    db_path, project, context, recent_titles, recent_urls,
+                    max_per_domain, total_new, max_llm_calls, llm_calls,
+                    content_max, max_items_per_source, intel_items,
+                )
+                llm_calls += llm_used
+                total_new += project_new
+                project_summaries.append({
+                    "project_id": pid,
+                    "project_name": project.get("name", ""),
+                    "target_name": target_name,
+                    "new_intel": project_new,
+                    "source_only": True,
+                })
+                continue
+
+            # ── LLM ①: build keywords（开放式采集，现有逻辑） ──
+            if llm_calls >= max_llm_calls:
+                break
+            llm_calls += 1
             keywords = _build_keywords(context)
             keywords = keywords[:max_keywords]
             if not keywords:
@@ -457,6 +765,7 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 "project_name": project.get("name", ""),
                 "target_name": target_name,
                 "new_intel": project_new,
+                "source_only": False,
             })
 
         logger.info(
