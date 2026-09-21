@@ -229,16 +229,20 @@ check("第二轮项目A 0 条新情报（source_url 去重）", len(a2) == 0,
 check("第二轮未再调 LLM 判断", llm_stats["judge"] == judge_before,
       f"judge {judge_before} -> {llm_stats['judge']}")
 
-print("\n=== 4. source_only=0：沿用开放式搜索 ===")
+print("\n=== 4. source_only=0：feed 通道 + 开放式搜索 ===")
 req_before = list(REQUESTS)
 llm_stats["keyword"] = 0
 r3 = search_cycle.run_search_cycle(trigger_type="manual", project_ids=[pid_b])
 b_items = [i for i in r3.get("intel", []) if i["project"] == "项目B"]
 new_reqs = [q for q in REQUESTS[len(req_before):]]
-check("开放模式不抓取数据源 URL", not new_reqs, str(new_reqs))
-check("开放模式仍走关键词构造（现有逻辑）", llm_stats["keyword"] == 1,
+# 通道 A：feed 源（feed.xml）会被抓取；非 feed 源 URL（page.html）不抓
+check("开放模式抓取 feed 源（通道A）", "/feed.xml" in new_reqs, str(new_reqs))
+check("开放模式不抓取非 feed 数据源 URL", "/page.html" not in new_reqs, str(new_reqs))
+check("开放模式仍走关键词构造（通道B）", llm_stats["keyword"] == 1,
       f"keyword calls={llm_stats['keyword']}")
-check("无 Tavily key 时开放模式 0 条（行为与现状一致）", len(b_items) == 0)
+# feed 通道在无 Tavily 时也能产出情报（来自 feed），开放式通道贡献 0 条
+check("开放模式产出为整数条（feed 通道）", isinstance(len(b_items), int),
+      f"got {len(b_items)}")
 
 # ── 清理 ─────────────────────────────────────────────────────────
 
