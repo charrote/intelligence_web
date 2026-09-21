@@ -221,9 +221,12 @@ def list_active_projects(domain: str = "research", status: str = "active",
     """List all active collection projects for the Agent to guide its collection scope.
 
     Each project contains: target_name (采集目标), scope (采集范围),
-    instruction (采集指令), and linked datasources with indicators (采集源+指标).
+    instruction (采集指令), source_only (仅采集源开关), and linked datasources
+    with indicators (采集源+指标).
 
     The Agent should use these fields to autonomously construct search keywords.
+    When source_only is true, the in-system cycle collects ONLY from the linked
+    datasource URLs (no open web search); the Agent should honor the same boundary.
 
     domain: "research" or "sales"
     status: "active" or "paused" (default "active")
@@ -283,6 +286,7 @@ def list_active_projects(domain: str = "research", status: str = "active",
             "scope": p.get("scope", ""),
             "frequency": p.get("frequency", ""),
             "instruction": p.get("instruction", ""),
+            "source_only": bool(p.get("source_only", 0)),
             "datasources": datasources,
             "intel_count": p.get("total_intel", 0),
             "status": p.get("status", ""),
@@ -329,6 +333,7 @@ def get_project_detail(domain: str = "research", project_id: int = 0):
         "scope": project.get("scope", ""),
         "frequency": project.get("frequency", ""),
         "instruction": project.get("instruction", ""),
+        "source_only": bool(project.get("source_only", 0)),
         "datasources": datasources,
         "intel_count": project.get("total_intel", 0),
         "status": project.get("status", ""),

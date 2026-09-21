@@ -19,23 +19,40 @@ def _get_db(db_path):
         conn.close()
 
 
+def _truthy(v) -> bool:
+    """宽松的真值判定：bool / 0-1 / 'true'/'1'/'yes' 等。"""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(v)
+
+
 # ── Create ──────────────────────────────────────────────────────────────────
 
 def create_project(db_path, name, target_type, target_name, scope='',
-                   frequency='weekly', instruction='', datasource_ids=None):
+                    frequency='weekly', instruction='', datasource_ids=None,
+                    source_only=False):
     """Create a new project. Optionally link existing datasource IDs.
 
     last_search_at 初始化为当前时间：oneshot 项目因此永远不会进入自动调度
     （到期判定只认 >=1h 的频率）；其余项目从创建时刻起算第一个完整周期。
+
+    source_only=1 时情报只从关联数据源采集（不做开放式搜索）；
+    默认 0 沿用现有开放式搜索逻辑。
     """
     now = datetime.now().isoformat()
+    source_only = 1 if _truthy(source_only) else 0
     with _get_db(db_path) as conn:
         cursor = conn.execute(
             '''INSERT INTO projects (name, target_type, target_name, scope,
-               frequency, status, instruction, last_search_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)''',
+               frequency, status, instruction, last_search_at, source_only,
+               created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)''',
             (name.strip(), target_type, target_name.strip(), scope.strip(),
-             frequency, instruction or '', now, now, now)
+             frequency, instruction or '', now, source_only, now, now)
         )
         project_id = cursor.lastrowid
 
@@ -108,11 +125,15 @@ def get_project_by_id(db_path, project_id):
 
 def update_project(db_path, project_id, data):
     """Update project fields. Returns updated project or None."""
-    allowed = {'name', 'target_type', 'target_name', 'scope', 'frequency', 'instruction'}
+    allowed = {'name', 'target_type', 'target_name', 'scope', 'frequency', 'instruction',
+               'source_only'}
     _FREQS = ('hourly', 'daily', 'weekly', 'monthly', 'oneshot')
     if data.get('frequency') is not None and data.get('frequency') not in _FREQS:
         raise ValueError(f"frequency 必须是 {_FREQS} 之一，收到 {data.get('frequency')!r}")
     updates = {k: v for k, v in data.items() if k in allowed and v is not None}
+    # source_only 归一到 0/1（兼容 bool / 0/1 / "true" 等入参）
+    if 'source_only' in updates:
+        updates['source_only'] = 1 if _truthy(updates['source_only']) else 0
     if not updates:
         return get_project_by_id(db_path, project_id)
 

@@ -96,6 +96,11 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
 .form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent);outline:none}
 .form-row{display:flex;gap:12px}
 .form-row .form-group{flex:1}
+.source-only-row{display:flex;align-items:flex-start;gap:8px}
+.source-only-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);margin-top:1px;flex-shrink:0}
+.source-only-row .so-text{font-size:12px;color:var(--gray-600);font-weight:600}
+.source-only-row .so-hint{font-size:11px;color:var(--gray-400);margin-top:2px;line-height:1.5;font-weight:400}
+.tag.source-only{background:#fff3e0;color:#e65100}
 .empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px}
 
 /* Datasource multi-select */
@@ -192,6 +197,12 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
       <div class="ds-select-dropdown" id="dsDropdown">
         <input class="ds-select-search" type="text" placeholder="搜索数据源..." id="dsSearch" oninput="filterDsOptions()">
         <div id="dsOptions"></div>
+      </div>
+    </div>
+    <div class="source-only-row">
+      <input type="checkbox" id="fSourceOnly">
+      <div class="so-text">仅采集源
+        <div class="so-hint">开启后，情报只从上方关联的数据源 URL 采集（RSS/网页直采），不做开放式搜索；需至少关联一个带 URL 的数据源。关闭时沿用开放式搜索。</div>
       </div>
     </div>
     <div id="createFormFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
@@ -369,12 +380,13 @@ async function loadProjects(){
       const dsText = p.datasource_count > 0
         ? '<span style="font-size:11px;color:var(--accent)">'+p.datasource_count+' 个</span>'
         : '<span style="color:var(--gray-400)">未关联</span>';
+      const soBadge = p.source_only ? '<span class="tag source-only" style="margin-left:4px">仅源</span>' : '';
       return '<tr class="cursor-pointer" onclick="openDetail('+p.id+')">'
         +'<td style="color:var(--gray-400)">'+(i+1).toString().padStart(2,'0')+'</td>'
         +'<td><strong>'+escapeHtml(p.name)+'</strong><div style="font-size:11px;color:var(--gray-400);margin-top:2px">'+escapeHtml(p.scope||'')+'</div></td>'
         +'<td><span class="tag '+(p.target_type||'')+'">'+(TARGET_TYPE_LABELS[p.target_type]||p.target_type||p.target_type)+'</span></td>'
         +'<td>'+escapeHtml(p.target_name)+'</td>'
-        +'<td>'+dsText+'</td>'
+        +'<td>'+dsText+soBadge+'</td>'
         +'<td><span class="tag '+p.frequency+'">'+(FREQ_LABELS[p.frequency]||p.frequency)+'</span></td>'
         +'<td>'+(p.total_intel||0)+'</td>'
         +'<td><span class="tag '+p.status+'">'+p.status+'</span></td>'
@@ -400,6 +412,7 @@ function openCreate(){
   document.getElementById('fName').value='';
   document.getElementById('fTarget').value='';
   document.getElementById('fScope').value='';
+  document.getElementById('fSourceOnly').checked=false;
   selectedDsIds = [];
   updateDsChips();
   document.getElementById('createFormFeedback').style.display='none';
@@ -418,7 +431,8 @@ async function createProject(){
   if(!target){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入目标名称';return}
   try{
     const r=await apiFetch(APP_API_BASE+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      name, target_type:type_, target_name:target, scope, frequency:freq, datasource_ids:selectedDsIds
+      name, target_type:type_, target_name:target, scope, frequency:freq, datasource_ids:selectedDsIds,
+      source_only:document.getElementById('fSourceOnly').checked
     })});
     if(r.status===201){
       const d=await r.json();
@@ -428,6 +442,7 @@ async function createProject(){
       document.getElementById('fName').value='';
       document.getElementById('fTarget').value='';
       document.getElementById('fScope').value='';
+      document.getElementById('fSourceOnly').checked=false;
       selectedDsIds=[];updateDsChips();
       await new Promise(r=>setTimeout(r,1500));
       closeCreate();
@@ -455,7 +470,8 @@ async function openDetail(pid){
     let html='<div class="detail-section"><h3>项目信息</h3><div class="detail-meta">'
       +'<span class="tag '+(p.target_type||'')+'">'+typeLabel+'</span>'
       +'<span class="tag '+p.status+'">'+p.status+'</span>'
-      +'<span class="tag '+p.frequency+'">'+(FREQ_LABELS[p.frequency]||p.frequency)+'</span></div>'
+      +'<span class="tag '+p.frequency+'">'+(FREQ_LABELS[p.frequency]||p.frequency)+'</span>'
+      +(p.source_only?'<span class="tag source-only">仅采集源</span>':'<span class="tag daily">开放式采集</span>')+'</div>'
       +'<div class="detail-info"><strong>名称：</strong>'+escapeHtml(p.name)+'</div>'
       +'<div class="detail-info"><strong>目标：</strong>'+escapeHtml(p.target_name)+'</div>'
       +'<div class="detail-info"><strong>范围：</strong>'+(p.scope?escapeHtml(p.scope):'<span style="color:var(--gray-400)">未指定</span>')+'</div>'
@@ -547,7 +563,9 @@ async function openEdit(pid){
       +'<div class="form-group"><label>采集频率</label><select id="editFrequency"><option value="hourly" '+(p.frequency==='hourly'?'selected':'')+'>每小时<\/option><option value="daily" '+(p.frequency==='daily'?'selected':'')+'>每日<\/option><option value="weekly" '+(p.frequency==='weekly'?'selected':'')+'>每周<\/option><option value="monthly" '+(p.frequency==='monthly'?'selected':'')+'>每月<\/option><option value="oneshot" '+(p.frequency==='oneshot'?'selected':'')+'>一次性<\/option><\/select></div>'
       +'</div>'
       +'<div class="form-group"><label>目标名称</label><input type="text" id="editTarget" value="'+escapeHtml(p.target_name)+'"></div>'
-      +'<div class="form-group"><label>范围/描述</label><textarea id="editScope" rows="3">'+escapeHtml(p.scope||'')+'</textarea></div>';
+      +'<div class="form-group"><label>范围/描述</label><textarea id="editScope" rows="3">'+escapeHtml(p.scope||'')+'</textarea></div>'
+      +'<div class="source-only-row"><input type="checkbox" id="editSourceOnly" '+(p.source_only?'checked':'')+'>'
+      +'<div class="so-text">仅采集源<div class="so-hint">开启后，情报只从项目关联的数据源 URL 采集（RSS/网页直采），不做开放式搜索；关闭时沿用开放式搜索。</div></div></div>';
     foot.innerHTML='<button class="btn btn-primary" onclick="saveEdit('+pid+')">保存</button>'
       +'<span class="spacer"></span>'
       +'<button class="btn btn-ghost" onclick="openDetail('+pid+')">返回</button>'
@@ -566,7 +584,7 @@ async function saveEdit(pid){
   const freq=document.getElementById('editFrequency').value;
   if(!name||!target){alert('项目名称和目标名称为必填项');return}
   try{
-    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq})});
+    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq,source_only:document.getElementById('editSourceOnly').checked})});
     if(r.ok){openDetail(pid);await loadProjects();}
   }catch(e){alert('保存失败');}
 }

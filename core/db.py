@@ -1717,6 +1717,7 @@ def migrate_db(db_path, domain_key=None):
                     status TEXT NOT NULL DEFAULT 'active',
                     instruction TEXT DEFAULT '',
                     last_search_at TEXT,
+                    source_only INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -1724,6 +1725,11 @@ def migrate_db(db_path, domain_key=None):
             # Migration: 存量库补 last_search_at（采集到期判定用）
             try:
                 c.execute("ALTER TABLE projects ADD COLUMN last_search_at TEXT")
+            except Exception:
+                pass  # column already exists
+            # Migration: 存量库补 source_only（仅采集源开关：1=只从关联数据源采集，0=开放式搜索）
+            try:
+                c.execute("ALTER TABLE projects ADD COLUMN source_only INTEGER NOT NULL DEFAULT 0")
             except Exception:
                 pass  # column already exists
 

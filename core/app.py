@@ -992,6 +992,7 @@ def create_app(project_root, spec):
             frequency=data.get('frequency', 'weekly'),
             instruction=data.get('instruction', ''),
             datasource_ids=data.get('datasource_ids', []),
+            source_only=data.get('source_only', False),
         )
         project = projlib.get_project_by_id(db_path, project_id)
         return jsonify(project), 201
