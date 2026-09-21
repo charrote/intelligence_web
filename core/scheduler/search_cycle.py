@@ -46,6 +46,8 @@ from core.db import (
     create_intelligence,
     update_intelligence_status,
 )
+from core import datasource as dslib
+from core.scheduler import auth_fetch
 
 
 # ── Config ──────────────────────────────────────────────────
@@ -225,6 +227,23 @@ def _read_wechat_article(url: str) -> str:
         return ""
 
 
+def _extract_article_text(html: str) -> str:
+    """Extract readable article text from raw HTML (≤3000 chars)."""
+    soup = BeautifulSoup(html, "lxml")
+    # Remove nav/script/style
+    for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+        tag.decompose()
+    article = (
+        soup.select_one("article")
+        or soup.select_one("main")
+        or soup.select_one("[role='main']")
+        or soup.body
+    )
+    if article:
+        return article.get_text(strip=True)[:3000]
+    return ""
+
+
 def _read_web(url: str) -> str:
     """Read general web article content."""
     try:
@@ -238,19 +257,7 @@ def _read_web(url: str) -> str:
         )
         if resp.status_code != 200:
             return ""
-        soup = BeautifulSoup(resp.text, "lxml")
-        # Remove nav/script/style
-        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
-            tag.decompose()
-        article = (
-            soup.select_one("article")
-            or soup.select_one("main")
-            or soup.select_one("[role='main']")
-            or soup.body
-        )
-        if article:
-            return article.get_text(strip=True)[:3000]
-        return ""
+        return _extract_article_text(resp.text)
     except Exception as e:
         logger.warning(f"[search_cycle] web read failed for {url[:80]}: {e}")
         return ""
@@ -643,6 +650,9 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 ind_raw = ds.get("indicators", "") or ""
                 indicators.extend([i.strip() for i in ind_raw.split(",") if i.strip()])
 
+            # 鉴权采集：配置了凭证的数据源 → {host: auth}（无凭证则为空，行为同现状）
+            auth_map = dslib.build_auth_map(datasources)
+
             if not target_name:
                 continue
 
@@ -713,6 +723,16 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                         full = _read_content(url)
                         if full:
                             content = full
+                    elif auth_map:
+                        # 鉴权采集：结果 URL 命中配置了凭证的源（按域名）→ 带鉴权抓全文；
+                        # 失败则保留 snippet（与现状一致），不阻塞采集
+                        auth = dslib.match_auth(url, auth_map)
+                        if auth:
+                            full_html, ok = auth_fetch.fetch_url(url, auth)
+                            if ok:
+                                full = _extract_article_text(full_html)
+                                if len(full) >= 50:
+                                    content = full
                     if not content or len(content) < 50:
                         continue
 

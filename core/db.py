@@ -1744,10 +1744,24 @@ def migrate_db(db_path, domain_key=None):
                     status TEXT NOT NULL DEFAULT 'active',
                     indicators TEXT DEFAULT '',
                     last_crawled_at TEXT,
+                    auth_type TEXT NOT NULL DEFAULT 'none',
+                    username TEXT NOT NULL DEFAULT '',
+                    credential TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             ''')
+            # Migration: 存量库补鉴权配置列（auth_type: none/basic/bearer/cookie/form_login；
+            # credential 存 Fernet 密文，见 core/credentials.py）
+            for col, col_type in [
+                ('auth_type', "TEXT NOT NULL DEFAULT 'none'"),
+                ('username', 'TEXT NOT NULL DEFAULT \'\''),
+                ('credential', 'TEXT NOT NULL DEFAULT \'\''),
+            ]:
+                try:
+                    c.execute(f'ALTER TABLE datasources ADD COLUMN {col} {col_type}')
+                except Exception:
+                    pass  # column already exists
 
             # Target Types table
             c.execute('''
