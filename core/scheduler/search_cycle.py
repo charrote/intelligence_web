@@ -16,9 +16,11 @@ import os
 import json
 import re
 import time
-import xml.etree.ElementTree as ET
 import requests
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 
 from bs4 import BeautifulSoup
 
@@ -38,6 +40,21 @@ _FREQ_HOURS = {
     'monthly': 30 * 24,
 }
 
+# 采集频率 → 时效窗口（天）：让"新旧"由搜索 API 硬约束。
+# 高频项目看得更近，低频项目允许更宽的窗口；oneshot/未知频率用 config 的 recency_days 兜底。
+_FREQ_RECENCY_DAYS = {
+    'hourly': 1,     # day
+    'daily': 7,      # week
+    'weekly': 30,    # month
+    'monthly': 365,  # year
+}
+
+# 时效窗口（天）→ Tavily time_range（精确档位）；其余天数走 start_date/end_date。
+_TAVILY_TIME_RANGE = {1: 'day', 7: 'week', 30: 'month', 365: 'year'}
+
+# 公众号内联 JS 的发布时间戳：var ct = "169..."（与 mcp_server/wechat.py 一致）
+_PUBLISH_TS_RE = re.compile(r'var\s+ct\s*=\s*["\'](\d+)["\']')
+
 # 受控分类词表（closed vocabulary）：LLM 只能从这里选，杜绝分类膨胀。
 # 单一事实来源在 core/db.py；这里 re-export 供提示词与入库校验使用。
 from core.db import (
@@ -49,13 +66,151 @@ from core.db import (
 from core import datasource as dslib
 from core.scheduler import auth_fetch
 
-
 # ── Config ──────────────────────────────────────────────────
 
 def _get_config() -> dict:
     from config import get_search_config
     return get_search_config()
 
+def _recency_window_days(frequency: str, cfg: dict) -> int:
+    """项目采集频率 → 时效窗口（天）。
+
+    hourly→1 / daily→7 / weekly→30 / monthly→365；oneshot 及未知频率
+    回落到 config/search.json 的 recency_days（默认 30）。
+    """
+    mapped = _FREQ_RECENCY_DAYS.get(frequency)
+    if mapped is not None:
+        return mapped
+    try:
+        return max(1, int(cfg.get('recency_days', 30)))
+    except (TypeError, ValueError):
+        return 30
+
+# ── 日期解析（时效判断用，统一输出 YYYY-MM-DD） ─────────────
+
+def _parse_date_str(s) -> str:
+    """把各种形态的日期字符串归一为 YYYY-MM-DD；解析失败返回 ''。
+
+    支持：ISO（2026-09-01 / 2026-09-01T08:00:00Z / 2026-09-01 08:00:00）、
+    斜杠日期（2026/9/1）、RFC 822/HTTP 日期（feed 的 pubDate）、unix 秒时间戳。
+    """
+    if not s:
+        return ''
+    s = str(s).strip()
+    if not s:
+        return ''
+
+    # ISO / 斜杠 / 点 / 空格 / 中文年月日：取第一段 YYYY-MM-DD
+    m = re.search(r'(\d{4})\s*[年./\-]\s*(\d{1,2})\s*[月./\-]\s*(\d{1,2})\s*日?', s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y >= 1990:
+            try:
+                return datetime(y, mo, d).strftime('%Y-%m-%d')
+            except ValueError:
+                pass
+
+    # unix 秒时间戳（9~11 位）
+    if re.fullmatch(r'\d{9,11}', s):
+        try:
+            ts = int(s)
+            if 946684800 < ts < 4102444800:  # 2000-01-01 .. 2099-...
+                return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+        except (ValueError, OverflowError, OSError):
+            pass
+
+    # RFC 822 / HTTP 日期（RSS pubDate 等）
+    try:
+        dt = parsedate_to_datetime(s)
+        if dt is not None and dt.year >= 1990:
+            return dt.strftime('%Y-%m-%d')
+    except (TypeError, ValueError):
+        pass
+    return ''
+
+_DATE_META_SELECTORS = (
+    'meta[property="article:published_time"]',
+    'meta[property="og:article:published_time"]',
+    'meta[itemprop="datePublished"]',
+    'meta[name="pubdate"]',
+    'meta[name="publishdate"]',
+    'meta[name="publish-date"]',
+    'meta[name="weibo:article:create_at"]',
+    'meta[name="date"]',
+)
+
+def _extract_published_date(html: str) -> str:
+    """从通用网页 HTML 提取发布时间（YYYY-MM-DD），取不到返回 ''。
+
+    顺序：meta 标签 → <time datetime> → JSON-LD datePublished/dateModified。
+    """
+    if not html:
+        return ''
+    try:
+        soup = BeautifulSoup(html, 'lxml')
+    except Exception:
+        return ''
+
+    for sel in _DATE_META_SELECTORS:
+        el = soup.select_one(sel)
+        if el is not None:
+            d = _parse_date_str(el.get('content') or el.get('datetime') or '')
+            if d:
+                return d
+
+    el = soup.select_one('time[datetime]')
+    if el is not None:
+        d = _parse_date_str(el.get('datetime', ''))
+        if d:
+            return d
+
+    for s in soup.select('script[type="application/ld+json"]'):
+        raw = s.string or s.get_text() or ''
+        d = _jsonld_date(raw)
+        if d:
+            return d
+    return ''
+
+def _jsonld_date(raw: str) -> str:
+    """从 JSON-LD 文本里找 datePublished（优先）/ dateModified，归一为 YYYY-MM-DD。"""
+    if not raw:
+        return ''
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return ''
+    found = []
+
+    def _walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ('datePublished', 'dateModified') and isinstance(v, str):
+                    d = _parse_date_str(v)
+                    if d:
+                        found.append(d)
+                else:
+                    _walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(data)
+    if found:
+        return sorted(found)[0]  # 多条取最早（发布时间语义）
+    return ''
+
+def _is_stale(published_date: str, window_days: int, now: datetime = None) -> bool:
+    """已知发布日期且早于时效窗口 → 视为旧情报（True）。日期未知 → False（不拦）。"""
+    if not published_date or not window_days:
+        return False
+    now = now or datetime.now()
+    try:
+        pub = datetime.strptime(published_date[:10], '%Y-%m-%d')
+    except ValueError:
+        return False
+    if pub > now:
+        return False  # 未来时间（时钟漂移/脏数据）不拦
+    return (now - pub).days > window_days
 
 # ── LLM calls ───────────────────────────────────────────────
 
@@ -102,13 +257,18 @@ def _build_keywords(context: dict) -> list:
             pass
     return []
 
-
-def _judge_and_extract(content: str, context: dict, max_chars: int = 400) -> dict:
+def _judge_and_extract(content: str, context: dict, max_chars: int = 400,
+                       published_date: str = "", recency_days: int = 0) -> dict:
     """LLM call ②: judge relevance + extract summary.
 
     Returns: {relevant: bool, title: str, category: str, summary: str}
+
+    时效敏感：提示词注入"当前日期 + 文章发布日期"；超过 recency_days 天或
+    常青/背景类旧文 → relevant=false。
     """
     from core.scheduler.llm_client import call_llm, parse_json_from_response
+
+    now_str = datetime.now().strftime('%Y-%m-%d')
 
     system_prompt = (
         "你是一个情报价值判断器。根据给定的项目信息和文章内容，判断该文章是否与项目相关，"
@@ -122,6 +282,17 @@ def _judge_and_extract(content: str, context: dict, max_chars: int = 400) -> dic
         "客户/经销商/供应商→客户动态；财报/人事/投融资/并购→企业公告；"
         "一般行业新闻→行业动态；都不符合→其他。\n"
         "若文章与项目无关，relevant=false，其余字段为空字符串。\n"
+    )
+
+    if recency_days and recency_days > 0:
+        system_prompt += (
+            f"时效性要求（严格遵守）：当前日期为 {now_str}。"
+            f"若文章发布日期早于当前日期 {recency_days} 天以上，"
+            "或属于常青/背景/科普/盘点类旧文（与项目目标相关但不含新动态、新数据、新事件），"
+            "则判 relevant=false。只保留时效内、有增量信息的内容。\n"
+        )
+
+    system_prompt += (
         "不要输出 JSON 以外的任何文字。\n\n"
         "summary 格式要求（严格遵守）：\n"
         f"- 总长度不超过 {max_chars} 字\n"
@@ -140,7 +311,9 @@ def _judge_and_extract(content: str, context: dict, max_chars: int = 400) -> dic
     user_prompt = (
         f"项目目标: {context.get('target_name', '')}\n"
         f"采集范围: {context.get('scope', '')}\n"
-        f"目标类型: {context.get('target_type', '')}\n\n"
+        f"目标类型: {context.get('target_type', '')}\n"
+        f"当前日期: {now_str}\n"
+        f"文章发布日期: {published_date or '未知'}\n\n"
         f"文章内容（截断）:\n{content_truncated}"
     )
 
@@ -162,11 +335,15 @@ def _judge_and_extract(content: str, context: dict, max_chars: int = 400) -> dic
         }
     return {"relevant": False, "title": "", "category": "", "summary": ""}
 
-
 # ── Search & Read ───────────────────────────────────────────
 
-def _tavily_search(query: str, max_results: int = 5) -> list:
-    """Search via Tavily API. Returns [{title, url, content}]."""
+def _tavily_search(query: str, max_results: int = 5, recency_days: int = 0) -> list:
+    """Search via Tavily API. Returns [{title, url, content, published_date}].
+
+    recency_days > 0 时按时效窗口硬过滤：
+    1/7/30/365 天 → Tavily time_range（day/week/month/year），
+    其余天数 → start_date/end_date。
+    """
     from config import get_tavily_config
     cfg = get_tavily_config()
     api_key = cfg.get("api_key", "")
@@ -174,36 +351,51 @@ def _tavily_search(query: str, max_results: int = 5) -> list:
         logger.warning("[search_cycle] Tavily key not configured, skipping search")
         return []
 
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "max_results": max_results,
+        "search_depth": "basic",
+    }
+    if recency_days and recency_days > 0:
+        tr = _TAVILY_TIME_RANGE.get(recency_days)
+        if tr:
+            payload["time_range"] = tr
+        else:
+            payload["start_date"] = (datetime.now() - timedelta(days=recency_days)).strftime('%Y-%m-%d')
+            payload["end_date"] = datetime.now().strftime('%Y-%m-%d')
+
     try:
         resp = requests.post(
             cfg.get("base_url", "https://api.tavily.com").rstrip("/") + "/search",
-            json={
-                "api_key": api_key,
-                "query": query,
-                "max_results": max_results,
-                "search_depth": "basic",
-            },
+            json=payload,
             timeout=25,
         )
         resp.raise_for_status()
         data = resp.json()
         return [
-            {"title": r.get("title", ""), "url": r.get("url", ""), "content": r.get("content", "")}
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "content": r.get("content", ""),
+                "published_date": _parse_date_str(r.get("published_date") or ""),
+            }
             for r in data.get("results", [])
         ]
     except Exception as e:
         logger.warning(f"[search_cycle] Tavily search failed for '{query[:40]}': {e}")
         return []
 
+def _read_content(url: str) -> dict:
+    """Read article. Handles mp.weixin.qq.com and general web.
 
-def _read_content(url: str) -> str:
-    """Read article content. Handles mp.weixin.qq.com and general web."""
+    Returns: {"content": str, "published_date": str(YYYY-MM-DD 或 '')}
+    """
     if "mp.weixin.qq.com" in url:
         return _read_wechat_article(url)
     return _read_web(url)
 
-
-def _read_wechat_article(url: str) -> str:
+def _read_wechat_article(url: str) -> dict:
     """Read WeChat article body (same logic as mcp_server/wechat.py, inlined
     for use inside domain containers that don't have mcp_server/)."""
     try:
@@ -213,19 +405,113 @@ def _read_wechat_article(url: str) -> str:
             timeout=_REQUEST_TIMEOUT,
         )
         if resp.status_code != 200:
-            return ""
+            return {"content": "", "published_date": ""}
         text = resp.text
         if "请输入验证码" in text or "环境异常" in text:
-            return ""
+            return {"content": "", "published_date": ""}
         soup = BeautifulSoup(text, "lxml")
         content_el = soup.select_one("#js_content")
-        if content_el:
-            return content_el.get_text(strip=True)
-        return ""
+        content = content_el.get_text(strip=True) if content_el else ""
+
+        # 发布时间：内联 JS 的 var ct = "<unix>"，兜底 meta article:published_time
+        published = ""
+        m = _PUBLISH_TS_RE.search(text)
+        if m:
+            try:
+                published = datetime.fromtimestamp(int(m.group(1))).strftime('%Y-%m-%d')
+            except (ValueError, OverflowError, OSError):
+                published = ""
+        if not published:
+            published = _extract_published_date(text)
+
+        return {"content": content, "published_date": published}
     except Exception as e:
         logger.warning(f"[search_cycle] wechat read failed: {e}")
+        return {"content": "", "published_date": ""}
+
+def _read_web(url: str) -> dict:
+    """Read general web article content + 提取发布时间。
+
+    Returns: {"content": str, "published_date": str(YYYY-MM-DD 或 '')}
+    """
+    try:
+        resp = requests.get(
+            url,
+            headers={
+                "User-Agent": _UA,
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            },
+            timeout=_REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return {"content": "", "published_date": ""}
+        published = _extract_published_date(resp.text)
+        soup = BeautifulSoup(resp.text, "lxml")
+        # Remove nav/script/style
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            tag.decompose()
+        article = (
+            soup.select_one("article")
+            or soup.select_one("main")
+            or soup.select_one("[role='main']")
+            or soup.body
+        )
+        content = article.get_text(strip=True)[:3000] if article else ""
+        return {"content": content, "published_date": published}
+    except Exception as e:
+        logger.warning(f"[search_cycle] web read failed for {url[:80]}: {e}")
+        return {"content": "", "published_date": ""}
+
+def _fetch_page_date(url: str, timeout: int = 10) -> str:
+    """只抓页面提取发布时间（不取正文），供时效二次过滤用。失败返回 ''。"""
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": _UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return ""
+        return _extract_published_date(resp.text)
+    except Exception as e:
+        logger.debug(f"[search_cycle] date fetch failed for {url[:80]}: {e}")
         return ""
 
+_MAX_DATE_FETCHES = 10  # 每项目每轮"抓页面取日期"的请求上限（控制轮次耗时）
+
+def _fill_missing_dates(urls_dates: list, cfg: dict, budget: int = 0):
+    """对缺少发布日期的 (url, date) 并发抓页面补日期。
+
+    urls_dates: [(url, published_date), ...]
+    返回 (dates, n_fetched)：同序日期列表（补不到的保持 ''）+ 实际发出的请求数。
+    公众号 URL 跳过（后续全文抓取时解析 var ct=）。
+    budget <= 0 表示不抓。
+    """
+    if not cfg.get('fetch_page_for_date', True) or budget <= 0:
+        return [d for _, d in urls_dates], 0
+    timeout = int(cfg.get('page_fetch_timeout', 10) or 10)
+    workers = max(1, int(cfg.get('page_fetch_workers', 4) or 4))
+
+    need = [
+        i for i, (u, d) in enumerate(urls_dates)
+        if u and not d and "mp.weixin.qq.com" not in u
+    ]
+    out = list(urls_dates)
+    if not need:
+        return [d for _, d in out], 0
+    need = need[:min(len(need), budget)]
+
+    def _work(i):
+        return i, _fetch_page_date(out[i][0], timeout=timeout)
+
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for i, d in pool.map(_work, need):
+                if d:
+                    out[i] = (out[i][0], d)
+    except Exception as e:
+        logger.warning(f"[search_cycle] batch date fetch failed: {e}")
+    return [d for _, d in out], len(need)
 
 def _extract_article_text(html: str) -> str:
     """Extract readable article text from raw HTML (≤3000 chars)."""
@@ -243,25 +529,180 @@ def _extract_article_text(html: str) -> str:
         return article.get_text(strip=True)[:3000]
     return ""
 
+# ── Feed (RSS/Atom) 采集通道 ─────────────────────────────────
 
-def _read_web(url: str) -> str:
-    """Read general web article content."""
+_FEED_TYPES = {'feed', 'rss', 'atom'}
+_ATOM_NS = '{http://www.w3.org/2005/Atom}'
+_DC_NS = '{http://purl.org/dc/elements/1.1/}'
+
+def _is_feed_source(ds: dict) -> bool:
+    """数据源是否为 feed：type 显式标记，或 URL 路径像 feed 地址。"""
+    if (ds.get('type') or '').lower() in _FEED_TYPES:
+        return True
+    url = (ds.get('url') or '').split('?')[0].split('#')[0].lower()
+    path = url.rstrip('/').rsplit('/', 1)[-1] if url else ''
+    return path in ('feed', 'rss', 'atom', 'feed.xml', 'rss.xml', 'atom.xml') \
+        or path.endswith(('.rss', '.xml')) and ('feed' in path or 'rss' in path)
+
+def _strip_html(s: str) -> str:
+    """去掉 HTML 标签（feed 的 description 常带标签/CDATA 残留）。"""
+    if not s:
+        return ''
+    try:
+        return BeautifulSoup(s, 'lxml').get_text(strip=True)
+    except Exception:
+        return re.sub(r'<[^>]+>', '', s).strip()
+
+def _fetch_feed(url: str, timeout: int = 15, max_items: int = 20) -> list:
+    """抓取 RSS/Atom feed，返回 [{title, url, content, published_date}]。
+
+    新在前（feed 天然属性）；解析失败/非 200 返回 []。
+    """
     try:
         resp = requests.get(
             url,
-            headers={
-                "User-Agent": _UA,
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            },
-            timeout=_REQUEST_TIMEOUT,
+            headers={"User-Agent": _UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
+            timeout=timeout,
         )
         if resp.status_code != 200:
-            return ""
-        return _extract_article_text(resp.text)
+            logger.info(f"[search_cycle] feed HTTP {resp.status_code}: {url[:80]}")
+            return []
+        root = ET.fromstring(resp.content)
     except Exception as e:
-        logger.warning(f"[search_cycle] web read failed for {url[:80]}: {e}")
-        return ""
+        logger.warning(f"[search_cycle] feed fetch/parse failed for {url[:80]}: {e}")
+        return []
 
+    items = []
+    # RSS 2.0 / RDF
+    for it in root.iter('item'):
+        title = (it.findtext('title') or '').strip()
+        link = (it.findtext('link') or '').strip()
+        desc = (it.findtext('description') or '').strip()
+        pub = (it.findtext('pubDate') or it.findtext(_DC_NS + 'date') or '').strip()
+        items.append({
+            'title': title,
+            'url': link,
+            'content': _strip_html(desc),
+            'published_date': _parse_date_str(pub),
+        })
+        if len(items) >= max_items:
+            break
+
+    # Atom
+    if not items:
+        for it in root.iter(_ATOM_NS + 'entry'):
+            title = (it.findtext(_ATOM_NS + 'title') or '').strip()
+            link = ''
+            for link_el in it.findall(_ATOM_NS + 'link'):
+                rel = link_el.get('rel', 'alternate')
+                if rel == 'alternate' or not link:
+                    link = link_el.get('href', '')
+            desc = (it.findtext(_ATOM_NS + 'summary') or it.findtext(_ATOM_NS + 'content') or '').strip()
+            pub = (it.findtext(_ATOM_NS + 'published') or it.findtext(_ATOM_NS + 'updated') or '').strip()
+            items.append({
+                'title': title,
+                'url': (link or '').strip(),
+                'content': _strip_html(desc),
+                'published_date': _parse_date_str(pub),
+            })
+            if len(items) >= max_items:
+                break
+
+    # feed 新在前：按发布日期倒序（无日期的排最后）
+    items.sort(key=lambda x: x['published_date'] or '0000', reverse=True)
+    return items[:max_items]
+
+# ── 单条候选处理（feed 条目与搜索结果共用） ───────────────────
+
+def _process_candidate(cand: dict, context: dict, window_days: int, state: dict,
+                   auth_map: dict = None) -> bool:
+    """处理单条候选：URL 去重 → 正文长度 → 时效过滤 → LLM② → 标题去重 → 入库。
+
+    cand: {title, url, content, published_date}
+    state: 本轮/本项目共享的可变状态（llm_calls / total_new / project_new /
+           seen_urls / recent_titles / intel_items 等）。
+    返回 True 表示产生了新情报。
+    """
+    from core.db import create_intelligence, update_intelligence_status
+
+    url = (cand.get("url") or "").strip()
+    if not url or url in state["seen_urls"]:
+        return False
+    state["seen_urls"].add(url)
+
+    content = (cand.get("content") or "").strip()
+    # 鉴权采集：URL 命中配置了凭证的源（按域名）→ 带鉴权抓全文（比 snippet 更全）；
+    # 任何失败保留现有 content（snippet），不阻塞采集。
+    if auth_map:
+        auth = dslib.match_auth(url, auth_map)
+        if auth:
+            full_html, ok = auth_fetch.fetch_url(url, auth)
+            if ok:
+                full = _extract_article_text(full_html)
+                if len(full) >= 50:
+                    content = full
+    if not content or len(content) < 50:
+        return False
+
+    # 时效二次过滤：已知发布日期且早于项目窗口 → 直接丢弃
+    if _is_stale(cand.get("published_date", ""), window_days):
+        state["stale_skips"] += 1
+        logger.info(
+            f"[search_cycle] stale item dropped (published {cand.get('published_date')}, "
+            f"window {window_days}d): {url[:80]}"
+        )
+        return False
+
+    # ── LLM ②: 判相关 + 提炼摘要（时效敏感） ──
+    state["llm_calls"] += 1
+    judged = _judge_and_extract(
+        content, context, max_chars=state["content_max"],
+        published_date=cand.get("published_date", ""),
+        recency_days=window_days,
+    )
+    if not judged.get("relevant"):
+        return False
+
+    title = judged.get("title", "").strip()
+    if not title:
+        return False
+    if title.lower() in state["recent_titles"]:
+        return False
+
+    # Create intelligence（分类强制归一到受控词表，防止词表外值再次进入）
+    category = _normalize_category(
+        judged.get("category") or state["target_type"] or "market"
+    )
+    summary = (judged.get("summary") or "").strip()
+    # 附来源（markdown 引用行），来源清晰；链接文本优先用结果原标题
+    if summary and url:
+        link_text = (cand.get("title") or "").strip() or url
+        content_final = summary + f"\n\n> 来源：[{link_text}]({url})"
+    else:
+        content_final = summary
+    intel_id = create_intelligence(
+        state["db_path"],
+        title=title,
+        content=content_final,
+        category=category,
+        contact_name="",
+        metadata={"source_url": url},
+        project_id=state["pid"],
+        published_date=cand.get("published_date", ""),
+    )
+    if intel_id:
+        state["recent_titles"].add(title.lower())
+        update_intelligence_status(state["db_path"], intel_id, "done")
+        state["project_new"] += 1
+        state["total_new"] += 1
+        state["intel_items"].append({
+            "title": title,
+            "url": url,
+            "intel_id": intel_id,
+            "project": state["project_name"],
+        })
+        return True
+    return False
 
 # ── 采集源直采（source_only 模式） ──────────────────────────────
 
@@ -278,12 +719,10 @@ _ATOM = '{http://www.w3.org/2005/Atom}'
 _DC_DATE = '{http://purl.org/dc/elements/1.1/}date'
 _RDF_ITEM = '{http://purl.org/rss/1.0/}item'
 
-
 def _recency_cutoff(frequency) -> datetime:
     """给定频率的新鲜度窗口起点（UTC）。未知频率默认 7 天。"""
     hours = _RECENCY_HOURS.get(frequency, 7 * 24)
     return datetime.now(timezone.utc) - timedelta(hours=hours)
-
 
 def _looks_like_feed(text: str) -> bool:
     head = (text or '').lstrip()[:500].lower()
@@ -294,7 +733,6 @@ def _looks_like_feed(text: str) -> bool:
     if head.startswith('<?xml'):
         return any(k in head for k in ('<rss', '<feed', '<rdf', 'rss/1.0', 'w3.org/2005/atom'))
     return False
-
 
 def _parse_feed_date(s):
     """解析 feed 发布时间（RFC822 / ISO8601）。失败返回 None。"""
@@ -313,13 +751,6 @@ def _parse_feed_date(s):
         return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return None
-
-
-def _strip_html(s) -> str:
-    if not s:
-        return ''
-    return BeautifulSoup(s, 'lxml').get_text(' ', strip=True)
-
 
 def _feed_item_from_rss(item, base_url) -> dict:
     def text_of(tag):
@@ -344,7 +775,6 @@ def _feed_item_from_rss(item, base_url) -> dict:
         "published_dt": published,
     }
 
-
 def _feed_item_from_atom(item, base_url) -> dict:
     title_el = item.find(_ATOM + 'title')
     title = (title_el.text or '').strip() if title_el is not None and title_el.text else ''
@@ -365,7 +795,6 @@ def _feed_item_from_atom(item, base_url) -> dict:
         "published_dt": published,
     }
 
-
 def _parse_feed(text, base_url) -> list:
     """解析 RSS 2.0 / Atom / RSS 1.0(RDF) feed 文本，失败返回 []。"""
     try:
@@ -381,7 +810,6 @@ def _parse_feed(text, base_url) -> list:
     if tag == 'rdf':
         return [_feed_item_from_rss(it, base_url) for it in root.iter(_RDF_ITEM)]
     return []
-
 
 def _extract_page_item(text, url):
     """普通网页 → 单条目 {title, link, content}；解析失败返回 None。"""
@@ -400,7 +828,6 @@ def _extract_page_item(text, url):
     except Exception:
         return None
     return {"title": title, "link": url, "content": content, "summary": '', "published_dt": None}
-
 
 def _fetch_source_items(url, max_items=10, cutoff=None) -> list:
     """抓取一个采集源 URL，返回候选条目列表。
@@ -439,7 +866,7 @@ def _fetch_source_items(url, max_items=10, cutoff=None) -> list:
                 content = (it.get("summary") or '').strip()
                 # 摘要过短且条目带独立链接时，回退抓取链接全文（不把 feed 自身当文章）
                 if len(content) < 50 and it.get("link") and it["link"] != url:
-                    content = _read_web(it["link"]) or content
+                    content = (_read_web(it["link"]) or {}).get("content") or content
                 it["content"] = content[:3000]
             return items
         item = _extract_page_item(text, url)
@@ -450,14 +877,15 @@ def _fetch_source_items(url, max_items=10, cutoff=None) -> list:
         logger.warning(f"[search_cycle] source fetch error for {url[:80]}: {e}")
         return None
 
-
 def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
                           max_per_domain, total_new, max_llm_calls, llm_calls,
-                          content_max, max_items_per_source, intel_items) -> tuple:
+                          content_max, max_items_per_source, intel_items,
+                          recency_days: int = 0, auth_map: dict = None) -> tuple:
     """source_only 模式：只从项目关联的采集源（datasources）采集。
 
     数据源缺失/全部不可用时该项目本轮跳过（不做开放式搜索兜底）。
-    每条候选过 LLM ② 判相关，相关则带 source_url 入库，并刷新数据源
+    每条候选复用 _process_candidate（URL 去重 → 正文长度 → 时效过滤 →
+    LLM② → 标题去重 → 入库），相关则带 source_url 入库，并刷新数据源
     last_crawled_at。返回 (project_new, llm_used)。
     """
     from core.datasource import get_datasources_for_project, update_source_last_crawled
@@ -474,12 +902,27 @@ def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
         return 0, 0
 
     cutoff = _recency_cutoff(project.get("frequency"))
-    project_new = 0
-    llm_used = 0
-    seen_links = set()
+    llm_calls_before = llm_calls
+    # 复用 state 单一事实来源：_process_candidate 读写 llm_calls/total_new/
+    # project_new/seen_urls，与开放式采集路径保持一致的预算与去重语义。
+    state = {
+        "db_path": db_path,
+        "pid": project["id"],
+        "project_name": project.get("name", ""),
+        "target_type": context.get("target_type", ""),
+        "content_max": content_max,
+        "seen_urls": set(recent_urls),
+        "recent_titles": set(recent_titles),
+        "intel_items": intel_items,
+        "llm_calls": llm_calls,
+        "total_new": total_new,
+        "project_new": 0,
+        "stale_skips": 0,
+    }
+    seen_links = state["seen_urls"]  # 与 _process_candidate 共享去重集合
 
     for ds in datasources:
-        if total_new + project_new >= max_per_domain or llm_calls + llm_used >= max_llm_calls:
+        if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
             break
         url = (ds.get("url") or '').strip()
         items = _fetch_source_items(url, max_items=max_items_per_source, cutoff=cutoff)
@@ -488,58 +931,22 @@ def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
             continue
 
         for it in items:
-            if total_new + project_new >= max_per_domain or llm_calls + llm_used >= max_llm_calls:
+            if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
                 break
             link = (it.get("link") or url).strip()
-            if not link or link in seen_links or link in recent_urls:
-                continue
-            seen_links.add(link)
-
-            content = (it.get("content") or '').strip()
-            if len(content) < 50:
+            if not link or link in seen_links:
                 continue
 
-            llm_used += 1
-            judged = _judge_and_extract(content, context, max_chars=content_max)
-            if not judged.get("relevant"):
-                continue
-            title = judged.get("title", '').strip()
-            if not title or title.lower() in recent_titles:
-                continue
-
-            category = _normalize_category(
-                judged.get("category") or context.get("target_type") or "market"
+            before_new = state["project_new"]
+            _process_candidate(
+                {"title": it.get("title", ""), "url": link,
+                 "content": it.get("content", ""), "published_date": ""},
+                context, recency_days, state, auth_map,
             )
-            summary = (judged.get("summary") or '').strip()
-            if summary and link:
-                link_text = (it.get("title") or ds.get("name") or '').strip() or link
-                content_final = summary + f"\n\n> 来源：[{link_text}]({link})"
-            else:
-                content_final = summary
-            intel_id = create_intelligence(
-                db_path,
-                title=title,
-                content=content_final,
-                category=category,
-                contact_name="",
-                metadata={"source_url": link},
-                project_id=project["id"],
-            )
-            if intel_id:
-                recent_titles.add(title.lower())
-                recent_urls.add(link)
-                update_intelligence_status(db_path, intel_id, "done")
+            if state["project_new"] > before_new:
                 update_source_last_crawled(db_path, ds["id"])
-                project_new += 1
-                intel_items.append({
-                    "title": title,
-                    "url": link,
-                    "intel_id": intel_id,
-                    "project": project.get("name", ""),
-                })
 
-    return project_new, llm_used
-
+    return state["project_new"], state["llm_calls"] - llm_calls_before
 
 # ── Main cycle ──────────────────────────────────────────────
 
@@ -644,23 +1051,45 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 logger.warning(f"[search_cycle] touch last_search_at failed for project {pid}: {e}")
 
             # Collect indicators from datasources
-            datasources = project.get("datasources", [])
+            # get_projects 只返回 datasource_count，需按项目单独查关联数据源
+            # （否则 indicators 恒空、feed 通道永远发现不了 feed 源）
+            datasources = project.get("datasources")
+            if datasources is None:
+                try:
+                    from core.datasource import get_datasources_for_project
+                    datasources = get_datasources_for_project(db_path, pid)
+                except Exception as e:
+                    logger.warning(f"[search_cycle] load datasources failed for project {pid}: {e}")
+                    datasources = []
             indicators = []
             for ds in datasources:
                 ind_raw = ds.get("indicators", "") or ""
                 indicators.extend([i.strip() for i in ind_raw.split(",") if i.strip()])
 
-            # 鉴权采集：配置了凭证的数据源 → {host: auth}（无凭证则为空，行为同现状）
-            auth_map = dslib.build_auth_map(datasources)
-
             if not target_name:
                 continue
 
-            # Recent intel for dedup（source_only 模式扩大窗口并按 source_url 去重）
-            source_only = bool(project.get("source_only"))
-            recent = get_intelligence_by_project(db_path, pid, limit=50 if source_only else 20)
-            recent_titles = {r.get("title", "").lower() for r in recent}
-            recent_urls = {(r.get("source_url") or '').strip() for r in recent if r.get("source_url")}
+            # 时效窗口：项目频率 → 天数（hourly=1 / daily=7 / weekly=30 / monthly=365，
+            # oneshot 用 config recency_days 兜底）。"新旧"由此硬约束，不靠模型自觉。
+            recency_days = _recency_window_days(project.get("frequency", ""), cfg)
+
+            # Recent intel for dedup
+            recent = get_intelligence_by_project(db_path, pid, limit=20)
+            state = {
+                "db_path": db_path,
+                "pid": pid,
+                "project_name": project.get("name", ""),
+                "target_type": target_type,
+                "content_max": content_max,
+                "seen_urls": set(),
+                "recent_titles": {r.get("title", "").lower() for r in recent},
+                "intel_items": intel_items,
+                "llm_calls": llm_calls,
+                "total_new": total_new,
+                "project_new": 0,
+                "stale_skips": 0,
+                "date_budget": _MAX_DATE_FETCHES,
+            }
 
             context = {
                 "target_name": target_name,
@@ -670,14 +1099,21 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 "target_type": target_type,
             }
 
-            if source_only:
+            # 鉴权采集：配置了凭证的数据源 → {host: auth}（无凭证则为空，行为同现状）
+            auth_map = dslib.build_auth_map(datasources)
+
+            if bool(project.get("source_only")):
                 # ── 仅采集源模式：只从项目关联的采集源采集，不做开放式搜索 ──
-                if llm_calls >= max_llm_calls:
+                if state["llm_calls"] >= max_llm_calls:
                     break
+                # source_only 模式扩大标题去重窗口并按 source_url 去重
+                recent_wide = get_intelligence_by_project(db_path, pid, limit=50)
+                recent_wide_titles = {r.get("title", "").lower() for r in recent_wide}
+                recent_wide_urls = {(r.get("source_url") or "").strip() for r in recent_wide if r.get("source_url")}
                 project_new, llm_used = _collect_from_sources(
-                    db_path, project, context, recent_titles, recent_urls,
+                    db_path, project, context, recent_wide_titles, recent_wide_urls,
                     max_per_domain, total_new, max_llm_calls, llm_calls,
-                    content_max, max_items_per_source, intel_items,
+                    content_max, max_items_per_source, intel_items, recency_days, auth_map,
                 )
                 llm_calls += llm_used
                 total_new += project_new
@@ -690,102 +1126,119 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 })
                 continue
 
-            # ── LLM ①: build keywords（开放式采集，现有逻辑） ──
-            if llm_calls >= max_llm_calls:
+            # ── 通道 A：feed（RSS/Atom 新在前、带 pubDate，天然规避旧内容） ──
+            feed_sources = [
+                ds for ds in datasources
+                if ds.get("status") != "inactive" and _is_feed_source(ds)
+            ]
+            feed_worked = False
+            if feed_sources:
+                feed_max = int(cfg.get("feed_max_items", 20) or 20)
+                feed_timeout = int(cfg.get("feed_timeout", 15) or 15)
+                feed_items = []
+                for ds in feed_sources:
+                    items = _fetch_feed(ds.get("url") or "", timeout=feed_timeout, max_items=feed_max)
+                    if items:
+                        feed_worked = True
+                        try:
+                            from core.datasource import update_source_last_crawled
+                            update_source_last_crawled(db_path, ds["id"])
+                        except Exception as e:
+                            logger.warning(f"[search_cycle] update last_crawled failed for {ds.get('name', '')}: {e}")
+                        feed_items.extend(items)
+                if feed_items:
+                    logger.info(f"[search_cycle] project {pid}: feed 通道 {len(feed_items)} 条候选")
+                    for item in feed_items:
+                        if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
+                            break
+                        _process_candidate(item, context, recency_days, state, auth_map)
+
+            # 高频项目（hourly/daily）且 feed 通道可用 → 优先走 feed，跳过全网搜索
+            prefer_feed = (
+                project.get("frequency") in ("hourly", "daily")
+                and feed_worked
+                and bool(cfg.get("feed_prefer_high_freq", True))
+            )
+            if prefer_feed:
+                logger.info(
+                    f"[search_cycle] project {pid} 高频项目且 feed 可用 → 本轮仅走 feed 通道"
+                )
+                llm_calls, total_new = state["llm_calls"], state["total_new"]
+                project_summaries.append({
+                    "project_id": pid,
+                    "project_name": project.get("name", ""),
+                    "target_name": target_name,
+                    "new_intel": state["project_new"],
+                    "stale_skips": state["stale_skips"],
+                })
+                continue
+
+            # ── 通道 B：开放式网页搜索（Tavily，带时间过滤） ──
+            # ── LLM ①: build keywords ──
+            if state["llm_calls"] >= max_llm_calls:
                 break
-            llm_calls += 1
+            state["llm_calls"] += 1
             keywords = _build_keywords(context)
             keywords = keywords[:max_keywords]
             if not keywords:
+                llm_calls, total_new = state["llm_calls"], state["total_new"]
+                project_summaries.append({
+                    "project_id": pid,
+                    "project_name": project.get("name", ""),
+                    "target_name": target_name,
+                    "new_intel": state["project_new"],
+                    "stale_skips": state["stale_skips"],
+                })
                 continue
 
-            project_new = 0
-            seen_urls = set()
-
             for kw in keywords:
-                if total_new + project_new >= max_per_domain or llm_calls >= max_llm_calls:
+                if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
                     break
 
-                results = _tavily_search(kw, max_results=results_per_kw)
+                results = _tavily_search(kw, max_results=results_per_kw, recency_days=recency_days)
+                if not results:
+                    continue
+
+                # 时效二次过滤的准备：批量补齐缺失的发布日期（并发抓页面，受限预算）
+                if recency_days:
+                    pairs = [
+                        ((r.get("url") or "").strip(), r.get("published_date") or "")
+                        for r in results
+                    ]
+                    dates, fetched = _fill_missing_dates(pairs, cfg, budget=state["date_budget"])
+                    state["date_budget"] = max(0, state["date_budget"] - fetched)
+                    for r, d in zip(results, dates):
+                        if d:
+                            r["published_date"] = d
 
                 for r in results:
-                    if total_new + project_new >= max_per_domain or llm_calls >= max_llm_calls:
+                    if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
                         break
                     url = (r.get("url") or "").strip()
-                    if not url or url in seen_urls:
+                    if not url:
                         continue
-                    seen_urls.add(url)
-
-                    # 内容获取：优先用 Tavily snippet（快），公众号才做全文抓取
-                    content = (r.get("content") or "").strip()
+                    cand = {
+                        "title": r.get("title", ""),
+                        "url": url,
+                        "content": (r.get("content") or "").strip(),
+                        "published_date": r.get("published_date", ""),
+                    }
                     if "mp.weixin.qq.com" in url:
-                        # 公众号需要完整正文
-                        full = _read_content(url)
-                        if full:
-                            content = full
-                    elif auth_map:
-                        # 鉴权采集：结果 URL 命中配置了凭证的源（按域名）→ 带鉴权抓全文；
-                        # 失败则保留 snippet（与现状一致），不阻塞采集
-                        auth = dslib.match_auth(url, auth_map)
-                        if auth:
-                            full_html, ok = auth_fetch.fetch_url(url, auth)
-                            if ok:
-                                full = _extract_article_text(full_html)
-                                if len(full) >= 50:
-                                    content = full
-                    if not content or len(content) < 50:
-                        continue
+                        # 公众号需要完整正文 + 页面内发布时间（var ct=）
+                        read = _read_content(url)
+                        if read.get("content"):
+                            cand["content"] = read["content"]
+                        if read.get("published_date"):
+                            cand["published_date"] = cand["published_date"] or read["published_date"]
+                    _process_candidate(cand, context, recency_days, state, auth_map)
 
-                    # ── LLM ②: judge + extract ──
-                    llm_calls += 1
-                    judged = _judge_and_extract(content, context, max_chars=content_max)
-                    if not judged.get("relevant"):
-                        continue
-
-                    title = judged.get("title", "").strip()
-                    if not title:
-                        continue
-                    if title.lower() in recent_titles:
-                        continue
-
-                    # Create intelligence（分类强制归一到受控词表，防止词表外值再次进入）
-                    category = _normalize_category(
-                        judged.get("category") or target_type or "market"
-                    )
-                    summary = (judged.get("summary") or "").strip()
-                    # 附来源（markdown 引用行），来源清晰；链接文本优先用搜索结果原标题
-                    if summary and url:
-                        link_text = (r.get("title") or "").strip() or url
-                        content_final = summary + f"\n\n> 来源：[{link_text}]({url})"
-                    else:
-                        content_final = summary
-                    intel_id = create_intelligence(
-                        db_path,
-                        title=title,
-                        content=content_final,
-                        category=category,
-                        contact_name="",
-                        metadata={"source_url": url},
-                        project_id=pid,
-                    )
-                    if intel_id:
-                        recent_titles.add(title.lower())
-                        update_intelligence_status(db_path, intel_id, "done")
-                        project_new += 1
-                        total_new += 1
-                        intel_items.append({
-                            "title": title,
-                            "url": url,
-                            "intel_id": intel_id,
-                            "project": project.get("name", ""),
-                        })
-
+            llm_calls, total_new = state["llm_calls"], state["total_new"]
             project_summaries.append({
                 "project_id": pid,
                 "project_name": project.get("name", ""),
                 "target_name": target_name,
-                "new_intel": project_new,
-                "source_only": False,
+                "new_intel": state["project_new"],
+                "stale_skips": state["stale_skips"],
             })
 
         logger.info(
@@ -829,13 +1282,11 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
             except Exception as e:
                 logger.warning(f"[search_cycle] failed to record run end: {e}")
 
-
 # ── Manual trigger ──────────────────────────────────────────
 
 def trigger_search_once() -> dict:
     """Synchronously run one search cycle (used by the scheduler / tests)."""
     return run_search_cycle(trigger_type='manual')
-
 
 def trigger_search_async() -> dict:
     """Start one manual search cycle in a background thread, return immediately.
@@ -856,7 +1307,6 @@ def trigger_search_async() -> dict:
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"ok": True, "started": True}
-
 
 # ── 频率感知调度（方案B：单一 tick + 每项目到期判定） ──────────
 
@@ -891,7 +1341,6 @@ def _due_project_ids(db_path) -> list:
         if (now - last_dt) >= timedelta(hours=hours):
             ids.append(r["id"])
     return ids
-
 
 def run_search_tick(trigger_type='tick') -> dict:
     """每小时心跳：检查本域项目的采集频率，只跑"到期"的项目。

@@ -53,7 +53,7 @@ class MeiliSearchEngine:
             "attributesToRetrieve": [
                 "id", "title", "content", "category", "status",
                 "company", "contact_name", "created_at", "source_url",
-                "entity_ids",
+                "published_date", "is_expired", "entity_ids",
             ],
         }
         resp = requests.post(
@@ -75,10 +75,14 @@ class MeiliSearchEngine:
                 "contact_name": hit.get("contact_name", ""),
                 "created_at": hit.get("created_at", ""),
                 "source_url": hit.get("source_url", ""),
+                "published_date": hit.get("published_date", ""),
+                "is_expired": bool(hit.get("is_expired", 0)),
                 "content": hit.get("content", ""),
                 "entity_ids": hit.get("entity_ids", []),
                 "_score": hit.get("_score", 0),
             })
+        # TTL 降权：过期情报排到结果尾部（稳定排序，组内保持相关性顺序）
+        items.sort(key=lambda it: 1 if it.get("is_expired") else 0)
         return {"items": items, "total": len(items), "query": query}
 
     def index_intelligence(self, db_path):
@@ -105,7 +109,8 @@ class MeiliSearchEngine:
             rows = conn.execute("""
                 SELECT i.id, i.title, i.content, i.category, i.status,
                        i.company, i.contact_name, i.created_at,
-                       i.updated_at, i.source_url, p.name AS project_name
+                       i.updated_at, i.source_url, i.published_date, i.is_expired,
+                       p.name AS project_name
                 FROM intelligence i
                 LEFT JOIN projects p ON i.project_id = p.id
                 ORDER BY i.id
@@ -130,6 +135,8 @@ class MeiliSearchEngine:
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "source_url": row["source_url"],
+                    "published_date": row["published_date"] or "",
+                    "is_expired": int(row["is_expired"] or 0),
                     "entity_ids": entity_ids,
                 })
         return docs
@@ -203,7 +210,8 @@ class NoopEngine:
             with _get(self.db_path) as conn:
                 rows = conn.execute("""
                     SELECT id, title, content, category, status,
-                           company, contact_name, source_url, created_at
+                           company, contact_name, source_url, created_at,
+                           published_date, is_expired
                     FROM intelligence
                     WHERE title LIKE ? OR content LIKE ? OR category LIKE ?
                     LIMIT ?
@@ -219,11 +227,15 @@ class NoopEngine:
                         "contact_name": row["contact_name"],
                         "source_url": row["source_url"] or "",
                         "created_at": row["created_at"],
+                        "published_date": row["published_date"] or "",
+                        "is_expired": bool(row["is_expired"] or 0),
                         "entity_ids": [],
                         "_score": 0.0,
                     })
         except Exception:
             pass
+        # TTL 降权：过期情报排到结果尾部
+        results.sort(key=lambda it: 1 if it.get("is_expired") else 0)
         return {"items": results, "total": len(results), "query": query}
 
     def index_intelligence(self, db_path):
