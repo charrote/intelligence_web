@@ -959,6 +959,19 @@ def create_app(project_root, spec):
     # Projects API
     # ========================================================================
 
+    def _mask_project(project):
+        """Mask datasource credentials in a project dict for API output.
+
+        Project dicts carry raw datasource rows (incl. encrypted credential
+        column); API responses must never expose them.
+        """
+        if project is None:
+            return None
+        p = dict(project)
+        if p.get('datasources'):
+            p['datasources'] = [dslib.mask_source(d) for d in p['datasources']]
+        return p
+
     @app.route('/api/projects', methods=['GET'])
     def list_projects():
         items = projlib.get_projects(db_path, {
@@ -967,7 +980,7 @@ def create_app(project_root, spec):
         total = projlib.get_project_count(db_path)
         return jsonify({
             "total": total,
-            "items": items,
+            "items": [_mask_project(p) for p in items],
         })
 
     @app.route('/api/projects', methods=['POST'])
@@ -994,14 +1007,14 @@ def create_app(project_root, spec):
             datasource_ids=data.get('datasource_ids', []),
         )
         project = projlib.get_project_by_id(db_path, project_id)
-        return jsonify(project), 201
+        return jsonify(_mask_project(project)), 201
 
     @app.route('/api/projects/<int:id>', methods=['GET'])
     def get_project(id):
         project = projlib.get_project_by_id(db_path, id)
         if project is None:
             return jsonify({'error': 'not found'}), 404
-        return jsonify({"project": project})
+        return jsonify({"project": _mask_project(project)})
 
     @app.route('/api/projects/<int:id>', methods=['PUT'])
     @require_permission('projects.manage')
@@ -1009,7 +1022,7 @@ def create_app(project_root, spec):
         project = projlib.update_project(db_path, id, request.json)
         if project is None:
             return jsonify({'error': 'not found'}), 404
-        return jsonify(project)
+        return jsonify(_mask_project(project))
 
     @app.route('/api/projects/<int:id>/toggle', methods=['POST'])
     @require_permission('projects.manage')
@@ -1019,14 +1032,14 @@ def create_app(project_root, spec):
         project = projlib.toggle_project_status(db_path, id, enabled)
         if project is None:
             return jsonify({'error': 'not found'}), 404
-        return jsonify(project)
+        return jsonify(_mask_project(project))
 
     @app.route('/api/projects/<int:id>/datasources', methods=['GET'])
     def get_project_datasources(id):
         project = projlib.get_project_by_id(db_path, id)
         if project is None:
             return jsonify({'error': 'not found'}), 404
-        return jsonify({"datasources": project.get('datasources', [])})
+        return jsonify({"datasources": [dslib.mask_source(d) for d in project.get('datasources', [])]})
 
     @app.route('/api/projects/<int:id>/datasources', methods=['PUT'])
     @require_permission('projects.manage')
@@ -1036,7 +1049,7 @@ def create_app(project_root, spec):
         project = projlib.set_project_datasources(db_path, id, datasource_ids)
         if project is None:
             return jsonify({'error': 'not found'}), 404
-        return jsonify(project)
+        return jsonify(_mask_project(project))
 
     @app.route('/api/projects/<int:id>', methods=['DELETE'])
     @require_permission('projects.manage')
@@ -1063,14 +1076,17 @@ def create_app(project_root, spec):
     # Datasources API
     # ========================================================================
 
+    from core.credentials import CredentialKeyMissingError
+
     @app.route('/api/datasources', methods=['GET'])
+    @require_auth
     def list_datasources():
         items = dslib.list_sources(db_path, {
             "type": request.args.get('type'),
             "status": request.args.get('status'),
             "search": request.args.get('search'),
         })
-        return jsonify(items)
+        return jsonify([dslib.mask_source(s) for s in items])
 
     @app.route('/api/datasources', methods=['POST'])
     @require_permission('datasources.manage')
@@ -1083,33 +1099,43 @@ def create_app(project_root, spec):
         if isinstance(indicators, str) and indicators:
             indicators = [i.strip() for i in indicators.split(',') if i.strip()]
 
-        source_id = dslib.create_source(
-            db_path,
-            name=data['name'],
-            type_=data.get('type', 'website'),
-            url=data['url'],
-            schedule=data.get('schedule', 'daily'),
-            status=data.get('status', 'active'),
-            indicators=indicators,
-            description=data.get('description', ''),
-        )
+        try:
+            source_id = dslib.create_source(
+                db_path,
+                name=data['name'],
+                type_=data.get('type', 'website'),
+                url=data['url'],
+                schedule=data.get('schedule', 'daily'),
+                status=data.get('status', 'active'),
+                indicators=indicators,
+                description=data.get('description', ''),
+                auth_type=data.get('auth_type', 'none'),
+                username=data.get('username', ''),
+                password=data.get('password', ''),
+            )
+        except CredentialKeyMissingError as e:
+            return jsonify({'error': str(e)}), 400
         source = dslib.get_source_by_id(db_path, source_id)
-        return jsonify(source), 201
+        return jsonify(dslib.mask_source(source)), 201
 
     @app.route('/api/datasources/<int:id>', methods=['GET'])
+    @require_auth
     def get_datasource(id):
         source = dslib.get_source_by_id(db_path, id)
         if source is None:
             return jsonify({'error': 'not found'}), 404
-        return jsonify(source)
+        return jsonify(dslib.mask_source(source))
 
     @app.route('/api/datasources/<int:id>', methods=['PUT'])
     @require_permission('datasources.manage')
     def update_datasource_endpoint(id):
-        source = dslib.update_source(db_path, id, request.json)
+        try:
+            source = dslib.update_source(db_path, id, request.json)
+        except CredentialKeyMissingError as e:
+            return jsonify({'error': str(e)}), 400
         if source is None:
             return jsonify({'error': 'not found'}), 404
-        return jsonify(source)
+        return jsonify(dslib.mask_source(source))
 
     @app.route('/api/datasources/<int:id>/status', methods=['PUT'])
     @require_permission('datasources.manage')

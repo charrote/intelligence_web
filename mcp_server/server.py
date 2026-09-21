@@ -464,18 +464,27 @@ def add_comment(id: int, content: str, agent_name: str = "agent", domain: str = 
 
 @server.tool()
 def list_data_sources(domain: str = "research"):
-    """List data sources."""
+    """List data sources (credentials masked: auth_type + has_credentials only)."""
     db = get_db(domain)
-    return dslib.list_sources(db)
+    return [dslib.mask_source(s) for s in dslib.list_sources(db)]
 
 
 @server.tool()
 def create_data_source(name: str, type_: str, url: str, indicators: list, schedule: str,
-                       domain: str = "research", description: str = None):
-    """Create a data source."""
+                       domain: str = "research", description: str = None,
+                       auth_type: str = "none", username: str = "", password: str = ""):
+    """Create a data source.
+
+    auth_type: none/basic/bearer/cookie/form_login. With auth_type != none,
+    username/password provide the source account (password stored encrypted;
+    requires CREDENTIALS_ENCRYPT_KEY configured server-side).
+    """
     db = get_db(domain)
-    dsid = dslib.add_source(db, name, type_, url, indicators=indicators, schedule=schedule, description=description)
-    return {"id": dsid, "name": name, "type": type_, "url": url, "domain": domain}
+    dsid = dslib.create_source(db, name, type_, url, indicators=indicators, schedule=schedule,
+                               description=description, auth_type=auth_type,
+                               username=username, password=password)
+    return {"id": dsid, "name": name, "type": type_, "url": url, "domain": domain,
+            "auth_type": dslib.normalize_auth_type(auth_type)}
 
 
 @server.tool()

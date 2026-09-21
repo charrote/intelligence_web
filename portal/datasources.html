@@ -19,6 +19,7 @@
 .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .status-dot.on{background:var(--green)}
 .status-dot.off{background:var(--gray-400)}
+.tag.auth{background:#eef2ff;color:#4f46e5}
 /* 图标按钮 */
 .btn-icon{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:var(--radius);background:transparent;color:var(--gray-500);cursor:pointer;transition:all 0.12s;padding:0;position:relative}
 .btn-icon:hover{background:var(--gray-100);color:var(--gray-700)}
@@ -104,6 +105,31 @@
         <label>指标（可选，逗号分隔）</label>
         <input type="text" id="srcIndicators" placeholder="如: price, volume, sentiment">
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>登录鉴权（访问需登录/会员的源）</label>
+          <select id="srcAuthType" onchange="toggleAuthFields()">
+            <option value="none">无鉴权</option>
+            <option value="basic">Basic（用户名/密码）</option>
+            <option value="bearer">Bearer Token</option>
+            <option value="cookie">Cookie（会话）</option>
+            <option value="form_login">表单登录（用户名/密码）</option>
+          </select>
+        </div>
+      </div>
+      <div id="srcAuthFields" style="display:none">
+        <div class="form-group">
+          <label id="srcUsernameLabel">用户名</label>
+          <input type="text" id="srcUsername" placeholder="输入用户名" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label id="srcCredLabel">密码</label>
+          <input type="password" id="srcPassword" placeholder="输入密码" autocomplete="new-password">
+        </div>
+        <div style="font-size:12px;color:var(--gray-500);margin-top:-6px;margin-bottom:14px">
+          凭证加密存储（Fernet），不会出现在任何列表/详情接口中；使用自有账号访问目标站点请确认符合其服务条款。
+        </div>
+      </div>
       <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
     </div>
     <div class="panel-foot">
@@ -141,7 +167,8 @@ function renderTable() {
     filtered.forEach(function(src) {
       html += '<tr>'
         + '<td><strong>' + escapeHtml(src.name) + '</strong></td>'
-        + '<td><span class="tag ' + src.type + '">' + typeLabel(src.type) + '</span></td>'
+        + '<td><span class="tag ' + src.type + '">' + typeLabel(src.type) + '</span>'
+          + (src.auth_type && src.auth_type !== 'none' ? ' <span class="tag auth">鉴权</span>' : '') + '</td>'
         + '<td title="' + escapeHtml(src.url || '') + '">' + truncate(escapeHtml(src.url || ''), 30) + '</td>'
         + '<td><span class="tag ' + (src.schedule || 'daily') + '">' + (src.schedule || 'daily') + '</span></td>'
         + '<td><span class="status-dot ' + (src.status === 'active' ? 'on' : 'off') + '"></span>' + (src.status === 'active' ? '启用' : '停用') + '</td>'
@@ -179,6 +206,10 @@ function openCreate() {
   document.getElementById('srcUrl').value = '';
   document.getElementById('srcStatus').value = 'active';
   document.getElementById('srcIndicators').value = '';
+  document.getElementById('srcAuthType').value = 'none';
+  document.getElementById('srcUsername').value = '';
+  document.getElementById('srcPassword').value = '';
+  toggleAuthFields();
   document.getElementById('panelFeedback').style.display = 'none';
   document.getElementById('createPanel').classList.add('open');
   document.getElementById('srcName').focus();
@@ -194,8 +225,39 @@ function editSource(id) {
   document.getElementById('srcUrl').value = src.url;
   document.getElementById('srcStatus').value = src.status || 'active';
   document.getElementById('srcIndicators').value = Array.isArray(src.indicators) ? src.indicators.join(', ') : (src.indicators || '');
+  // 鉴权：凭证不回显（服务端已脱敏），留空 = 保持原值
+  document.getElementById('srcAuthType').value = (src.auth_type && src.auth_type !== 'none') ? src.auth_type : 'none';
+  document.getElementById('srcUsername').value = '';
+  document.getElementById('srcPassword').value = '';
+  toggleAuthFields();
+  if (src.has_credentials) {
+    document.getElementById('srcUsername').placeholder = '留空 = 保持原用户名';
+    document.getElementById('srcPassword').placeholder = '留空 = 保持原凭证';
+  }
   document.getElementById('panelFeedback').style.display = 'none';
   document.getElementById('createPanel').classList.add('open');
+}
+
+function toggleAuthFields() {
+  var t = document.getElementById('srcAuthType').value;
+  var fields = document.getElementById('srcAuthFields');
+  var unameG = document.getElementById('srcUsername').closest('.form-group');
+  fields.style.display = (t === 'none') ? 'none' : 'block';
+  if (t === 'basic' || t === 'form_login') {
+    unameG.style.display = '';
+    document.getElementById('srcUsernameLabel').textContent = '用户名';
+    document.getElementById('srcUsername').placeholder = '输入用户名';
+    document.getElementById('srcCredLabel').textContent = '密码';
+    document.getElementById('srcPassword').placeholder = '输入密码（加密存储）';
+  } else if (t === 'bearer') {
+    unameG.style.display = 'none';
+    document.getElementById('srcCredLabel').textContent = 'Token';
+    document.getElementById('srcPassword').placeholder = '输入 Bearer Token（加密存储）';
+  } else if (t === 'cookie') {
+    unameG.style.display = 'none';
+    document.getElementById('srcCredLabel').textContent = 'Cookie 字符串';
+    document.getElementById('srcPassword').placeholder = '如: session=abc123; token=xyz（浏览器登录后复制，加密存储）';
+  }
 }
 
 function closePanel() {
@@ -220,6 +282,22 @@ async function saveSource() {
 
   var payload = { name: name, type: type, url: url, status: status };
   if (indicators) payload.indicators = indicators;
+
+  // 鉴权配置：编辑时用户名/凭证均留空 = 保持原值（服务端缺省 key 不修改）
+  var authType = document.getElementById('srcAuthType').value;
+  var username = document.getElementById('srcUsername').value.trim();
+  var password = document.getElementById('srcPassword').value;
+  var cur = editingId ? sources.find(function(s){return s.id===editingId;}) : null;
+  payload.auth_type = authType;
+  if (authType !== 'none') {
+    var keepOld = !!(cur && cur.has_credentials && !username && !password);
+    if (keepOld) {
+      // 不携带 username/password，服务端保持原值
+    } else {
+      payload.username = username;
+      if (password) payload.password = password;
+    }
+  }
 
   try {
     var method = editingId ? 'PUT' : 'POST';

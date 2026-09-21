@@ -8,6 +8,17 @@ import sqlite3
 from datetime import datetime
 from contextlib import contextmanager
 
+from core.credentials import encrypt_secret, decrypt_secret
+
+# 允许的鉴权类型。none = 不鉴权（现状）；其余见 core/scheduler/auth_fetch.py
+AUTH_TYPES = {'none', 'basic', 'bearer', 'cookie', 'form_login'}
+
+
+def normalize_auth_type(value) -> str:
+    """Normalize an auth_type value; unknown/empty values become 'none'."""
+    v = str(value or 'none').strip().lower()
+    return v if v in AUTH_TYPES else 'none'
+
 
 @contextmanager
 def _get_db(db_path):
@@ -22,17 +33,31 @@ def _get_db(db_path):
 # ── Create ──────────────────────────────────────────────────────────────────
 
 def create_source(db_path, name, type_, url, schedule='daily', status='active',
-                  indicators='', description=''):
-    """Create a new datasource. Returns the id."""
+                 indicators='', description='', auth_type='none', username='',
+                 password=''):
+    """Create a new datasource. Returns the id.
+
+    auth_type: none/basic/bearer/cookie/form_login。
+    username/password 仅在 auth_type != 'none' 且 password 非空时入库
+    （password 经 Fernet 加密后存入 credential 列）。
+    未配置 CREDENTIALS_ENCRYPT_KEY 时保存密码会抛
+    core.credentials.CredentialKeyMissingError（API 层转 400）。
+    """
     now = datetime.now().isoformat()
     indicator_str = ','.join(indicators) if isinstance(indicators, list) else indicators
+    auth = normalize_auth_type(auth_type)
+    username = str(username or '').strip()
+    credential = ''
+    if auth != 'none' and password:
+        credential = encrypt_secret(str(password))
     with _get_db(db_path) as conn:
         cursor = conn.execute(
             '''INSERT INTO datasources (name, type, url, schedule, status,
-               indicators, last_crawled_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)''',
+                indicators, last_crawled_at, auth_type, username, credential,
+                created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)''',
             (name.strip(), type_, url.strip(), schedule, status,
-             indicator_str, now, now)
+              indicator_str, auth, username, credential, now, now)
         )
         conn.commit()
         return cursor.lastrowid
@@ -76,9 +101,24 @@ def get_source_by_id(db_path, source_id):
 # ── Update ──────────────────────────────────────────────────────────────────
 
 def update_source(db_path, source_id, data):
-    """Update datasource fields. Returns updated source or None."""
+    """Update datasource fields. Returns updated source or None.
+
+    鉴权字段语义：
+    - auth_type: 归一化后写入；改为 'none' 时同时清空 username 与 credential。
+    - username: 仅当 key 存在且非 None 时写入（空串 = 清空）；缺省 = 保持不变。
+    - password: 明文，仅当非空时加密写入 credential；缺省/空 = 保持原凭证不变。
+    """
     allowed = {'name', 'type', 'url', 'schedule', 'status', 'indicators', 'description'}
     updates = {k: v for k, v in data.items() if k in allowed and v is not None}
+    if 'auth_type' in data and data['auth_type'] is not None:
+        updates['auth_type'] = normalize_auth_type(data['auth_type'])
+    if 'username' in data and data['username'] is not None:
+        updates['username'] = str(data['username']).strip()
+    if data.get('password'):
+        updates['credential'] = encrypt_secret(str(data['password']))
+    if updates.get('auth_type') == 'none':
+        updates['username'] = ''
+        updates['credential'] = ''
     if not updates:
         return get_source_by_id(db_path, source_id)
 
@@ -131,6 +171,79 @@ def delete_source(db_path, source_id):
     with _get_db(db_path) as conn:
         conn.execute('DELETE FROM datasources WHERE id = ?', (source_id,))
         conn.commit()
+
+
+# ── Auth / credential helpers ───────────────────────────────────────────────
+
+def mask_source(source):
+    """Return a copy safe for API/MCP output.
+
+    Never exposes the credential (Fernet token) and never exposes the raw
+    username; instead reports auth_type + has_credentials + masked username.
+    """
+    if source is None:
+        return None
+    out = dict(source)
+    auth = normalize_auth_type(out.get('auth_type'))
+    username = str(out.get('username') or '')
+    out['auth_type'] = auth
+    out['has_credentials'] = bool(out.get('credential')) and auth != 'none'
+    if username and auth != 'none':
+        out['username'] = username[0] + '***'
+    else:
+        out['username'] = ''
+    out.pop('credential', None)
+    return out
+
+
+def build_auth_map(datasources):
+    """Build {hostname: auth} for datasources that carry usable credentials.
+
+    auth = {'auth_type', 'username', 'password' (plaintext), 'login_url'}.
+    Skips sources with auth_type='none', empty/undecryptable credential,
+    or a url without a hostname. Used by the search cycle to match result
+    URLs against credentialed sources.
+    """
+    from urllib.parse import urlparse
+
+    auth_map = {}
+    for ds in datasources or []:
+        auth = normalize_auth_type(ds.get('auth_type'))
+        if auth == 'none':
+            continue
+        password = decrypt_secret(ds.get('credential') or '')
+        if not password:
+            continue
+        url = str(ds.get('url') or '').strip()
+        host = urlparse(url).hostname or ''
+        if not host:
+            continue
+        auth_map[host] = {
+            'auth_type': auth,
+            'username': str(ds.get('username') or ''),
+            'password': password,
+            'login_url': url,
+        }
+    return auth_map
+
+
+def match_auth(url, auth_map):
+    """Match a URL against the auth map (exact host, then subdomain relation).
+
+    Returns the auth dict or None. Subdomain fallback covers e.g. a source
+    configured as 'example.com' and results on 'www.example.com'.
+    """
+    from urllib.parse import urlparse
+
+    host = urlparse(url).hostname or ''
+    if not host:
+        return None
+    if host in auth_map:
+        return auth_map[host]
+    for ds_host, auth in auth_map.items():
+        if host.endswith('.' + ds_host) or ds_host.endswith('.' + host):
+            return auth
+    return None
 
 
 # ── Link / Unlink ──────────────────────────────────────────────────────────
