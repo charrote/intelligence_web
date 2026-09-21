@@ -114,7 +114,19 @@ var statusMap = {};
 var currentDomainPort = 8766;
 
 function onDomainSwitch(port) {
+  // Find the domain's gateway prefix (dynamic domains use /d/<slug>)
+  var sel = document.getElementById('domainSwitcher');
+  var prefix = '/research';
+  if (sel) {
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value == port) {
+        prefix = sel.options[i].getAttribute('data-prefix') || '/research';
+        break;
+      }
+    }
+  }
   localStorage.setItem('domainPort', port);
+  localStorage.setItem('domainPrefix', prefix);
   window.location.reload();
 }
 
@@ -134,6 +146,7 @@ function loadEnabledDomains() {
         var opt = document.createElement('option');
         opt.value = d.port;
         opt.textContent = d.name;
+        opt.setAttribute('data-prefix', d.gateway_prefix || (d.port === 8767 ? '/sales' : '/research'));
         sel.appendChild(opt);
       });
       if (domains.length === 0) return;

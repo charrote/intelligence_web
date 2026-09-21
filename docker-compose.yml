@@ -38,6 +38,9 @@ services:
       - ./intelligence_web/data:/app/data
       - ./mcp_server/data:/app/shared_data  # 共享数据卷（与 mcp_server 共享 API Key）
       - ./config:/app/config  # 平台级配置（LLM 等，可热更新）
+      - ./domains:/app/domains  # 动态域目录（域管理 API 写 spec.json/compose 片段/nginx 配置）
+      - ./compose.d:/app/compose.d
+      - ./nginx/dynamic:/app/nginx/dynamic
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8766/api/health"]
       interval: 30s
@@ -111,6 +114,7 @@ services:
       - ./portal:/var/www/portal
       - ./intelligence_sales/web:/var/www/intelligence_sales
       - ./nginx/gateway.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/dynamic:/etc/nginx/conf.d/dynamic:ro
     depends_on:
       - research
       - sales
@@ -122,11 +126,40 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-# Daily SQLite backup (reuses research python image — no new image pull)
+  # Domain watcher — polls core/domains.json for pending_start/pending_stop/
+  # pending_archive entries and manages dynamic domain containers (compose up/down,
+  # data archival, nginx reload). Needs docker.sock + repo mounts.
+  domain_watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.watcher
+    image: intelligence-web-domain-watcher:latest
+    volumes:
+      # Mount the repo at its HOST path (identical inside the container) so
+      # that `docker compose -f <frag>` run from inside resolves relative
+      # volume paths (../domains/...) against the real host repo — the docker
+      # CLI passes source paths to the daemon verbatim.
+      - ${PWD}:${PWD}
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - REPO_PATH=${PWD}
+    command: python3 ${PWD}/scripts/domain_watcher.py
+    depends_on:
+      - research
+      - sales
+      - gateway
+    restart: unless-stopped
+
+  # Daily SQLite backup (built from the research python image — no new image pull)
   # Startup takes an immediate consistency snapshot of both domain DBs, then
   # repeats every 24h; rolling retention (default 14 days). See scripts/backup_db.py
+  # NOTE: must have its own image tag; building two services to the same
+  # intelligence_web-research tag races and fails with "already exists".
   backup:
-    image: intelligence_web-research:latest
+    image: intelligence_web-backup:latest
+    build:
+      context: .
+      dockerfile: intelligence_web/Dockerfile.api
     volumes:
       - ./intelligence_web/data:/data/research
       - ./intelligence_sales/data:/data/sales

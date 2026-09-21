@@ -1,6 +1,6 @@
 """Shared Flask app factory for intelligence domains."""
 
-import os, sys, sqlite3, hashlib
+import os, sys, re, sqlite3, hashlib
 import json
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, Response
@@ -216,15 +216,36 @@ def create_app(project_root, spec):
                 ttslib.seed_target_types(db_path, types_data)
 
     # --- Domain Config ---
+    def _domain_name_override(slug):
+        """Read the runtime display-name override for a domain from the
+        registry (config/domains.json, volume-mounted). Static domains get
+        their title compiled into the image, so renaming them is done by
+        overriding here at read time. Returns None when absent.
+        """
+        if not slug:
+            return None
+        try:
+            with open(os.path.join(_REGISTRY_PATH), 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            for d in data.get('domains', []):
+                if d.get('slug') == slug and d.get('name'):
+                    return d['name']
+        except Exception:
+            pass
+        return None
+
     @app.route('/api/domain_config')
     def domain_config():
         statuses = [{"key": k, "label": v} for k, v in spec["statuses"]]
         # Load target types from database
         db_target_types = ttslib.get_enabled_target_types(db_path)
         target_types = [tt['slug'] for tt in db_target_types] if db_target_types else spec.get("target_types", [])
+        # Runtime name override (domain controller rename for static domains,
+        # whose titles are otherwise compiled into the image).
+        override = _domain_name_override(spec.get("slug"))
         return jsonify({
             "slug": spec["slug"],
-            "title_prefix": spec["title_prefix"],
+            "title_prefix": override or spec["title_prefix"],
             "theme_color": spec["theme_color"],
             "statuses": statuses,
             "agent_names": spec["agent_names"],
@@ -1622,7 +1643,7 @@ def create_app(project_root, spec):
     # Domain Controller (admin)
     # ========================================================================
 
-    _DOMAINS_FILE = os.path.join(os.path.dirname(__file__), 'domains.json')
+    _DOMAINS_FILE = os.path.join(os.path.dirname(__file__), '..', 'config', 'domains.json')
 
     def _load_domains():
         """Load domain registry from shared JSON file."""
@@ -1671,16 +1692,419 @@ def create_app(project_root, spec):
     @app.route('/api/system/domains/<int:port>/toggle', methods=['PUT'])
     @require_permission('settings.manage')
     def toggle_domain(port):
-        """Enable or disable a domain by port (admin endpoint)."""
+        """Enable or disable a domain by port (admin endpoint).
+
+        For dynamic domains, setting enabled=true marks the entry
+        pending_start (the watcher starts the container); enabled=false
+        marks it pending_stop (the watcher stops the container but keeps
+        the data). Legacy domains just flip the enabled flag.
+        """
         body = request.json or {}
         new_enabled = body.get('enabled', True)
         data = _load_domains()
         for d in data.get('domains', []):
             if d['port'] == port:
                 d['enabled'] = new_enabled
+                if d.get('dynamic'):
+                    if new_enabled:
+                        d['status'] = 'pending_start'
+                    else:
+                        d['status'] = 'pending_stop'
                 _save_domains(data)
                 return jsonify({'success': True, 'port': port, 'enabled': new_enabled})
         return jsonify({'error': '域不存在'}), 404
+
+    # ------------------------------------------------------------------
+    # Dynamic domain lifecycle (create / archive / restore)
+    # ------------------------------------------------------------------
+
+    _DOMAINS_ROOT = os.path.join(os.path.dirname(__file__), '..', 'domains')
+    _COMPOSE_DIR = os.path.join(os.path.dirname(__file__), '..', 'compose.d')
+    _NGINX_DYNAMIC = os.path.join(os.path.dirname(__file__), '..', 'nginx', 'dynamic')
+    _REGISTRY_BACKUP = os.path.join(os.path.dirname(__file__), '..', 'backups')
+    _REGISTRY_PATH = os.path.join(os.path.dirname(__file__), '..', 'config', 'domains.json')
+
+    def _validate_dynamic_spec(payload):
+        """Whitelist-only validation: spec is data, never code.
+
+        Registry-level fields (name, description) are accepted alongside
+        spec fields but never written into spec.json.
+        """
+        registry_only = {'name', 'description'}
+        allowed = {
+            'slug', 'port', 'title_prefix', 'scout_label', 'agent_names',
+            'theme_color', 'inbox_rel', 'db_filename', 'domain_key',
+            'statuses', 'extra_columns', 'list_columns', 'search',
+            'intelligence_ttl_days', 'default_entities', 'default_data_sources',
+            'target_types', 'target_type_initial_data',
+        } | registry_only
+        unknown = set(payload.keys()) - allowed
+        if unknown:
+            return f"Unknown spec fields: {sorted(unknown)}"
+        slug = payload.get('slug', '')
+        if not re.match(r'^[a-z][a-z0-9_]{2,31}$', slug):
+            return "Invalid slug (need ^[a-z][a-z0-9_]{2,31}$)"
+        port = payload.get('port', 0)
+        if port and not (1024 <= port <= 65535):
+            return f"Invalid port: {port}"
+        return None
+
+    def _find_free_port(data):
+        used = set()
+        for d in data.get('domains', []):
+            if d.get('status') != 'archived':
+                used.add(d.get('port'))
+        ports_file = os.path.join(os.path.dirname(__file__), '..', 'config', 'ports.json')
+        try:
+            with open(ports_file, 'r', encoding='utf-8') as f:
+                for svc in json.load(f).get('services', {}).values():
+                    used.add(svc.get('port'))
+        except Exception:
+            pass
+        for p in range(8770, 8800):
+            if p not in used:
+                return p
+        return None
+
+    def _build_dynamic_spec(payload, slug, port):
+        db_filename = payload.get('db_filename') or (
+            f'intelligence_{slug}' if not slug.startswith('intelligence') else slug)
+        domain_key = payload.get('domain_key') or slug.replace('intelligence_', '').replace('_', '-')
+        ttl = payload.get('intelligence_ttl_days') or {'default': 90}
+        spec = {
+            'slug': slug,
+            'port': port,
+            'title_prefix': payload.get('title_prefix', payload.get('name', slug)),
+            'scout_label': payload.get('scout_label', f"{payload.get('name', slug)}采集"),
+            'agent_names': payload.get('agent_names', []),
+            'theme_color': payload.get('theme_color', '#3b4f8c'),
+            'db_filename': db_filename,
+            'domain_key': domain_key,
+            'inbox_rel': payload.get('inbox_rel', '../inbox/'),
+            'statuses': payload.get('statuses') or [
+                ('pending', '待核实'), ('active', '处理中'), ('done', '已完成'),
+            ],
+            'list_columns': payload.get('list_columns') or ['id', 'title', 'status', 'date'],
+            'search': {
+                'engine': 'meilisearch',
+                'url': 'http://meilisearch:7700',
+                'api_key': 'intel-search-key',
+            },
+            'intelligence_ttl_days': ttl,
+        }
+        # Pass through optional fields if provided
+        for key in ('extra_columns', 'default_entities', 'default_data_sources',
+                    'target_types', 'target_type_initial_data'):
+            if key in payload and payload[key] is not None:
+                spec[key] = payload[key]
+        return spec, db_filename, domain_key
+
+    @app.route('/api/system/domains', methods=['POST'])
+    @require_permission('settings.manage')
+    def create_domain():
+        """Create a new dynamic domain (admin endpoint).
+
+        Accepts a spec payload, validates it, writes spec.json + compose
+        fragment + nginx conf + registry entry, and marks the entry
+        pending_start (the domain watcher starts the container).
+        """
+        import json as _json
+        payload = request.json or {}
+        err = _validate_dynamic_spec(payload)
+        if err:
+            return jsonify({'error': err}), 400
+
+        slug = payload['slug']
+        data = _load_domains()
+        existing = [d for d in data['domains'] if d['slug'] == slug]
+        if existing and existing[0].get('status') != 'archived':
+            return jsonify({'error': f"Domain '{slug}' already exists"}), 409
+
+        port = payload.get('port') or _find_free_port(data)
+        if port is None:
+            return jsonify({'error': 'No free port in range 8770-8799'}), 503
+
+        spec, db_filename, domain_key = _build_dynamic_spec(payload, slug, port)
+
+        # 1. spec + data dir
+        ddir = os.path.join(_DOMAINS_ROOT, slug)
+        os.makedirs(os.path.join(ddir, 'data'), exist_ok=True)
+        spec_path = os.path.join(ddir, 'spec.json')
+        with open(spec_path, 'w', encoding='utf-8') as f:
+            _json.dump(spec, f, ensure_ascii=False, indent=2)
+
+        # 2. compose fragment
+        os.makedirs(_COMPOSE_DIR, exist_ok=True)
+        frag_path = os.path.join(_COMPOSE_DIR, f'domain-{slug}.yml')
+        with open(frag_path, 'w', encoding='utf-8') as f:
+            f.write(_render_compose_fragment(slug, port, db_filename, domain_key))
+
+        # 3. nginx conf
+        os.makedirs(_NGINX_DYNAMIC, exist_ok=True)
+        with open(os.path.join(_NGINX_DYNAMIC, f'{slug}.conf'), 'w', encoding='utf-8') as f:
+            f.write(_render_nginx_conf(slug, port))
+
+        # 4. registry entry
+        entry = {
+            'slug': slug,
+            'port': port,
+            'name': payload.get('name', payload.get('title_prefix', slug)),
+            'title_prefix': spec['title_prefix'],
+            'theme_color': spec['theme_color'],
+            'description': payload.get('description', ''),
+            'enabled': True,
+            'dynamic': True,
+            'status': 'pending_start',
+            'db_filename': db_filename,
+            'domain_key': domain_key,
+            'gateway_prefix': f'/d/{slug}',
+        }
+        data['domains'] = [d for d in data['domains'] if d['slug'] != slug]
+        data['domains'].append(entry)
+        _save_domains(data)
+
+        return jsonify({
+            'success': True,
+            'slug': slug,
+            'port': port,
+            'status': 'pending_start',
+            'message': '域已创建，容器正在启动中',
+        }), 201
+
+    @app.route('/api/system/domains/<slug>/update', methods=['PUT'])
+    @require_permission('settings.manage')
+    def update_domain(slug):
+        """Rename a dynamic domain and/or change its port.
+
+        Name change: updates registry + spec.json title_prefix (portal reads
+        it live, no restart needed).
+        Port change: re-renders spec/compose fragment/nginx conf and marks
+        the entry pending_reconnect — the watcher stops the old container,
+        starts the new one, and reloads nginx.
+        """
+        data = _load_domains()
+        entry = next((d for d in data['domains'] if d['slug'] == slug), None)
+        if entry is None:
+            return jsonify({'error': '域不存在'}), 404
+        if entry.get('status') in ('pending_start', 'pending_stop',
+                                   'pending_archive', 'pending_reconnect'):
+            return jsonify({'error': '域正在切换状态中，请稍后再试'}), 409
+
+        body = request.json or {}
+        new_name = (body.get('name') or '').strip()
+        new_title = (body.get('title_prefix') or '').strip()
+        new_port = body.get('port')
+        if new_name and new_name == entry.get('name'):
+            new_name = ''
+        if new_title and new_title == entry.get('title_prefix'):
+            new_title = ''
+        if not new_name and not new_title and not new_port:
+            return jsonify({'error': '没有需要更新的内容'}), 400
+        if new_name and len(new_name) > 64:
+            return jsonify({'error': '名称过长（最多 64 字符）'}), 400
+        # 静态域：名称是编译进镜像的，只允许改名（registry 运行时覆盖），
+        # 端口改不了（compose 文件是主项目的一部分，在线重建会停整个主项目）。
+        if not entry.get('dynamic'):
+            try:
+                port_differs = bool(new_port) and int(new_port) != entry.get('port')
+            except (TypeError, ValueError):
+                port_differs = bool(new_port)
+            if port_differs:
+                return jsonify({'error': '静态域不支持在线修改端口'}), 400
+            if new_name:
+                entry['name'] = new_name
+                entry['title_prefix'] = new_name
+                _save_domains(data)
+                return jsonify({'success': True, 'slug': slug, 'status': entry.get('status'),
+                                'message': '名称已更新（切换域后立即生效）'})
+            return jsonify({'error': '静态域仅支持修改名称'}), 400
+
+        old_port = entry.get('port')
+        port_changed = False
+        if new_port:
+            try:
+                new_port = int(new_port)
+            except (TypeError, ValueError):
+                return jsonify({'error': '端口无效'}), 400
+            if not (1024 <= new_port <= 65535):
+                return jsonify({'error': '端口需在 1024-65535'}), 400
+            if new_port != old_port:
+                busy = {d.get('port') for d in data['domains']
+                        if d['slug'] != slug and d.get('status') != 'archived'}
+                ports_file = os.path.join(os.path.dirname(__file__), '..', 'config', 'ports.json')
+                try:
+                    with open(ports_file, 'r', encoding='utf-8') as f:
+                        busy |= {svc.get('port')
+                                 for svc in json.load(f).get('services', {}).values()}
+                except Exception:
+                    pass
+                if new_port in busy:
+                    return jsonify({'error': f'端口 {new_port} 已被占用'}), 409
+                port_changed = True
+
+        spec_path = os.path.join(_DOMAINS_ROOT, slug, 'spec.json')
+        spec = {}
+        if os.path.exists(spec_path):
+            try:
+                with open(spec_path, 'r', encoding='utf-8') as f:
+                    spec = json.load(f)
+            except Exception:
+                spec = {}
+
+        if new_title:
+            spec['title_prefix'] = new_title
+            if not new_name:
+                new_name = new_title
+        elif new_name:
+            # 只改名称时保持 title_prefix 同步（门户页头标题读 title_prefix）
+            spec['title_prefix'] = new_name
+        if new_port and port_changed:
+            spec['port'] = new_port
+        if spec:
+            os.makedirs(os.path.dirname(spec_path), exist_ok=True)
+            with open(spec_path, 'w', encoding='utf-8') as f:
+                json.dump(spec, f, ensure_ascii=False, indent=2)
+
+        if port_changed:
+            frag_path = os.path.join(_COMPOSE_DIR, f'domain-{slug}.yml')
+            with open(frag_path, 'w', encoding='utf-8') as f:
+                f.write(_render_compose_fragment(
+                    slug, new_port, entry.get('db_filename', spec.get('db_filename', slug)),
+                    entry.get('domain_key', spec.get('domain_key', slug))))
+            os.makedirs(_NGINX_DYNAMIC, exist_ok=True)
+            with open(os.path.join(_NGINX_DYNAMIC, f'{slug}.conf'), 'w', encoding='utf-8') as f:
+                f.write(_render_nginx_conf(slug, new_port))
+            entry['port'] = new_port
+            entry['gateway_prefix'] = f'/d/{slug}'
+            entry['status'] = 'pending_reconnect'
+            status_msg = f'端口已改为 {new_port}，容器正在重建'
+        else:
+            status_msg = '名称已更新'
+
+        if new_name:
+            entry['name'] = new_name
+        entry['title_prefix'] = spec.get('title_prefix') or entry.get('title_prefix')
+        _save_domains(data)
+        return jsonify({'success': True, 'slug': slug, 'status': entry.get('status'),
+                        'message': status_msg})
+
+    def _render_compose_fragment(slug, port, db_filename, domain_key):
+        return f"""# Auto-generated by domain provisioning — do not edit by hand.
+# Domain: {slug}
+services:
+  domain_{slug}:
+    image: intelligence-web-domain-generic:latest
+    ports:
+      - "{port}:{port}"
+    networks:
+      - intelligence_web_default
+    environment:
+      - JWT_SECRET=${{JWT_SECRET:-30debd9f935044badf90a5130ba86c0ccacbf0e9d3e1fd031f20fe0885c1ef08}}
+      - CORS_ORIGINS=https://intelligence.nat.ywapi.com,http://intelligence.nat.ywapi.com,http://localhost:8765
+      - ANALYZER_DB_SLUG={db_filename}
+      - DOMAIN_KEY={domain_key}
+      - DOMAIN_SPEC_PATH=/app/spec.json
+    command: >
+      bash -c "
+        cd /app && python -m core.scheduler &
+        cd /app && gunicorn -w 2 -b 0.0.0.0:{port} --timeout 120 wsgi:app
+      "
+    volumes:
+      - ${{REPO_HOST}}/domains/{slug}/data:/app/data
+      - ${{REPO_HOST}}/domains/{slug}/spec.json:/app/spec.json:ro
+      - ${{REPO_HOST}}/config:/app/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:{port}/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  intelligence_web_default:
+    external: true
+"""
+
+    def _render_nginx_conf(slug, port):
+        return f"""# Auto-generated by domain provisioning — do not edit by hand.
+# Domain: {slug} (port {port})
+location /d/{slug}/ {{
+    auth_request /_auth;
+    error_page 401 = @api_auth_fail;
+    rewrite ^/d/{slug}/(.*)$ /$1 break;
+    proxy_pass http://domain_{slug}:{port};
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Authorization $http_authorization;
+    client_max_body_size 50m;
+    proxy_request_buffering off;
+    proxy_read_timeout 120s;
+}}
+"""
+
+    @app.route('/api/system/domains/<slug>/archive', methods=['POST'])
+    @require_permission('settings.manage')
+    def archive_domain(slug):
+        """Archive (soft-delete) a dynamic domain.
+
+        Marks the entry pending_archive; the watcher stops the container,
+        moves data to backups/, removes the nginx conf, and deletes the
+        Meilisearch index. The registry entry is kept with status=archived.
+        """
+        data = _load_domains()
+        entry = next((d for d in data['domains'] if d['slug'] == slug), None)
+        if entry is None:
+            return jsonify({'error': '域不存在'}), 404
+        if not entry.get('dynamic'):
+            return jsonify({'error': '静态域不可归档'}), 400
+        if entry.get('status') == 'archived':
+            return jsonify({'error': '域已归档'}), 400
+        entry['status'] = 'pending_archive'
+        _save_domains(data)
+        return jsonify({'success': True, 'slug': slug, 'status': 'pending_archive',
+                        'message': '域正在归档中'})
+
+    @app.route('/api/system/domains/<slug>/restore', methods=['POST'])
+    @require_permission('settings.manage')
+    def restore_domain(slug):
+        """Restore an archived dynamic domain.
+
+        Moves data back from the archive path, recreates the nginx conf,
+        and marks the entry pending_start.
+        """
+        data = _load_domains()
+        entry = next((d for d in data['domains'] if d['slug'] == slug), None)
+        if entry is None:
+            return jsonify({'error': '域不存在'}), 404
+        if not entry.get('dynamic'):
+            return jsonify({'error': '静态域不可恢复'}), 400
+        if entry.get('status') != 'archived':
+            return jsonify({'error': '域未归档，无法恢复'}), 400
+
+        archive_rel = entry.get('archive_path', '')
+        archive_path = os.path.join(_REGISTRY_BACKUP, 'domain_archived',
+                                    os.path.basename(archive_rel)) if archive_rel else ''
+        if not archive_path or not os.path.exists(archive_path):
+            return jsonify({'error': f'归档路径不存在: {archive_rel}'}), 404
+
+        ddir = os.path.join(_DOMAINS_ROOT, slug)
+        os.makedirs(ddir, exist_ok=True)
+        os.rename(archive_path, ddir)
+
+        # Recreate nginx conf
+        os.makedirs(_NGINX_DYNAMIC, exist_ok=True)
+        with open(os.path.join(_NGINX_DYNAMIC, f'{slug}.conf'), 'w', encoding='utf-8') as f:
+            f.write(_render_nginx_conf(slug, entry['port']))
+
+        entry['enabled'] = True
+        entry['status'] = 'pending_start'
+        entry.pop('archived_at', None)
+        entry.pop('archive_path', None)
+        _save_domains(data)
+        return jsonify({'success': True, 'slug': slug, 'status': 'pending_start',
+                        'message': '域正在恢复中'})
 
     # ========================================================================
     # Notifications (admin)

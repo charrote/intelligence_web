@@ -1,0 +1,2 @@
+# Dynamic domain directories live here: domains/<slug>/{spec.json, data/}
+# Created by the domain management API (core/app.py) / scripts/provision_domain.py.

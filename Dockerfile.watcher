@@ -1,0 +1,13 @@
+# Domain watcher — Ubuntu 24.04 + docker CLI + compose plugin.
+# Runs scripts/domain_watcher.py which manages dynamic domain containers.
+# apt-based install (host is Ubuntu 24.04; mirrors are fast in China).
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl python3 \
+    docker.io docker-compose-v2 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1
+CMD ["python3", "/repo/scripts/domain_watcher.py"]

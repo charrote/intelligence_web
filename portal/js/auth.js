@@ -14,6 +14,16 @@ function getDomainPort() {
   return parseInt(localStorage.getItem('domainPort')) || 8766;
 }
 
+// Legacy port -> gateway prefix map (research/sales). Dynamic domains
+// (port >= 8770) use their registry gateway_prefix (/d/<slug>) — see
+// loadEnabledDomains in shell.html which stores it in localStorage.
+var LEGACY_PREFIXES = { 8766: '/research', 8767: '/sales' };
+
+function getDomainPrefix() {
+  var port = getDomainPort();
+  return localStorage.getItem('domainPrefix') || LEGACY_PREFIXES[port] || '/research';
+}
+
 function apiBase() {
   var p = window.location.protocol;
   var h = window.location.hostname;
@@ -24,10 +34,7 @@ function apiBase() {
   var isGateway = (locPort === '8765' || locPort === '');
   if (isGateway) {
     var gwPort = locPort ? ':' + locPort : '';
-    if (port === 8767) {
-      return p + '//' + h + gwPort + '/sales';
-    }
-    return p + '//' + h + gwPort + '/research';
+    return p + '//' + h + gwPort + getDomainPrefix();
   }
   return p + '//' + h + ':' + port;
 }

@@ -621,7 +621,59 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
     <div class="settings-section">
       <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>情报域管理</h2>
       <div class="section-body">
-        <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">启用/停用情报域。被停用的域不会在顶部导航栏的域切换器中显示。</p>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">启用/停用情报域。动态域可在线新建（自动分配端口、创建数据库与搜索索引），删除仅支持"归档"——数据先备份，可恢复。</p>
+        <div style="margin-bottom:16px">
+          <button class="btn" onclick="toggleNewDomainForm()" id="btnNewDomain" style="background:#3b4f8c;color:#fff;border:none;padding:8px 16px;border-radius:4px;font-size:13px;cursor:pointer">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建域
+          </button>
+        </div>
+        <div id="newDomainForm" style="display:none;border:1px solid var(--gray-200);border-radius:6px;padding:16px;margin-bottom:16px;background:var(--bg, #fafafa)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:4px">域标识（slug，小写字母/数字/下划线）</label>
+              <input type="text" id="ndSlug" placeholder="procurement" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:13px">
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:4px">显示名称</label>
+              <input type="text" id="ndName" placeholder="采购情报" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:13px">
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:4px">主题色</label>
+              <input type="color" id="ndColor" value="#2a7d4f" style="width:100%;height:32px;border:1px solid var(--gray-300);border-radius:4px;padding:2px">
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:4px">情报默认有效期（天）</label>
+              <input type="number" id="ndTtl" value="90" min="7" max="3650" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:13px">
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:4px">描述（可选）</label>
+            <input type="text" id="ndDesc" placeholder="供应商与采购情报管理" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:13px">
+          </div>
+          <div style="margin-top:14px;display:flex;gap:8px">
+            <button onclick="createDomain()" style="background:#3b4f8c;color:#fff;border:none;padding:8px 16px;border-radius:4px;font-size:13px;cursor:pointer">创建</button>
+            <button onclick="toggleNewDomainForm()" style="background:transparent;color:var(--gray-600);border:1px solid var(--gray-300);padding:8px 16px;border-radius:4px;font-size:13px;cursor:pointer">取消</button>
+          </div>
+          <p style="font-size:11px;color:var(--gray-400);margin-top:10px">创建后自动分配 8770-8799 端口，数据库、搜索索引、网关路由由域监视器自动完成，通常 1 分钟内可用。</p>
+        </div>
+        <div id="editDomainForm" style="display:none;border:1px solid var(--gray-200);border-radius:6px;padding:16px;margin-bottom:16px;background:var(--bg, #fafafa)">
+          <div style="font-size:12px;color:var(--gray-500);margin-bottom:10px">编辑域 <b id="edSlugLabel" style="color:var(--gray-700)"></b></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:4px">显示名称</label>
+              <input type="text" id="edName" maxlength="64" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:13px">
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;color:var(--gray-600);margin-bottom:4px">端口（修改后容器会重建）</label>
+              <input type="number" id="edPort" min="1024" max="65535" style="width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:4px;font-size:13px">
+            </div>
+          </div>
+          <div style="margin-top:14px;display:flex;gap:8px">
+            <button onclick="saveDomainEdit()" style="background:#3b4f8c;color:#fff;border:none;padding:8px 16px;border-radius:4px;font-size:13px;cursor:pointer">保存</button>
+            <button onclick="closeEditDomainForm()" style="background:transparent;color:var(--gray-600);border:1px solid var(--gray-300);padding:8px 16px;border-radius:4px;font-size:13px;cursor:pointer">取消</button>
+          </div>
+          <p id="editFormHint" style="font-size:11px;color:var(--gray-400);margin-top:10px">仅修改名称立即生效；修改端口会停止旧容器、按新端口重建并重新配置网关路由，约 1 分钟。</p>
+        </div>
         <div id="domainList">
           <div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">加载中...</div>
         </div>
@@ -1423,58 +1475,87 @@ async function loadMcpAuthStatus() {
 
 // ── Domain Controller ──
 async function loadDomainController() {
-  console.log('[Domain Controller] 开始加载...');
-  
+  var list = document.getElementById('domainList');
+  if (!list) return;
+  if (list.dataset.loading === '1') return; // 防止轮询重入
+  list.dataset.loading = '1';
   try {
     var r = await apiFetch(apiBase() + '/api/system/domains');
-    console.log('[Domain Controller] 响应状态:', r.status);
-    
-    if (!r.ok) {
-      throw new Error('HTTP ' + r.status + ': ' + await r.text());
-    }
-    
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     var data = await r.json();
-    console.log('[Domain Controller] 响应数据:', data);
-    
-    var list = document.getElementById('domainList');
     var domains = data.domains || [];
-    console.log('[Domain Controller] 域数量:', domains.length);
-    
+
     if (domains.length === 0) {
       list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">暂无情报域</div>';
       return;
     }
-    
+
     var html = '';
-    domains.forEach(function(d) {
+    var transient = false;
+    // 编辑按钮通过索引引用当前渲染的域列表（__domainRows），避免把名称
+    // 嵌入 onclick 属性——名称含引号时 &quot; 解码后会截断 onclick 值。
+    __domainRows = domains;
+    domains.forEach(function(d, idx) {
       var color = d.theme_color || '#999';
       var enabled = d.enabled !== false;
-      var statusClass = enabled ? 'status-on' : 'status-off';
-      var statusText = enabled ? '已启用' : '已停用';
+      var status = d.status || (d.dynamic ? 'started' : 'legacy');
+      var isDynamic = !!d.dynamic;
+      var isArchived = status === 'archived';
+      var statusClass, statusText;
+      if (isArchived) { statusClass = 'status-off'; statusText = '已归档'; }
+      else if (status === 'pending_start') { statusClass = 'status-on'; statusText = '启动中'; transient = true; }
+      else if (status === 'pending_stop') { statusClass = 'status-off'; statusText = '停止中'; transient = true; }
+      else if (status === 'pending_archive') { statusClass = 'status-off'; statusText = '归档中'; transient = true; }
+      else if (status === 'pending_reconnect') { statusClass = 'status-on'; statusText = '重建中'; transient = true; }
+      else if (status === 'stopped') { statusClass = 'status-off'; statusText = '已停止'; }
+      else { statusClass = enabled ? 'status-on' : 'status-off'; statusText = enabled ? '已启用' : '已停用'; }
+
+      var actions = '';
+      if (isDynamic) {
+        if (isArchived) {
+          actions = '<button onclick="restoreDomain(\'' + d.slug + '\')" style="background:transparent;color:#2a7d4f;border:1px solid #2a7d4f;padding:3px 10px;border-radius:4px;font-size:12px;cursor:pointer">恢复</button>';
+        } else {
+          var busy = (status === 'pending_start' || status === 'pending_archive' || status === 'pending_reconnect');
+          if (!busy) {
+            actions = '<button onclick="openEditDomainFormByIndex(' + idx + ')" style="background:transparent;color:var(--gray-600);border:1px solid var(--gray-300);padding:3px 10px;border-radius:4px;font-size:12px;cursor:pointer;margin-right:6px">编辑</button>'
+              + '<button onclick="archiveDomain(\'' + d.slug + '\')" style="background:transparent;color:var(--red,#ef4444);border:1px solid var(--red,#ef4444);padding:3px 10px;border-radius:4px;font-size:12px;cursor:pointer">归档</button>';
+          }
+        }
+      } else {
+        // 静态域（研究/销售）：仅支持在线改名（运行时覆盖），端口不可改
+        actions = '<button onclick="openEditDomainFormByIndex(' + idx + ', true)" style="background:transparent;color:var(--gray-600);border:1px solid var(--gray-300);padding:3px 10px;border-radius:4px;font-size:12px;cursor:pointer">编辑</button>';
+      }
+
       html += '<div class="domain-card">'
         + '<div class="domain-color" style="background:' + color + '"></div>'
         + '<div class="domain-body">'
-          + '<div class="domain-name">' + escapeHtml(d.name) + '</div>'
+          + '<div class="domain-name">' + escapeHtml(d.name) + (isDynamic ? ' <span style="font-size:10px;color:var(--gray-400);border:1px solid var(--gray-300);border-radius:3px;padding:0 4px;vertical-align:1px">动态</span>' : '') + '</div>'
           + '<div class="domain-meta">'
             + '<span>端口 ' + d.port + '</span>'
-            + '<span>' + escapeHtml(d.description || '') + '</span>'
+            + (d.description ? '<span>' + escapeHtml(d.description) + '</span>' : '')
           + '</div>'
           + '<div class="domain-slug" style="color:var(--gray-400);font-size:11px">' + escapeHtml(d.slug || '') + '</div>'
         + '</div>'
         + '<div class="domain-toggle">'
-          + '<label class="toggle">'
+          + (actions ? '<div style="margin-right:8px">' + actions + '</div>' : '')
+          + (isArchived ? '' : '<label class="toggle">'
             + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' onchange="toggleDomain(' + d.port + ', this.checked)">'
             + '<span class="slider"></span>'
-          + '</label>'
+          + '</label>')
           + '<span class="domain-status ' + statusClass + '">' + statusText + '</span>'
         + '</div>'
       + '</div>';
     });
     list.innerHTML = html;
-    console.log('[Domain Controller] 渲染完成，HTML 长度:', html.length);
-  } catch(e) {
-    console.error('[Domain Controller] 错误:', e);
-    document.getElementById('domainList').innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">加载失败: ' + e.message + '</div>';
+
+    // 过渡态自动刷新：启动中/停止中/归档中 8 秒后再查一次，直到状态落地
+    list.dataset.loading = '0';
+    if (transient) {
+      setTimeout(loadDomainController, 8000);
+    }
+  } catch (e) {
+    list.dataset.loading = '0';
+    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">加载失败: ' + escapeHtml(e.message) + '</div>';
   }
 }
 
@@ -1487,6 +1568,7 @@ async function toggleDomain(port, enabled) {
     var res = await r.json();
     if (r.ok) {
       showToast('域状态已更新', 'success');
+      setTimeout(loadDomainController, enabled ? 3000 : 1500); // watcher 需要时间启动容器
     } else {
       showToast(res.error || '操作失败', 'error');
       loadDomainController();
@@ -1494,6 +1576,165 @@ async function toggleDomain(port, enabled) {
   } catch(e) {
     showToast('网络错误', 'error');
     loadDomainController();
+  }
+}
+
+// ── Dynamic domain lifecycle (create / edit / archive / restore) ──
+
+function toggleNewDomainForm() {
+  var f = document.getElementById('newDomainForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+var __editSlug = null;
+var __editOrigName = '';
+var __editOrigPort = 0;
+var __editStatic = false;
+var __domainRows = [];
+
+function openEditDomainFormByIndex(idx, isStatic) {
+  var d = __domainRows[idx];
+  if (!d) return;
+  openEditDomainForm(d.slug, d.name, d.port, isStatic);
+}
+
+function openEditDomainForm(slug, name, port, isStatic) {
+  __editSlug = slug;
+  __editOrigName = name;
+  __editOrigPort = port;
+  __editStatic = !!isStatic;
+  document.getElementById('edSlugLabel').textContent = slug;
+  document.getElementById('edName').value = name;
+  var portInput = document.getElementById('edPort');
+  portInput.value = port;
+  portInput.disabled = __editStatic;
+  portInput.style.background = __editStatic ? 'var(--gray-100, #f0f0f0)' : '';
+  portInput.title = __editStatic ? '静态域端口不可在线修改' : '';
+  var hint = document.getElementById('editFormHint');
+  if (hint) {
+    hint.textContent = __editStatic
+      ? '静态域名称为运行时覆盖，保存后切换域立即生效，无需重建容器。端口属于主项目配置，不可在线修改。'
+      : '仅修改名称立即生效；修改端口会停止旧容器、按新端口重建并重新配置网关路由，约 1 分钟。';
+  }
+  document.getElementById('editDomainForm').style.display = 'block';
+}
+
+function closeEditDomainForm() {
+  __editSlug = null;
+  document.getElementById('editDomainForm').style.display = 'none';
+}
+
+async function saveDomainEdit() {
+  if (!__editSlug) return;
+  var name = document.getElementById('edName').value.trim();
+  var port = parseInt(document.getElementById('edPort').value, 10);
+  if (!name) {
+    showToast('请填写显示名称', 'error');
+    return;
+  }
+  if (!__editStatic && (!port || port < 1024 || port > 65535)) {
+    showToast('端口需在 1024-65535', 'error');
+    return;
+  }
+  if (name === __editOrigName && (__editStatic || port === __editOrigPort)) {
+    closeEditDomainForm();
+    return;
+  }
+  if (!__editStatic && port !== __editOrigPort) {
+    if (!confirm('端口将改为 ' + port + '，容器会停止并重建（约 1 分钟）。确定继续？')) return;
+  }
+  var payload = { name: name };
+  if (!__editStatic && port !== __editOrigPort) payload.port = port;
+  try {
+    var r = await apiFetch(apiBase() + '/api/system/domains/' + __editSlug + '/update', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    var res = await r.json();
+    if (r.ok) {
+      showToast(res.message || '已保存', 'success');
+      closeEditDomainForm();
+      setTimeout(loadDomainController, 3000);
+    } else {
+      showToast(res.error || '保存失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+  }
+}
+
+async function createDomain() {
+  var slug = document.getElementById('ndSlug').value.trim();
+  var name = document.getElementById('ndName').value.trim();
+  if (!/^[a-z][a-z0-9_]{2,31}$/.test(slug)) {
+    showToast('域标识需以小写字母开头，仅含小写字母/数字/下划线，3-32 位', 'error');
+    return;
+  }
+  if (!name) {
+    showToast('请填写显示名称', 'error');
+    return;
+  }
+  var payload = {
+    slug: slug,
+    name: name,
+    title_prefix: name,
+    theme_color: document.getElementById('ndColor').value,
+    description: document.getElementById('ndDesc').value.trim(),
+    intelligence_ttl_days: { default: parseInt(document.getElementById('ndTtl').value, 10) || 90 },
+  };
+  try {
+    var r = await apiFetch(apiBase() + '/api/system/domains', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    var res = await r.json();
+    if (r.ok) {
+      showToast('域已创建：' + res.message, 'success');
+      toggleNewDomainForm();
+      document.getElementById('ndSlug').value = '';
+      document.getElementById('ndName').value = '';
+      document.getElementById('ndDesc').value = '';
+      setTimeout(loadDomainController, 3000);
+    } else {
+      showToast(res.error || '创建失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+  }
+}
+
+async function archiveDomain(slug) {
+  if (!confirm('归档域 "' + slug + '"？\n\n容器会停止，数据先备份到 backups/（可恢复），搜索索引将被删除。确定继续？')) return;
+  try {
+    var r = await apiFetch(apiBase() + '/api/system/domains/' + slug + '/archive', {
+      method: 'POST',
+    });
+    var res = await r.json();
+    if (r.ok) {
+      showToast('域正在归档：' + res.message, 'success');
+      setTimeout(loadDomainController, 4000);
+    } else {
+      showToast(res.error || '归档失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+  }
+}
+
+async function restoreDomain(slug) {
+  try {
+    var r = await apiFetch(apiBase() + '/api/system/domains/' + slug + '/restore', {
+      method: 'POST',
+    });
+    var res = await r.json();
+    if (r.ok) {
+      showToast('域正在恢复：' + res.message, 'success');
+      setTimeout(loadDomainController, 3000);
+    } else {
+      showToast(res.error || '恢复失败', 'error');
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
   }
 }
 

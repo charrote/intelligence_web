@@ -1,27 +1,19 @@
-__pycache__
+# Exclude large/unnecessary dirs from Docker build context.
+# Keep this conservative: existing Dockerfiles COPY intelligence_web/ and
+# intelligence_sales/ as whole directories (mcp_server), so only exclude
+# clearly junk paths here.
+node_modules/
+meili_data/
+backups/
+__pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-.git
-.gitignore
-docs/
-scripts/
-third_party/
-.DS_Store
-data/
-*.db
-*.sqlite
-*.sqlite3
-*.log
-*.txt
-*.md
-*.pptx
-*.docx
-*.pdf
-*.html
-*.css
-*.js
-venv/
-.env
-.env.*
+.git/
+domains/
+compose.d/
+nginx/dynamic/
+crawler_cache/
+inbox/
+sales_inbox/
+*.tar
+*.tgz
+*.zip

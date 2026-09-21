@@ -1,0 +1,70 @@
+{
+  "domains": [
+    {
+      "port": 8766,
+      "slug": "intelligence_web",
+      "name": "情报研究",
+      "title_prefix": "情报研究",
+      "theme_color": "#722ed1",
+      "enabled": true,
+      "description": "智能制造产业情报采集与分析"
+    },
+    {
+      "port": 8767,
+      "slug": "intelligence_sales",
+      "name": "销售情报",
+      "title_prefix": "销售情报",
+      "theme_color": "#1890ff",
+      "enabled": true,
+      "description": "销售商机与客户情报管理"
+    },
+    {
+      "slug": "test_dynamic",
+      "port": 8770,
+      "name": "测试域",
+      "title_prefix": "测试域",
+      "theme_color": "#b33a3a",
+      "description": "E2E 测试",
+      "enabled": false,
+      "dynamic": true,
+      "status": "archived",
+      "db_filename": "intelligence_test_dynamic",
+      "domain_key": "test-dynamic",
+      "gateway_prefix": "/d/test_dynamic",
+      "archived_at": "20260829_174832",
+      "archive_path": "backups/domain_archived/test_dynamic_20260829_174832"
+    },
+    {
+      "slug": "regress",
+      "port": 8770,
+      "name": "回归域",
+      "title_prefix": "回归域",
+      "theme_color": "#2a6f4a",
+      "description": "回归测试",
+      "enabled": false,
+      "dynamic": true,
+      "status": "archived",
+      "db_filename": "intelligence_regress",
+      "domain_key": "regress",
+      "gateway_prefix": "/d/regress",
+      "archived_at": "20260829_175131",
+      "archive_path": "backups/domain_archived/regress_20260829_175131"
+    },
+    {
+      "slug": "edit_e2e",
+      "port": 8777,
+      "name": "编辑E2E改名",
+      "title_prefix": "编辑E2E改名",
+      "theme_color": "#556677",
+      "description": "端口/名称修改测试",
+      "enabled": false,
+      "dynamic": true,
+      "status": "archived",
+      "db_filename": "intelligence_edit_e2e",
+      "domain_key": "edit-e2e",
+      "gateway_prefix": "/d/edit_e2e",
+      "archived_at": "20260829_234139",
+      "archive_path": "backups/domain_archived/edit_e2e_20260829_234139"
+    }
+  ]
+}
