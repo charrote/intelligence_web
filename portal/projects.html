@@ -332,11 +332,61 @@ function toggleDs(id){
   if(idx >= 0) selectedDsIds.splice(idx, 1);
   else selectedDsIds.push(id);
   updateDsChips();
+  updateEditDsChips();
   renderDsOptions();
+  renderEditDsOptions();
 }
 
 function updateDsChips(){
   const input = document.querySelector('.ds-select-input');
+  if(selectedDsIds.length === 0){
+    input.innerHTML = '<span class="ds-placeholder">点击选择数据源...</span>';
+  } else {
+    input.innerHTML = selectedDsIds.map(id => {
+      const ds = allDatasources.find(d => d.id === id);
+      return ds ? `<span class="ds-chip">${escapeHtml(ds.name)}<span class="chip-remove" onclick="event.stopPropagation();toggleDs(${id})">&times;</span></span>` : '';
+    }).join('');
+  }
+}
+
+// ── Edit panel datasource multi-select ────────────────────────────────────
+function toggleEditDsDropdown(){
+  const dd = document.getElementById('editDsDropdown');
+  const input = document.querySelector('#editDsSelectWrap .ds-select-input');
+  if(!dd || !input) return;
+  const rect = input.getBoundingClientRect();
+  dd.style.top = (rect.bottom + 2 + window.scrollY) + 'px';
+  dd.style.left = rect.left + 'px';
+  dd.style.width = rect.width + 'px';
+  dd.classList.toggle('open');
+  if(dd.classList.contains('open')){
+    renderEditDsOptions();
+    setTimeout(()=>document.getElementById('editDsSearch').focus(), 10);
+  }
+}
+
+function renderEditDsOptions(){
+  const container = document.getElementById('editDsOptions');
+  if(!container) return;
+  const search = document.getElementById('editDsSearch').value.toLowerCase();
+  const filtered = allDatasources.filter(d =>
+    d.name.toLowerCase().includes(search) ||
+    (d.url || '').toLowerCase().includes(search)
+  );
+  container.innerHTML = filtered.map(d => {
+    const isSelected = selectedDsIds.includes(d.id);
+    return `<div class="ds-select-option ${isSelected?'selected':''}" onclick="toggleDs(${d.id})">
+      <span class="opt-name">${escapeHtml(d.name)}</span>
+      <span class="opt-type">${d.type}</span>
+    </div>`;
+  }).join('') || '<div style="padding:12px;text-align:center;color:var(--gray-400);font-size:12px">无匹配数据源</div>';
+}
+
+function filterEditDsOptions(){ renderEditDsOptions(); }
+
+function updateEditDsChips(){
+  const input = document.querySelector('#editDsSelectWrap .ds-select-input');
+  if(!input) return;
   if(selectedDsIds.length === 0){
     input.innerHTML = '<span class="ds-placeholder">点击选择数据源...</span>';
   } else {
@@ -360,6 +410,11 @@ document.addEventListener('click', function(e){
   const dropdown = document.getElementById('dsDropdown');
   if(dropdown && wrap && !wrap.contains(e.target) && !dropdown.contains(e.target)){
     dropdown.classList.remove('open');
+  }
+  const ewrap = document.getElementById('editDsSelectWrap');
+  const edd = document.getElementById('editDsDropdown');
+  if(edd && ewrap && !ewrap.contains(e.target) && !edd.contains(e.target)){
+    edd.classList.remove('open');
   }
 });
 
@@ -429,6 +484,7 @@ async function createProject(){
   const fb=document.getElementById('createFormFeedback');
   if(!name){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入项目名称';return}
   if(!target){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入目标名称';return}
+  if(document.getElementById('fSourceOnly').checked&&selectedDsIds.length===0){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='开启「仅采集源」需至少关联一个数据源';return}
   try{
     const r=await apiFetch(APP_API_BASE+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       name, target_type:type_, target_name:target, scope, frequency:freq, datasource_ids:selectedDsIds,
@@ -557,6 +613,8 @@ async function openEdit(pid){
     const p=d.project;
     const body=document.getElementById('detailBody');
     const foot=document.getElementById('detailFoot');
+    if(allDatasources.length === 0) await loadDatasourcesList();
+    selectedDsIds = (p.datasources || []).map(d => d.id);
     body.innerHTML='<div class="form-group"><label>项目名称 *</label><input type="text" id="editName" value="'+escapeHtml(p.name)+'" maxlength="80"></div>'
       +'<div class="form-row">'
       +'<div class="form-group"><label>目标类型</label><select id="editType">'+availableTargetTypes.map(t=>'<option value="'+t+'" '+(p.target_type===t?'selected':'')+'>'+TARGET_TYPE_LABELS[t]+'<\/option>').join('')+'</select></div>'
@@ -564,8 +622,12 @@ async function openEdit(pid){
       +'</div>'
       +'<div class="form-group"><label>目标名称</label><input type="text" id="editTarget" value="'+escapeHtml(p.target_name)+'"></div>'
       +'<div class="form-group"><label>范围/描述</label><textarea id="editScope" rows="3">'+escapeHtml(p.scope||'')+'</textarea></div>'
+      +'<div class="form-group"><label>关联数据源</label>'
+      +'<div class="ds-select" id="editDsSelectWrap"><div class="ds-select-input" onclick="toggleEditDsDropdown()"><span class="ds-placeholder">点击选择数据源...</span></div></div>'
+      +'<div class="ds-select-dropdown" id="editDsDropdown"><input class="ds-select-search" type="text" placeholder="搜索数据源..." id="editDsSearch" oninput="filterEditDsOptions()"><div id="editDsOptions"></div></div></div>'
       +'<div class="source-only-row"><input type="checkbox" id="editSourceOnly" '+(p.source_only?'checked':'')+'>'
-      +'<div class="so-text">仅采集源<div class="so-hint">开启后，情报只从项目关联的数据源 URL 采集（RSS/网页直采），不做开放式搜索；关闭时沿用开放式搜索。</div></div></div>';
+      +'<div class="so-text">仅采集源<div class="so-hint">开启后，情报只从上方关联的数据源 URL 采集（RSS/网页直采），不做开放式搜索；需至少关联一个带 URL 的数据源。关闭时沿用开放式搜索。</div></div></div>';
+    updateEditDsChips();
     foot.innerHTML='<button class="btn btn-primary" onclick="saveEdit('+pid+')">保存</button>'
       +'<span class="spacer"></span>'
       +'<button class="btn btn-ghost" onclick="openDetail('+pid+')">返回</button>'
@@ -582,10 +644,14 @@ async function saveEdit(pid){
   const target=document.getElementById('editTarget').value.trim();
   const scope=document.getElementById('editScope').value.trim();
   const freq=document.getElementById('editFrequency').value;
+  const sourceOnly=document.getElementById('editSourceOnly').checked;
   if(!name||!target){alert('项目名称和目标名称为必填项');return}
+  if(sourceOnly&&selectedDsIds.length===0){alert('开启「仅采集源」需至少关联一个数据源');return}
   try{
-    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq,source_only:document.getElementById('editSourceOnly').checked})});
-    if(r.ok){openDetail(pid);await loadProjects();}
+    const r0=await apiFetch(APP_API_BASE+'/api/projects/'+pid+'/datasources',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({datasource_ids:selectedDsIds})});
+    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq,source_only:sourceOnly})});
+    if(r0.ok&&r.ok){openDetail(pid);await loadProjects();}
+    else alert('保存失败');
   }catch(e){alert('保存失败');}
 }
 
