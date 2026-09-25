@@ -634,16 +634,12 @@ def _hash_password(password, salt=None):
 
 
 def _seed_default_users(conn):
-    """Seed default admin user."""
+    """Seed default admin user (no demo 'user' account — it was broken and unused)."""
     now = datetime.now().isoformat()
     password_hash, salt = _hash_password('admin123')
     conn.execute(
         'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         ('admin', password_hash, salt, '管理员', 'admin', 1, now, now)
-    )
-    conn.execute(
-        'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        ('user', _hash_password('user123')[0], _hash_password('user123')[1], '普通用户', 'user', 1, now, now)
     )
 
 
@@ -2044,12 +2040,6 @@ def migrate_db(db_path, domain_key=None):
                 c.execute(
                     'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     ('admin', h, s, '管理员', 'admin', 1, now, now)
-                )
-            if 'user' not in existing_users:
-                h, s = _hash_password('user123')
-                c.execute(
-                    'INSERT INTO users (username, password_hash, salt, display_name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    ('user', h, s, '普通用户', 'user', 1, now, now)
                 )
 
             # ── RBAC: roles / permissions / associations ──
