@@ -69,6 +69,20 @@ def _is_allowed_origin(origin):
     return origin in _CORS_ORIGINS
 
 
+def _public_scheme(req):
+    """分享链接该用的协议。
+
+    优先网关透传的 X-Forwarded-Proto，其次这次请求实际的协议。
+    不能写死 https：网关目前只在 80 上服务（443 没有证书，TLS 握手直接失败），
+    写死 https 会让分享出去的链接和海报二维码全部打不开。
+    网关补上 proxy_set_header X-Forwarded-Proto $scheme; 并启用 TLS 后，这里自动回到 https。
+    """
+    fwd = (req.headers.get('X-Forwarded-Proto') or '').split(',')[0].strip().lower()
+    if fwd in ('http', 'https'):
+        return fwd
+    return req.scheme or 'http'
+
+
 def create_app(project_root, spec):
     """Create and configure the Flask application for a domain."""
     app = Flask(__name__, static_folder=os.path.join(project_root, spec["slug"], "web", "static"))
@@ -312,26 +326,27 @@ def create_app(project_root, spec):
             user_agent=request.headers.get('User-Agent', ''),
             referer=request.headers.get('Referer', ''),
         )
-        # 正文改为摘要（产品口径：外链只展示标题+摘要）：
-        # 优先取 summaries 表最新 AI 摘要，无摘要则取 content 前 120 字
+        # 正文展示完整内容（产品口径回调：分享出去的情报给全文，不给摘要）。
+        # 摘要只用于 og:description —— 社交卡片的摘要字段协议上就要求短文本。
+        full_text = (intel.get('content') or '').strip()
         summary_row = get_summary(db_path, intel['id'])
         summary_text = (summary_row.get('content') or '').strip() if summary_row else ''
         if not summary_text:
-            summary_text = (intel.get('content') or '').strip()[:120] + '……'
-        # Sanitize: escape HTML then convert newlines to <p>
+            summary_text = full_text[:150]
+        # Sanitize: 按段落拆分（空行分段、段内换行转 <br>），逐段转义
         import html as html_mod
-        escaped = html_mod.escape(summary_text)
-        content_html = '<p>' + escaped.replace('\n', '</p><p>').strip() + '</p>'
+        paras = [p.strip() for p in full_text.split('\n') if p.strip()]
+        content_html = ''.join(
+            '<p>' + html_mod.escape(p).replace('\n', '<br>') + '</p>' for p in paras
+        )
         # Format date
         created = intel.get('created_at', '')[:10]
         # 注册开关（系统设置，实时生效）。默认关闭；显式开启才显示注册入口。
         from core.db import get_setting
         reg_flag = get_setting(db_path, 'register_enabled')
         register_enabled = reg_flag in ('1', 'true', 'True')
-        # og:image 绝对地址（复用分享 URL 的协议判断）
-        scheme = request.headers.get('X-Forwarded-Proto', '')
-        if not scheme:
-            scheme = 'http' if 'localhost' in request.host or request.host.startswith('127.') else 'https'
+        # og:image 绝对地址（与分享 URL 用同一套协议判断）
+        scheme = _public_scheme(request)
         og_image = f"{scheme}://{request.host}/share-logo.png"
         from jinja2 import Environment
         tpl_path = os.path.join(os.path.dirname(__file__), 'share_template.html')
@@ -374,12 +389,8 @@ def create_app(project_root, spec):
         if result is None:
             return jsonify({'error': 'not found'}), 404
         token, on, expires_at, view_count = result
-        # Build share URL. WeChat's in-app browser only opens https links,
-        # so default to https (respect X-Forwarded-Proto if a higher proxy
-        # sets it; keep http only for local dev on localhost).
-        scheme = request.headers.get('X-Forwarded-Proto', '')
-        if not scheme:
-            scheme = 'http' if 'localhost' in request.host or request.host.startswith('127.') else 'https'
+        # 分享链接协议见 _public_scheme（写死 https 会让链接在当前网关下打不开）
+        scheme = _public_scheme(request)
         share_url = f"{scheme}://{request.host}/s/{token}" if on else ""
         return jsonify({
             'enabled': on,
@@ -403,9 +414,7 @@ def create_app(project_root, spec):
             return jsonify({'error': 'not found'}), 404
         on = bool(intel.get('share_enabled'))
         token = intel.get('share_token') or ''
-        scheme = request.headers.get('X-Forwarded-Proto', '')
-        if not scheme:
-            scheme = 'http' if 'localhost' in request.host or request.host.startswith('127.') else 'https'
+        scheme = _public_scheme(request)
         share_url = f"{scheme}://{request.host}/s/{token}" if on else ""
         return jsonify({
             'enabled': on,
