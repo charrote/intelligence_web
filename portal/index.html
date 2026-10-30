@@ -6,7 +6,7 @@
 <title>情报列表</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="js/qrcode.min.js"></script>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/reset.css">
 <link rel="stylesheet" href="css/header.css">
@@ -55,6 +55,9 @@
 .share-actions{display:flex;gap:8px;margin-top:16px}
 .share-actions .btn{flex:1}
 .share-tip{font-size:11px;color:var(--gray-400);margin-top:12px;text-align:center;line-height:1.6}
+.share-meta{font-size:12px;color:var(--gray-500);margin-top:8px;line-height:1.5}
+.share-expiry{width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;color:var(--gray-700);background:#fff;outline:none;cursor:pointer}
+.share-expiry:focus{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -98,12 +101,20 @@
         <span class="txt" id="shareLinkText">加载中…</span>
         <button class="btn btn-primary btn-sm" onclick="copyShareLink()">复制</button>
       </div>
+      <div class="share-meta" id="shareMeta"></div>
+      <div class="share-label" style="margin-top:16px">链接有效期</div>
+      <select class="share-expiry" id="shareExpiry" onchange="onExpiryChange()">
+        <option value="7">7 天</option>
+        <option value="30" selected>30 天</option>
+        <option value="90">90 天</option>
+      </select>
       <div class="share-label" style="margin-top:16px">分享海报（朋友圈）</div>
       <div class="share-poster-wrap"><canvas id="sharePoster"></canvas></div>
       <div class="share-actions">
         <button class="btn btn-primary" id="posterBtn" onclick="downloadPoster()">下载海报</button>
+        <button class="btn btn-ghost" id="weiboBtn" onclick="shareToWeibo()">分享到微博</button>
       </div>
-      <div class="share-tip">复制链接发到微信，或保存海报分享到朋友圈<br>分享内容为完整正文，对方无需登录即可查看</div>
+      <div class="share-tip">复制链接发到微信，或保存海报分享到朋友圈<br>外链为完整正文，对方无需登录即可查看</div>
     </div>
   </div>
 </div>
@@ -535,7 +546,7 @@ async function loadAttachments(intelId) {
 }
 
 // ── 分享 ──────────────────────────────────────────────────────────
-var shareState = { url: '' };
+var shareState = { url: '', expiresAt: '', viewCount: 0 };
 
 // 分享权限：admin 或角色勾选了"开放情报分享"（intel.share）
 function canShareIntel() {
@@ -549,22 +560,81 @@ async function openShare() {
   if (!currentIntel) return;
   if (!canShareIntel()) { alert('没有分享权限（需在角色中勾选"开放情报分享"）'); return; }
   var id = currentIntel.id;
+  var base = APP_API_BASE + '/api/intelligence/' + id + '/share';
   try {
-    // 若本条尚未开启分享，先开启（生成 token）
-    var r = await apiFetch(APP_API_BASE + '/api/intelligence/' + id + '/share', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ enabled: true })
-    });
-    var d = await r.json();
-    if (!r.ok) { alert(d.error || '开启分享失败'); return; }
-    shareState.url = d.share_url;
+    // 先查询当前分享状态：回显查看次数与到期日
+    var g = await apiFetch(base, { method: 'GET' });
+    var gd = await g.json();
+    var data;
+    if (g.ok && gd && gd.enabled) {
+      // 已开启：直接展示现有数据，不重置有效期
+      data = gd;
+    } else {
+      // 尚未开启：按所选有效期开启（生成/复用 token）
+      var days = parseInt(document.getElementById('shareExpiry').value, 10) || 30;
+      var r = await apiFetch(base, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ enabled: true, expires_in_days: days })
+      });
+      data = await r.json();
+      if (!r.ok) { alert(data.error || '开启分享失败'); return; }
+    }
+    shareState.url = data.share_url;
+    shareState.expiresAt = data.expires_at || '';
+    shareState.viewCount = data.view_count || 0;
     shareState.posterReady = false;
     var pb = document.getElementById('posterBtn');
     if (pb) { pb.disabled = true; pb.style.opacity = '.6'; }
-    document.getElementById('shareLinkText').textContent = d.share_url;
+    document.getElementById('shareLinkText').textContent = data.share_url;
+    renderShareMeta();
     document.getElementById('shareModal').classList.add('open');
-    renderPoster(currentIntel, d.share_url);
+    renderPoster(currentIntel, data.share_url);
   } catch(e) { alert('开启分享失败：' + e); }
+}
+
+// 弹窗内回显「已被查看 N 次 · 到期 YYYY-MM-DD」（N=0 时只显示到期日）
+function renderShareMeta() {
+  var el = document.getElementById('shareMeta');
+  if (!el) return;
+  var parts = [];
+  var n = shareState.viewCount || 0;
+  var date = shareState.expiresAt ? String(shareState.expiresAt).slice(0, 10) : '';
+  if (n > 0) parts.push('已被查看 ' + n + ' 次');
+  if (date) parts.push('到期 ' + date);
+  el.textContent = parts.join(' · ');
+}
+
+// 修改链接有效期：POST 刷新到期日（token 复用、链接不变，海报二维码无需重绘）
+async function onExpiryChange() {
+  if (!currentIntel) return;
+  var id = currentIntel.id;
+  var days = parseInt(document.getElementById('shareExpiry').value, 10) || 30;
+  var base = APP_API_BASE + '/api/intelligence/' + id + '/share';
+  var weiboBtn = document.getElementById('weiboBtn');
+  if (weiboBtn) weiboBtn.disabled = true;
+  try {
+    var r = await apiFetch(base, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ enabled: true, expires_in_days: days })
+    });
+    var d = await r.json();
+    if (!r.ok) { alert(d.error || '更新有效期失败'); return; }
+    shareState.url = d.share_url;
+    shareState.expiresAt = d.expires_at || '';
+    shareState.viewCount = d.view_count || 0;
+    document.getElementById('shareLinkText').textContent = d.share_url;
+    renderShareMeta();
+  } catch(e) { alert('更新有效期失败：' + e); }
+  finally { if (weiboBtn) weiboBtn.disabled = false; }
+}
+
+// 分享到微博：打开微博分享页（海报为本地 canvas 无稳定 URL，pic 参数省略）
+function shareToWeibo() {
+  if (!shareState.url) { alert('链接尚未生成'); return; }
+  var title = (currentIntel && currentIntel.title) || '业务情报社';
+  var url = 'http://service.weibo.com/share/share.php?url=' + encodeURIComponent(shareState.url)
+          + '&title=' + encodeURIComponent(title);
+  window.open(url, '_blank', 'width=640,height=520');
 }
 
 function closeShare() { document.getElementById('shareModal').classList.remove('open'); }
@@ -592,20 +662,25 @@ function toast(msg) {
   setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ t.remove(); }, 250); }, 1600);
 }
 
-// 文字换行（canvas）
-function wrapText(ctx, text, x, y, maxW, lineH, maxLines) {
-  var lines = [], line = '', i, ch;
-  for (i = 0; i < text.length; i++) {
-    ch = text[i];
+// 按最大宽度折行（中文按字断行），返回行数组；超过 maxLines 截断加省略号
+function splitLines(ctx, text, maxW, maxLines) {
+  var lines = [], line = '';
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i];
     if (ch === '\n') { lines.push(line); line = ''; continue; }
-    if (ctx.measureText(line + ch).width > maxW) { lines.push(line); line = ch; }
+    if (line && ctx.measureText(line + ch).width > maxW) { lines.push(line); line = ch; }
     else line += ch;
   }
   if (line) lines.push(line);
   if (maxLines && lines.length > maxLines) {
     lines = lines.slice(0, maxLines);
-    lines[maxLines-1] = lines[maxLines-1].replace(/.{1,2}$/, '…');
+    lines[maxLines - 1] = lines[maxLines - 1].replace(/.{1,2}$/, '…');
   }
+  return lines;
+}
+
+// 逐行绘制（基线从 y 起，行距 lineH），返回绘制行数
+function drawLines(ctx, lines, x, y, lineH) {
   for (var j = 0; j < lines.length; j++) ctx.fillText(lines[j], x, y + j * lineH);
   return lines.length;
 }
@@ -620,35 +695,65 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// 海报排版：先量后画（两遍排版），高度随内容自适应。
+//  - 短内容：余量垫在正文与 CTA 之间，CTA / 二维码 / 页脚贴底，不再留大片空白；
+//  - 长内容：画布按内容加长，二维码与页脚不会像固定 1180 高那样叠在一起；
+//  - 预览：不写 canvas.style 尺寸，交给 .share-poster-wrap canvas{width:100%} 等比缩放，
+//    弹窗里看到的是完整海报，而不是被裁掉的左半边。
 function renderPoster(intel, url) {
   var canvas = document.getElementById('sharePoster');
   var W = 750, PAD = 48;
+  var x = PAD + 36, cw = W - PAD*2 - 72;   // 内容左边界 / 内容宽
+  var MIN_H = 820, MAX_H = 1760, GAP_FOOTER = 56, QR = 180;
   var ctx = canvas.getContext('2d');
   var dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-  // 先按逻辑尺寸排版，最后整体放大绘制
-  var body = (intel.content || '').replace(/[#*`>\-\[\]()!]/g, '').replace(/\n+/g, '\n');
-  var maxBodyChars = 150;
-  var bodyText = body.length > maxBodyChars ? body.slice(0, maxBodyChars) + '…' : body;
+  // 字体：排版与绘制共用，保证量出来的行数和画出来的一致
+  var F_TITLE = '700 30px sans-serif', F_TAG = '500 15px sans-serif';
+  var F_BODY = '400 19px sans-serif', F_CTA_H = '700 24px sans-serif';
+  var F_CTA = '400 17px sans-serif', F_QR_H = '600 20px sans-serif';
+  var F_QR = '400 16px sans-serif', F_FOOT = '400 14px sans-serif';
+  var CTA_TEXT = '注册后，每日自动采集 1200+ 条竞品/商机情报，追踪 5 大行业，分析师每日推送。';
+
+  var body = (intel.content || '').replace(/[#*`>\-\[\]()!]/g, '').replace(/\n+/g, '\n').trim();
+  var bodyText = body.length > 260 ? body.slice(0, 260) + '…' : body;
   var titleText = (intel.title || '').slice(0, 60);
   var dateStr = (intel.created_at || '').slice(0, 10);
+  var host = location.host || 'intelligence.nat.ywapi.com';
   var tags = [];
   if (intel.category) tags.push(intel.category);
   if (intel.company) tags.push(intel.company);
   tags.push(dateStr);
 
-  var H = 1180;
-  canvas.width = W * dpr; canvas.height = H * dpr;
-  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-  ctx.scale(dpr, dpr);
+  // ── 第一遍：离屏量高
+  var m = document.createElement('canvas').getContext('2d');
+  m.font = F_TITLE; var titleLines = splitLines(m, titleText, cw, 3);
+  m.font = F_BODY;  var bodyLines  = splitLines(m, bodyText, cw, 10);
+  m.font = F_CTA;   var ctaLines   = splitLines(m, CTA_TEXT, cw, 3);
 
-  // 背景
+  var y = 210;                                  // 标题首行基线
+  y += titleLines.length * 44 + 18;
+  var tagsY = y; y += 40;
+  y += bodyLines.length * 32 + 24;
+  var dividerY = y; y += 36;
+  var ctaY = y; y += 34 + ctaLines.length * 28 + 34;
+  var qrY = y;
+  var contentEnd = qrY + QR;
+  // 短内容的留白分两处各半垫开（正文↔CTA、CTA↔二维码），上限 140px：
+  // 全垫在一处会在海报中间开一个大洞，视觉重心下沉。
+  var slack = Math.min(Math.max(0, MIN_H - (contentEnd + GAP_FOOTER + PAD)), 80);
+  var slackTop = Math.round(slack / 2);
+  dividerY += slackTop; ctaY += slackTop; qrY += slack; contentEnd += slack;
+  var H = Math.min(Math.max(contentEnd + GAP_FOOTER + PAD, MIN_H), MAX_H);
+
+  // ── 第二遍：按最终尺寸绘制
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // 背景 + 白色主卡
   ctx.fillStyle = '#F5F6F8'; ctx.fillRect(0, 0, W, H);
-  // 白色主卡
   ctx.fillStyle = '#fff';
   roundRect(ctx, PAD, PAD, W - PAD*2, H - PAD*2, 20); ctx.fill();
-
-  var x = PAD + 36, cw = W - PAD*2 - 72;
 
   // 品牌
   ctx.fillStyle = '#3B82F6';
@@ -662,70 +767,80 @@ function renderPoster(intel, url) {
   ctx.fillText('每日自动采集 · 行业情报', x + 68, 138);
 
   // 标题
-  ctx.fillStyle = '#1F2937'; ctx.font = '700 30px sans-serif';
-  var titleLines = wrapText(ctx, titleText, x, 210, cw, 44, 3);
+  ctx.fillStyle = '#1F2937'; ctx.font = F_TITLE;
+  drawLines(ctx, titleLines, x, 210, 44);
 
-  var y = 210 + titleLines * 44 + 18;
-
-  // meta tags
-  ctx.font = '500 15px sans-serif';
+  // meta tags（一行放不下就丢弃，不再画出卡片外）
+  ctx.font = F_TAG;
   var tagX = x;
   for (var ti = 0; ti < tags.length; ti++) {
     var tw = ctx.measureText(tags[ti]).width + 22;
-    ctx.fillStyle = ti === tags.length-1 ? '#EEF0F3' : (ti===0?'#F3EBFF':'#EEF0F3');
+    if (tagX + tw > x + cw) break;
     ctx.fillStyle = '#EEF0F3';
-    roundRect(ctx, tagX, y - 16, tw, 30, 6); ctx.fill();
-    ctx.fillStyle = ti===0 ? '#722ED1' : '#4B5563';
-    ctx.fillText(tags[ti], tagX + 11, y + 4);
+    roundRect(ctx, tagX, tagsY - 16, tw, 30, 6); ctx.fill();
+    ctx.fillStyle = ti === 0 ? '#722ED1' : '#4B5563';
+    ctx.fillText(tags[ti], tagX + 11, tagsY + 4);
     tagX += tw + 10;
   }
-  y += 40;
 
   // 正文
-  ctx.fillStyle = '#4B5563'; ctx.font = '400 19px sans-serif';
-  var bodyLines = wrapText(ctx, bodyText, x, y, cw, 32, 12);
-  y += bodyLines * 32 + 24;
+  ctx.fillStyle = '#4B5563'; ctx.font = F_BODY;
+  drawLines(ctx, bodyLines, x, tagsY + 40, 32);
 
   // 分隔线
   ctx.strokeStyle = '#E5E7EB'; ctx.setLineDash([4,4]); ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x+cw, y); ctx.stroke(); ctx.setLineDash([]);
-  y += 36;
+  ctx.beginPath(); ctx.moveTo(x, dividerY); ctx.lineTo(x + cw, dividerY); ctx.stroke();
+  ctx.setLineDash([]);
 
   // CTA
-  ctx.fillStyle = '#1F2937'; ctx.font = '700 24px sans-serif';
-  ctx.fillText('想看更多情报？', x, y);
-  ctx.fillStyle = '#4B5563'; ctx.font = '400 17px sans-serif';
-  wrapText(ctx, '注册后，每日自动采集 1200+ 条竞品/商机情报，追踪 5 大行业，分析师每日推送。', x, y + 34, cw, 28, 2);
-  y += 96;
+  ctx.fillStyle = '#1F2937'; ctx.font = F_CTA_H;
+  ctx.fillText('想看更多情报？', x, ctaY);
+  ctx.fillStyle = '#4B5563'; ctx.font = F_CTA;
+  drawLines(ctx, ctaLines, x, ctaY + 34, 28);
 
-  // 二维码 + 文案 + 底部 slogan 统一放到 finish() 里，确保 QR 异步绘制完成后再允许下载
-  var qrSize = 180, qrX = x, qrY = y;
-  var finish = function() {
-    ctx.fillStyle = '#fff';
-    roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 12); ctx.fill();
-    ctx.strokeStyle = '#D6E4FF'; ctx.lineWidth = 1;
-    roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 12); ctx.stroke();
-    var tx = qrX + qrSize + 28;
-    ctx.fillStyle = '#1F2937'; ctx.font = '600 20px sans-serif';
-    ctx.fillText('业务情报社', tx, qrY + 30);
-    ctx.fillStyle = '#9CA3AF'; ctx.font = '400 16px sans-serif';
-    wrapText(ctx, '长按识别二维码\n或复制链接到微信查看\n每日 10:00 推送行业情报', tx, qrY + 62, W - PAD*2 - (qrSize + 28) - 72, 26, 3);
-    ctx.fillStyle = '#9CA3AF'; ctx.font = '400 14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('本情报由 业务情报社 自动采集生成 · 内容仅供参考', W/2, H - PAD - 36);
+  // 二维码 + 引导文案 + 站点地址（二维码异步生成，统一在 finish() 收尾后才允许下载）
+  var qrX = x;
+  // 先画二维码白底框，二维码位图随后叠上去。
+  // 顺序不能反：白框在 drawImage 之后画会把整个码盖成一块白（历史 bug）。
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, qrX - 8, qrY - 8, QR + 16, QR + 16, 12); ctx.fill();
+  ctx.strokeStyle = '#D6E4FF'; ctx.lineWidth = 1;
+  roundRect(ctx, qrX - 8, qrY - 8, QR + 16, QR + 16, 12); ctx.stroke();
+  var finish = function (qrOk) {
+    if (!qrOk) {
+      // 二维码库没加载成功：画明确提示，绝不留一个能骗过眼睛的空白框
+      ctx.fillStyle = '#9CA3AF'; ctx.font = '400 15px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('二维码生成失败', qrX + QR/2, qrY + QR/2);
+      ctx.textAlign = 'left';
+    }
+    var tx = qrX + QR + 28;
+    ctx.fillStyle = '#1F2937'; ctx.font = F_QR_H;
+    ctx.fillText('业务情报社', tx, qrY + 26);
+    ctx.fillStyle = '#4B5563'; ctx.font = F_QR;
+    drawLines(ctx, ['长按识别二维码', '在微信内直接打开本页'], tx, qrY + 58, 24);
+    ctx.fillStyle = '#9CA3AF';
+    ctx.fillText('或浏览器访问', tx, qrY + 118);
+    ctx.fillStyle = '#3B82F6'; ctx.font = '600 16px sans-serif';
+    ctx.fillText(host, tx, qrY + 144);
+    // 页脚（贴卡片底部，与二维码块不再重叠）
+    ctx.fillStyle = '#9CA3AF'; ctx.font = F_FOOT; ctx.textAlign = 'center';
+    ctx.fillText('本情报由 业务情报社 自动采集生成 · 内容仅供参考', W/2, H - PAD - 24);
     ctx.textAlign = 'left';
     shareState.posterReady = true;
     var btn = document.getElementById('posterBtn');
     if (btn) { btn.disabled = false; btn.style.opacity = ''; }
   };
-  if (typeof QRCode !== 'undefined') {
+  if (typeof QRCode !== 'undefined' && QRCode.toCanvas) {
     var qrCanvas = document.createElement('canvas');
-    QRCode.toCanvas(qrCanvas, url, { width: qrSize, margin: 1, color: { dark: '#1F2937', light: '#ffffff' } }, function() {
-      ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
-      finish();
+    // 位图按 dpr 生成再缩到逻辑尺寸：导出 2x 海报时二维码边缘不糊
+    QRCode.toCanvas(qrCanvas, url, { width: QR * dpr, margin: 1, color: { dark: '#1F2937', light: '#ffffff' } }, function(err) {
+      if (!err) ctx.drawImage(qrCanvas, qrX, qrY, QR, QR);
+      else console.warn('[renderPoster] 二维码生成失败:', err);
+      finish(!err);
     });
   } else {
-    finish();
+    console.warn('[renderPoster] QRCode 库未加载');
+    finish(false);
   }
 }
 

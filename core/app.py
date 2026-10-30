@@ -3,7 +3,7 @@
 import os, sys, re, sqlite3, hashlib
 import json
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 import jwt as pyjwt
 from core.db import (
     init_db, migrate_db, get_db_path, create_intelligence,
@@ -67,6 +67,20 @@ def _is_allowed_origin(origin):
     if not origin:
         return False
     return origin in _CORS_ORIGINS
+
+
+def _public_scheme(req):
+    """分享链接该用的协议。
+
+    优先网关透传的 X-Forwarded-Proto，其次这次请求实际的协议。
+    不能写死 https：网关目前只在 80 上服务（443 没有证书，TLS 握手直接失败），
+    写死 https 会让分享出去的链接和海报二维码全部打不开。
+    网关补上 proxy_set_header X-Forwarded-Proto $scheme; 并启用 TLS 后，这里自动回到 https。
+    """
+    fwd = (req.headers.get('X-Forwarded-Proto') or '').split(',')[0].strip().lower()
+    if fwd in ('http', 'https'):
+        return fwd
+    return req.scheme or 'http'
 
 
 def create_app(project_root, spec):
@@ -318,20 +332,43 @@ def create_app(project_root, spec):
     # --- Public share page (no auth) ---
     @app.route('/s/<token>')
     def share_page(token):
-        from core.db import get_intelligence_by_share_token
+        from core.db import get_intelligence_by_share_token, log_share_view
         intel = get_intelligence_by_share_token(db_path, token)
         if intel is None:
             return '<h1 style="text-align:center;margin-top:60px;font-family:sans-serif;color:#9CA3AF">链接无效或已关闭</h1>', 404
-        # Sanitize content: escape HTML then convert newlines to <p>
+        # 分享有效期：过期链接展示"已过期"页（与"链接无效"页同样式）
+        expires_at = intel.get('share_expires_at') or ''
+        if expires_at and expires_at < datetime.now().isoformat():
+            return '<h1 style="text-align:center;margin-top:60px;font-family:sans-serif;color:#9CA3AF">链接已过期</h1>', 404
+        # 浏览统计：计数自增 + 写日志
+        log_share_view(
+            db_path, intel['id'],
+            ip=request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip(),
+            user_agent=request.headers.get('User-Agent', ''),
+            referer=request.headers.get('Referer', ''),
+        )
+        # 正文展示完整内容（产品口径回调：分享出去的情报给全文，不给摘要）。
+        # 摘要只用于 og:description —— 社交卡片的摘要字段协议上就要求短文本。
+        full_text = (intel.get('content') or '').strip()
+        summary_row = get_summary(db_path, intel['id'])
+        summary_text = (summary_row.get('content') or '').strip() if summary_row else ''
+        if not summary_text:
+            summary_text = full_text[:150]
+        # Sanitize: 按段落拆分（空行分段、段内换行转 <br>），逐段转义
         import html as html_mod
-        escaped = html_mod.escape(intel.get('content', ''))
-        content_html = '<p>' + escaped.replace('\n', '</p><p>').strip() + '</p>'
+        paras = [p.strip() for p in full_text.split('\n') if p.strip()]
+        content_html = ''.join(
+            '<p>' + html_mod.escape(p).replace('\n', '<br>') + '</p>' for p in paras
+        )
         # Format date
         created = intel.get('created_at', '')[:10]
         # 注册开关（系统设置，实时生效）。默认关闭；显式开启才显示注册入口。
         from core.db import get_setting
         reg_flag = get_setting(db_path, 'register_enabled')
         register_enabled = reg_flag in ('1', 'true', 'True')
+        # og:image 绝对地址（与分享 URL 用同一套协议判断）
+        scheme = _public_scheme(request)
+        og_image = f"{scheme}://{request.host}/share-logo.png"
         from jinja2 import Environment
         tpl_path = os.path.join(os.path.dirname(__file__), 'share_template.html')
         with open(tpl_path, 'r', encoding='utf-8') as f:
@@ -344,6 +381,8 @@ def create_app(project_root, spec):
             content_html=content_html,
             source_url=intel.get('source_url', '') or '',
             register_enabled=register_enabled,
+            og_description=summary_text[:150],
+            og_image=og_image,
         )
         return Response(html_out, content_type='text/html; charset=utf-8')
 
@@ -360,18 +399,56 @@ def create_app(project_root, spec):
             return jsonify({'error': '没有权限执行此操作（需在角色中勾选"开放情报分享"）'}), 403
         data = request.get_json(silent=True) or {}
         enabled = bool(data.get('enabled', True))
-        result = set_intelligence_share(db_path, id, enabled)
+        # 分享有效期（天），默认 30；非法值回落 30
+        try:
+            expires_in_days = int(data.get('expires_in_days', 30))
+        except (TypeError, ValueError):
+            expires_in_days = 30
+        if expires_in_days <= 0:
+            expires_in_days = 30
+        result = set_intelligence_share(db_path, id, enabled, expires_in_days)
         if result is None:
             return jsonify({'error': 'not found'}), 404
-        token, on = result
-        # Build share URL. WeChat's in-app browser only opens https links,
-        # so default to https (respect X-Forwarded-Proto if a higher proxy
-        # sets it; keep http only for local dev on localhost).
-        scheme = request.headers.get('X-Forwarded-Proto', '')
-        if not scheme:
-            scheme = 'http' if 'localhost' in request.host or request.host.startswith('127.') else 'https'
+        token, on, expires_at, view_count = result
+        # 分享链接协议见 _public_scheme（写死 https 会让链接在当前网关下打不开）
+        scheme = _public_scheme(request)
         share_url = f"{scheme}://{request.host}/s/{token}" if on else ""
-        return jsonify({'enabled': on, 'token': token, 'share_url': share_url})
+        return jsonify({
+            'enabled': on,
+            'token': token,
+            'share_url': share_url,
+            'expires_at': expires_at,
+            'view_count': view_count,
+        })
+
+    # --- Query share status (requires login + intel.share permission) ---
+    @app.route('/api/intelligence/<int:id>/share', methods=['GET'])
+    def get_share_info(id):
+        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        # 分享权限管控：admin 与持 intel.share 权限的角色放行；否则 403。
+        if user.get('role') != 'admin' and 'intel.share' not in _user_perm_codes(user):
+            return jsonify({'error': '没有权限执行此操作（需在角色中勾选"开放情报分享"）'}), 403
+        intel = get_intelligence_by_id(db_path, id)
+        if intel is None:
+            return jsonify({'error': 'not found'}), 404
+        on = bool(intel.get('share_enabled'))
+        token = intel.get('share_token') or ''
+        scheme = _public_scheme(request)
+        share_url = f"{scheme}://{request.host}/s/{token}" if on else ""
+        return jsonify({
+            'enabled': on,
+            'share_url': share_url,
+            'expires_at': intel.get('share_expires_at'),
+            'view_count': int(intel.get('share_view_count') or 0),
+        })
+
+    # --- Share page og:image (站内静态 logo) ---
+    @app.route('/share-logo.png')
+    def share_logo():
+        logo_path = os.path.join(os.path.dirname(__file__), 'share_logo.png')
+        return send_file(logo_path)
 
     @app.route('/api/intelligence/<int:id>', methods=['DELETE'])
     def delete_intelligence_endpoint(id):
