@@ -110,12 +110,16 @@ services:
     image: nginx:alpine
     ports:
       - "8765:80"  # 端口配置在 config/ports.json
+      - "127.0.0.1:8443:443"  # HTTPS 入口（frp tcp 隧道 intelligence.nat.ywapi.com:8443）
     volumes:
       - ./portal:/var/www/portal
       - ./intelligence_sales/web:/var/www/intelligence_sales
       - ./nginx/gateway.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/locations.inc:/etc/nginx/locations.inc:ro
       - ./nginx/dynamic:/etc/nginx/conf.d/dynamic:ro
       - ./nginx/limit_zones.conf:/etc/nginx/conf.d/limit_zones.conf  # /s/ 限流 zone 定义（http 层）
+      - ./nginx/acme:/var/www/acme:ro  # ACME HTTP-01 challenge webroot
+      - ./nginx/certs:/etc/nginx/certs:ro  # Let's Encrypt 证书（acme.sh 续期）
     depends_on:
       - research
       - sales

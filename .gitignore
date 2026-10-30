@@ -49,3 +49,8 @@ dist/
 build/
 # Documentation (local only, excluded from git)
 docs/
+
+# TLS certs (issued by acme.sh on the prod host) + ACME challenge webroot
+nginx/certs/
+nginx/acme/*
+!nginx/acme/.gitkeep

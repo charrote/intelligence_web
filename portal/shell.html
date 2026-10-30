@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>情报平台</title>
+<meta name="theme-color" content="#3b4f8c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="情报社">
+<link rel="manifest" href="/portal/manifest.json">
+<link rel="icon" type="image/png" href="/portal/icons/icon-64.png">
+<link rel="apple-touch-icon" href="/portal/icons/apple-touch-icon.png">
+<script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/portal/sw.js',{scope:'/portal/'}).catch(function(){})})}</script>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/reset.css">
 <link rel="stylesheet" href="css/header.css">
@@ -16,6 +25,9 @@
 <script src="js/init.js?v=20260813"></script>
 <script src="js/tabs.js?v=20260813"></script>
 <style>
+  /* PWA 体感：禁下拉刷新回弹；独立窗口模式下外壳不可选中、无点击高亮 */
+  html{overscroll-behavior-y:none}
+  @media (display-mode:standalone){body{user-select:none;-webkit-tap-highlight-color:transparent}}
   .tab-content-wrapper{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
   .breadcrumb{padding:8px 20px;font-size:12px;color:var(--gray-400);border-bottom:1px solid var(--gray-200);background:#fff;flex-shrink:0}
   .breadcrumb a{color:var(--accent);text-decoration:none}

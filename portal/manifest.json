@@ -1,0 +1,18 @@
+{
+  "name": "业务情报社",
+  "short_name": "情报社",
+  "description": "企业情报采集 · 分析 · 行动闭环",
+  "id": "/portal/shell.html",
+  "start_url": "/portal/shell.html",
+  "scope": "/portal/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#f5f6f8",
+  "theme_color": "#3b4f8c",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "/portal/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/portal/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/portal/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
