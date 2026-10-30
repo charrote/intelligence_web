@@ -55,6 +55,9 @@
 .share-actions{display:flex;gap:8px;margin-top:16px}
 .share-actions .btn{flex:1}
 .share-tip{font-size:11px;color:var(--gray-400);margin-top:12px;text-align:center;line-height:1.6}
+.share-meta{font-size:12px;color:var(--gray-500);margin-top:8px;line-height:1.5}
+.share-expiry{width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;color:var(--gray-700);background:#fff;outline:none;cursor:pointer}
+.share-expiry:focus{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -98,12 +101,20 @@
         <span class="txt" id="shareLinkText">加载中…</span>
         <button class="btn btn-primary btn-sm" onclick="copyShareLink()">复制</button>
       </div>
+      <div class="share-meta" id="shareMeta"></div>
+      <div class="share-label" style="margin-top:16px">链接有效期</div>
+      <select class="share-expiry" id="shareExpiry" onchange="onExpiryChange()">
+        <option value="7">7 天</option>
+        <option value="30" selected>30 天</option>
+        <option value="90">90 天</option>
+      </select>
       <div class="share-label" style="margin-top:16px">分享海报（朋友圈）</div>
       <div class="share-poster-wrap"><canvas id="sharePoster"></canvas></div>
       <div class="share-actions">
         <button class="btn btn-primary" id="posterBtn" onclick="downloadPoster()">下载海报</button>
+        <button class="btn btn-ghost" id="weiboBtn" onclick="shareToWeibo()">分享到微博</button>
       </div>
-      <div class="share-tip">复制链接发到微信，或保存海报分享到朋友圈<br>分享内容为完整正文，对方无需登录即可查看</div>
+      <div class="share-tip">复制链接发到微信，或保存海报分享到朋友圈<br>外链展示标题与摘要，注册后可查看全文</div>
     </div>
   </div>
 </div>
@@ -535,7 +546,7 @@ async function loadAttachments(intelId) {
 }
 
 // ── 分享 ──────────────────────────────────────────────────────────
-var shareState = { url: '' };
+var shareState = { url: '', expiresAt: '', viewCount: 0 };
 
 // 分享权限：admin 或角色勾选了"开放情报分享"（intel.share）
 function canShareIntel() {
@@ -549,22 +560,81 @@ async function openShare() {
   if (!currentIntel) return;
   if (!canShareIntel()) { alert('没有分享权限（需在角色中勾选"开放情报分享"）'); return; }
   var id = currentIntel.id;
+  var base = APP_API_BASE + '/api/intelligence/' + id + '/share';
   try {
-    // 若本条尚未开启分享，先开启（生成 token）
-    var r = await apiFetch(APP_API_BASE + '/api/intelligence/' + id + '/share', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ enabled: true })
-    });
-    var d = await r.json();
-    if (!r.ok) { alert(d.error || '开启分享失败'); return; }
-    shareState.url = d.share_url;
+    // 先查询当前分享状态：回显查看次数与到期日
+    var g = await apiFetch(base, { method: 'GET' });
+    var gd = await g.json();
+    var data;
+    if (g.ok && gd && gd.enabled) {
+      // 已开启：直接展示现有数据，不重置有效期
+      data = gd;
+    } else {
+      // 尚未开启：按所选有效期开启（生成/复用 token）
+      var days = parseInt(document.getElementById('shareExpiry').value, 10) || 30;
+      var r = await apiFetch(base, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ enabled: true, expires_in_days: days })
+      });
+      data = await r.json();
+      if (!r.ok) { alert(data.error || '开启分享失败'); return; }
+    }
+    shareState.url = data.share_url;
+    shareState.expiresAt = data.expires_at || '';
+    shareState.viewCount = data.view_count || 0;
     shareState.posterReady = false;
     var pb = document.getElementById('posterBtn');
     if (pb) { pb.disabled = true; pb.style.opacity = '.6'; }
-    document.getElementById('shareLinkText').textContent = d.share_url;
+    document.getElementById('shareLinkText').textContent = data.share_url;
+    renderShareMeta();
     document.getElementById('shareModal').classList.add('open');
-    renderPoster(currentIntel, d.share_url);
+    renderPoster(currentIntel, data.share_url);
   } catch(e) { alert('开启分享失败：' + e); }
+}
+
+// 弹窗内回显「已被查看 N 次 · 到期 YYYY-MM-DD」（N=0 时只显示到期日）
+function renderShareMeta() {
+  var el = document.getElementById('shareMeta');
+  if (!el) return;
+  var parts = [];
+  var n = shareState.viewCount || 0;
+  var date = shareState.expiresAt ? String(shareState.expiresAt).slice(0, 10) : '';
+  if (n > 0) parts.push('已被查看 ' + n + ' 次');
+  if (date) parts.push('到期 ' + date);
+  el.textContent = parts.join(' · ');
+}
+
+// 修改链接有效期：POST 刷新到期日（token 复用、链接不变，海报二维码无需重绘）
+async function onExpiryChange() {
+  if (!currentIntel) return;
+  var id = currentIntel.id;
+  var days = parseInt(document.getElementById('shareExpiry').value, 10) || 30;
+  var base = APP_API_BASE + '/api/intelligence/' + id + '/share';
+  var weiboBtn = document.getElementById('weiboBtn');
+  if (weiboBtn) weiboBtn.disabled = true;
+  try {
+    var r = await apiFetch(base, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ enabled: true, expires_in_days: days })
+    });
+    var d = await r.json();
+    if (!r.ok) { alert(d.error || '更新有效期失败'); return; }
+    shareState.url = d.share_url;
+    shareState.expiresAt = d.expires_at || '';
+    shareState.viewCount = d.view_count || 0;
+    document.getElementById('shareLinkText').textContent = d.share_url;
+    renderShareMeta();
+  } catch(e) { alert('更新有效期失败：' + e); }
+  finally { if (weiboBtn) weiboBtn.disabled = false; }
+}
+
+// 分享到微博：打开微博分享页（海报为本地 canvas 无稳定 URL，pic 参数省略）
+function shareToWeibo() {
+  if (!shareState.url) { alert('链接尚未生成'); return; }
+  var title = (currentIntel && currentIntel.title) || '业务情报社';
+  var url = 'http://service.weibo.com/share/share.php?url=' + encodeURIComponent(shareState.url)
+          + '&title=' + encodeURIComponent(title);
+  window.open(url, '_blank', 'width=640,height=520');
 }
 
 function closeShare() { document.getElementById('shareModal').classList.remove('open'); }
