@@ -1325,35 +1325,47 @@ def get_intelligence_by_id(db_path, intel_id):
         return dict(row) if row else None
 
 
-def set_intelligence_share(db_path, intel_id, enabled):
+def set_intelligence_share(db_path, intel_id, enabled, expires_in_days=30):
     """Enable/disable public sharing for an intelligence record.
 
-    Enabling generates a fresh random token if none exists; disabling keeps
-    the token (so re-enabling reuses it) but flips the flag off. Returns the
-    current (token, enabled) pair, or None if the record is missing.
+    Enabling generates a fresh random token if none exists and refreshes the
+    share expiry to now + expires_in_days; disabling keeps the token (so
+    re-enabling reuses it) and the stored expiry (refreshed on next enable).
+    Returns (token, enabled, expires_at, view_count), or None if the record
+    is missing.
     """
     import uuid
     with get_db(db_path) as conn:
-        row = conn.execute('SELECT share_token, share_enabled FROM intelligence WHERE id = ?',
-                           (intel_id,)).fetchone()
+        row = conn.execute(
+            'SELECT share_token, share_enabled, share_expires_at, share_view_count '
+            'FROM intelligence WHERE id = ?',
+            (intel_id,)
+        ).fetchone()
         if row is None:
             return None
         token = row['share_token']
-        if enabled and not token:
-            token = uuid.uuid4().hex
+        expires_at = row['share_expires_at']
+        if enabled:
+            if not token:
+                token = uuid.uuid4().hex
+            # 每次开启分享刷新有效期
+            expires_at = (datetime.now() + timedelta(days=int(expires_in_days))).isoformat()
         now = datetime.now().isoformat()
         conn.execute(
-            'UPDATE intelligence SET share_token = ?, share_enabled = ?, updated_at = ? WHERE id = ?',
-            (token, 1 if enabled else 0, now, intel_id)
+            'UPDATE intelligence SET share_token = ?, share_enabled = ?, '
+            'share_expires_at = ?, updated_at = ? WHERE id = ?',
+            (token, 1 if enabled else 0, expires_at, now, intel_id)
         )
         conn.commit()
-        return token, bool(enabled)
+        return token, bool(enabled), expires_at, int(row['share_view_count'] or 0)
 
 
 def get_intelligence_by_share_token(db_path, token):
     """Look up a shared (publicly exposed) intelligence by its share token.
 
     Returns the full row only when sharing is enabled; otherwise None.
+    Note: an enabled row past its share_expires_at is still returned — the
+    route decides between "valid" and "expired" presentation.
     """
     if not token:
         return None
@@ -1363,6 +1375,26 @@ def get_intelligence_by_share_token(db_path, token):
             (token,)
         ).fetchone()
         return dict(row) if row else None
+
+
+def log_share_view(db_path, intel_id, ip='', user_agent='', referer=''):
+    """Record one public share page view: bump share_view_count and append a
+    row to share_view_log (id, intelligence_id, viewed_at, ip, user_agent,
+    referer).
+    """
+    now = datetime.now().isoformat()
+    with get_db(db_path) as conn:
+        conn.execute(
+            'UPDATE intelligence SET share_view_count = COALESCE(share_view_count, 0) + 1 '
+            'WHERE id = ?',
+            (intel_id,)
+        )
+        conn.execute(
+            'INSERT INTO share_view_log (intelligence_id, viewed_at, ip, user_agent, referer) '
+            'VALUES (?, ?, ?, ?, ?)',
+            (intel_id, now, (ip or '')[:64], (user_agent or '')[:512], (referer or '')[:512])
+        )
+        conn.commit()
 
 
 def get_intelligence_by_project(db_path, project_id, limit=50):
@@ -2016,6 +2048,29 @@ def migrate_db(db_path, domain_key=None):
                 c.execute('ALTER TABLE intelligence ADD COLUMN share_enabled INTEGER DEFAULT 0')
             except Exception:
                 pass  # column already exists
+
+            # Migration: 分享治理（UANTEK-93）：有效期 + 浏览计数
+            try:
+                c.execute('ALTER TABLE intelligence ADD COLUMN share_expires_at TEXT')
+            except Exception:
+                pass  # column already exists
+            try:
+                c.execute('ALTER TABLE intelligence ADD COLUMN share_view_count INTEGER DEFAULT 0')
+            except Exception:
+                pass  # column already exists
+
+            # Migration: 分享浏览日志表
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS share_view_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    intelligence_id INTEGER NOT NULL,
+                    viewed_at TEXT NOT NULL,
+                    ip TEXT DEFAULT '',
+                    user_agent TEXT DEFAULT '',
+                    referer TEXT DEFAULT '',
+                    FOREIGN KEY (intelligence_id) REFERENCES intelligence(id)
+                )
+            ''')
 
             # Migration: 文章发布时间（采集时从源页面/feed 提取，时效判断与 TTL 用）
             try:

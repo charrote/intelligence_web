@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="{{ og_description }}">
+<meta name="robots" content="noindex">
+<meta property="og:type" content="article">
+<meta property="og:title" content="{{ title }}">
+<meta property="og:description" content="{{ og_description }}">
+<meta property="og:image" content="{{ og_image }}">
 <title>{{ title }} — 业务情报社</title>
 <style>
   :root{
@@ -30,6 +36,7 @@
   .tag-date{background:transparent;color:var(--ink-3);padding-left:0}
   .body-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
     padding:18px;margin-bottom:14px}
+  .sum-label{font-size:11px;font-weight:600;color:var(--accent);margin-bottom:10px}
   .body-card p{font-size:14.5px;line-height:1.85;color:var(--ink-2);margin-bottom:12px}
   .body-card p:last-child{margin-bottom:0}
   .body-card p b,.body-card p strong{color:var(--ink);font-weight:600}
@@ -68,6 +75,7 @@
   </div>
 
   <div class="body-card">
+    <div class="sum-label">摘要</div>
     {{ content_html|safe }}
   </div>
 
@@ -79,10 +87,10 @@
   {% endif %}
 
   <div class="cta">
-    <div class="head"><b>想看更多情报？</b><span>每日自动采集</span></div>
-    <div class="desc">本条已完整展示。注册后，情报社每日自动采集 <span class="hl">1,200+ 条</span>竞品/商机情报，追踪 <span class="hl">5 大行业</span>，分析师每日 10:00 推送。</div>
+    <div class="head"><b>想看全文？</b><span>每日自动采集</span></div>
+    <div class="desc">本条仅展示摘要。注册解锁全文：情报社每日自动采集 <span class="hl">1,200+ 条</span>竞品/商机情报，追踪 <span class="hl">5 大行业</span>，分析师每日 10:00 推送。</div>
     {% if register_enabled %}
-    <button class="btn-primary" onclick="window.location.href='/portal/register.html'">注册 · 每日获取更多情报</button>
+    <button class="btn-primary" onclick="window.location.href='/portal/register.html'">注册 · 解锁全文</button>
     {% else %}
     <div class="cta-disabled">注册通道暂未开放，如需体验请联系管理员</div>
     {% endif %}
