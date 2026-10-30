@@ -111,6 +111,7 @@ services:
       - ./portal:/var/www/portal
       - ./intelligence_sales/web:/var/www/intelligence_sales
       - ./nginx/gateway.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/limit_zones.conf:/etc/nginx/conf.d/limit_zones.conf  # /s/ 限流 zone 定义（http 层）
     depends_on:
       - research
       - sales
