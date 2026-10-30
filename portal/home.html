@@ -76,6 +76,25 @@
 .mi-chev{transition:transform .18s ease;display:inline-flex}
 .mi-chev.open{transform:rotate(180deg)}
 
+/* 手机端：面板置顶 + 紧凑排版，二维码免滚动可见 */
+@media(max-width:768px){
+  .work-grid{grid-template-columns:1fr}
+  .work-grid > .panel2.mi-panel{order:-1;margin-bottom:14px}
+  .mi-panel .ph{padding:11px 14px}
+  .mi-body{padding:12px 14px 14px}
+  .mi-flex{gap:12px;align-items:flex-start}
+  #miQrCanvas{width:140px;height:140px}
+  .mi-addr{margin-bottom:6px}
+  .mi-addr a{font-size:12px}
+  /* 说明只留第一句（桌面端看全文）：第二句包在 .mi-tip2 里，手机端隐藏 */
+  .mi-tip{display:block;font-size:11.5px;line-height:1.6}
+  .mi-tip2{display:none}
+  .stats{margin-bottom:14px}
+  .stat{padding:10px 12px}
+  .stat-num{font-size:19px}
+  .stat-label{font-size:11px}
+}
+
 /* ===== 侧滑预览面板（工作台内处理，不离开页面） ===== */
 .preview-panel{position:fixed;top:0;right:0;height:100vh;width:440px;max-width:92vw;background:#fff;box-shadow:-8px 0 28px rgba(0,0,0,0.10);transform:translateX(100%);transition:transform .24s ease;z-index:50;display:flex;flex-direction:column}
 .preview-panel.open{transform:translateX(0)}
@@ -134,7 +153,7 @@
     </div>
 
     <!-- 手机端安装：链接 + 收起式二维码（点击标题展开） -->
-    <div class="panel2">
+    <div class="panel2 mi-panel">
       <div class="ph" style="cursor:pointer" onclick="toggleMobileInstall()">
         <h3 style="display:flex;align-items:center;gap:7px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"/></svg>手机端安装</h3>
         <span class="more" id="miToggleText" style="display:flex;align-items:center;gap:4px">显示二维码<svg class="mi-chev" id="miChev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
@@ -147,7 +166,7 @@
               <a id="miLink" href="https://intelligence.nat.ywapi.com:8443/portal/shell.html" target="_blank" rel="noopener">intelligence.nat.ywapi.com:8443</a>
               <button class="mi-copy" id="miCopyBtn" onclick="copyMobileInstallAddr()">复制链接</button>
             </div>
-            <p class="mi-tip">手机浏览器打开上面链接（或扫码）→ 浏览器菜单 →「安装此应用 / 添加到主屏幕」，即成为桌面独立应用。<br>安卓推荐 Microsoft Edge 或 Chrome；OPPO 自带浏览器不支持安装。</p>
+            <p class="mi-tip">手机浏览器打开上面链接（或扫码）→ 浏览器菜单 →「安装此应用 / 添加到主屏幕」，即成为桌面独立应用。<br><span class="mi-tip2">安卓推荐 Microsoft Edge 或 Chrome；OPPO 自带浏览器不支持安装。</span></p>
           </div>
         </div>
       </div>
@@ -193,6 +212,8 @@ function drawMobileInstallQr() {
   host.appendChild(canvas);
   QRCode.toCanvas(canvas, MOBILE_INSTALL_URL, { width: 300, margin: 2, color: { dark: '#1F2937', light: '#ffffff' } }, function (err) {
     if (err) { host.innerHTML = '<div class="mi-qr-fallback">二维码生成失败</div>'; return; }
+    // 库会把 width/height 写成行内样式，行内样式压过媒体查询 → 交还给 CSS 控制尺寸
+    canvas.style.cssText = '';
     _miQrDrawn = true;
   });
 }

@@ -49,6 +49,7 @@
 </head>
 <body>
 <header class="header">
+  <button class="menu-btn" id="menuBtn" onclick="toggleMenu()" aria-label="菜单" aria-expanded="false" title="菜单"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
   <div class="header-logo"><span class="mark"></span><span id="appTitle">情报平台</span></div>
   <div class="header-grow"></div>
   <div class="tab-bar" id="tabBar"></div>
@@ -96,6 +97,8 @@
     <div class="sidebar-item" data-route="sys-settings" data-perm="settings.manage" onclick="openTab('sys-settings')"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/><circle cx="12" cy="12" r="4"/></svg></span>系统设置</div>
     <div id="sidebarCats"></div>
   </aside>
+  <!-- 手机端：抽屉遮罩（点击关闭菜单） -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeMenu()"></div>
   <div class="tab-content-wrapper">
     <div class="breadcrumb" id="breadcrumb">
       <a href="#" onclick="openTab('home');return false;">工作台</a>
@@ -177,6 +180,27 @@ function loadEnabledDomains() {
 var currentIntel = null;
 function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;}
 function openPanel(){document.getElementById('detailPanel').classList.add('open');}
+
+// ── 手机端菜单抽屉（CSS 只在 <=768px 生效；桌面端调用无副作用） ──
+function isMobileMenu(){ return window.matchMedia('(max-width:768px)').matches; }
+function toggleMenu(){ isMobileMenu() ? (document.body.classList.contains('menu-open') ? closeMenu() : openMenu()) : null; }
+function openMenu(){
+  if (!isMobileMenu()) return;
+  document.body.classList.add('menu-open');
+  var b = document.getElementById('menuBtn'); if (b) b.setAttribute('aria-expanded', 'true');
+}
+function closeMenu(){
+  if (!document.body.classList.contains('menu-open')) return;
+  document.body.classList.remove('menu-open');
+  var b = document.getElementById('menuBtn'); if (b) b.setAttribute('aria-expanded', 'false');
+}
+// 转回桌面尺寸时收起抽屉状态，避免 body 上残留 menu-open
+window.addEventListener('resize', function(){ if (!isMobileMenu()) closeMenu(); });
+// 抽屉里点任意菜单项 → 自动收起（事件冒泡，兜住所有 openTab / window.open 入口）
+document.addEventListener('click', function(e){
+  var item = e.target && e.target.closest ? e.target.closest('.sidebar-item') : null;
+  if (item) closeMenu();
+}, true);
 
 // RBAC: hide sidebar items the current user has no permission for.
 // Items carry data-perm="code"; no data-perm = visible to all.

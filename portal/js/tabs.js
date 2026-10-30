@@ -32,6 +32,8 @@ function getHash() {
 }
 
 function openTab(hash) {
+  // 手机端：无论从哪里切页（tab / hash / 代码调用），都收起抽屉菜单
+  if (typeof closeMenu === 'function') closeMenu();
   // Check if tab already exists
   var existing = TABS.find(function(t) { return t.hash === hash; });
   if (existing) {
