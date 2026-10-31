@@ -3,7 +3,7 @@
  * 策略：静态资源/页面 = 网络优先，失败回退缓存（保持"改完即生效"）；
  *       /api/ /s/ /sales/ = 只走网络。
  */
-const CACHE = 'intel-pwa-v3';
+const CACHE = 'intel-pwa-v4';
 const PRECACHE = [
   '/portal/shell.html',
   '/portal/login.html',

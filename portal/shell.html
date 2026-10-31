@@ -12,7 +12,7 @@
 <link rel="manifest" href="/portal/manifest.json">
 <link rel="icon" type="image/png" href="/portal/icons/icon-64.png">
 <link rel="apple-touch-icon" href="/portal/icons/apple-touch-icon.png">
-<script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/portal/sw.js',{scope:'/portal/'}).catch(function(){})})}</script>
+<script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/portal/sw.js',{scope:'/portal/',updateViaCache:'none'}).catch(function(){})})}</script>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/reset.css">
 <link rel="stylesheet" href="css/header.css">
