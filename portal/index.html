@@ -111,10 +111,10 @@
       <div class="share-label" style="margin-top:16px">分享海报（朋友圈）</div>
       <div class="share-poster-wrap"><canvas id="sharePoster"></canvas></div>
       <div class="share-actions">
-        <button class="btn btn-primary" id="posterBtn" onclick="downloadPoster()">下载海报</button>
+        <button class="btn btn-primary" id="posterBtn" onclick="downloadPoster()">分享海报</button>
         <button class="btn btn-ghost" id="weiboBtn" onclick="shareToWeibo()">分享到微博</button>
       </div>
-      <div class="share-tip">复制链接发到微信，或保存海报分享到朋友圈<br>外链为完整正文，对方无需登录即可查看</div>
+      <div class="share-tip">点「分享海报」选微信等 App 直接发送，或保存海报发朋友圈<br>外链展示标题与摘要，注册后可查看全文</div>
     </div>
   </div>
 </div>
@@ -844,16 +844,47 @@ function renderPoster(intel, url) {
   }
 }
 
+function posterFilename() {
+  return '情报分享_' + (currentIntel ? currentIntel.id : 'intel') + '.png';
+}
+
+// 回退路径：浏览器不支持系统分享（桌面端 / 非 HTTPS 环境）时直接下载图片
+function downloadPosterFile(canvas) {
+  try {
+    var a = document.createElement('a');
+    a.download = posterFilename();
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch(e) { alert('海报下载失败：' + e); }
+}
+
 function downloadPoster() {
   var canvas = document.getElementById('sharePoster');
   if (!canvas || !shareState.url) return;
   if (!shareState.posterReady) { toast('海报生成中，请稍候'); return; }
-  try {
-    var a = document.createElement('a');
-    a.download = '情报分享_' + (currentIntel ? currentIntel.id : 'intel') + '.png';
-    a.href = canvas.toDataURL('image/png');
-    a.click();
-  } catch(e) { alert('海报下载失败：' + e); }
+  // 移动端优先：生成海报文件 → 打开系统分享面板（可选微信等 App 直接发送）
+  if (navigator.share && navigator.canShare) {
+    canvas.toBlob(function(blob) {
+      if (!blob) { downloadPosterFile(canvas); return; }
+      var file = new File([blob], posterFilename(), { type: 'image/png' });
+      try {
+        if (navigator.canShare({ files: [file] })) {
+          navigator.share({
+            files: [file],
+            title: (currentIntel && currentIntel.title) || '情报分享',
+            text: shareState.url
+          }).catch(function(err) {
+            // 用户取消（AbortError）不算失败；其余异常回退为下载
+            if (!(err && err.name === 'AbortError')) downloadPosterFile(canvas);
+          });
+          return;
+        }
+      } catch(e) { /* canShare 不支持 files 等异常 → 走下载 */ }
+      downloadPosterFile(canvas);
+    }, 'image/png');
+  } else {
+    downloadPosterFile(canvas);
+  }
 }
 
 document.addEventListener('click', function(e) {
