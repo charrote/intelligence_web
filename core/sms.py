@@ -1,12 +1,13 @@
-"""短信验证码服务（阿里云号码认证服务 PNVS）。
+"""短信验证码服务（阿里云短信服务 SendSms / 兼容旧 PNVS）。
 
-注册手机号核验用。两种模式：
-  - 真实模式：配置了 config/sms.json 的 access_key_id / secret 时，调用
-    阿里云 dypnsapi 的 SendSmsVerifyCode / CheckSmsVerifyCode。验证码由
-    阿里云生成并保管，本服务不存码、不管有效期——只发、只校验。
+注册手机号核验用。三种模式（由 config/sms.json 决定）：
+  - aliyun_sms（默认，标准「短信服务」）：本服务本地生成 6 位验证码，内存保管
+    （5 分钟有效、错 5 次作废、重发覆盖），调用 dysmsapi SendSms 发送，
+    注册时本地校验。需要 sign_name + template_code。
+  - aliyun_pnvs（旧「号码认证服务」）：验证码由阿里云生成并保管，本服务
+    只发、只校验（SendSmsVerifyCode / CheckSmsVerifyCode）。
   - test_mode：未配置 key（或显式 test_mode=true）时，不真发短信，
-    验证码直接通过（打印到日志）。用于本地/生产打通整条注册链路，
-    待阿里云 AccessKey 就绪后填入 config/sms.json 即切换真实短信，零代码改动。
+    任意 4-8 位数字直接通过（打印到日志），用于本地/生产打通注册链路。
 
 设计原则（与 Tavily 一致）：key 单一来源 config/sms.json，不设 env 兜底。
 """
@@ -15,6 +16,8 @@ import hmac
 import hashlib
 import base64
 import json
+import secrets
+import threading
 import time
 import urllib.parse
 import uuid
@@ -23,9 +26,17 @@ import requests
 from config import get_sms_config
 
 # 阿里云开放平台签名参数（RPC 风格，HMAC-SHA1）
-_ALIYUN_VERSION = "2017-05-25"
 _ALIYUN_FORMAT = "JSON"
 _ALIYUN_SIGN_METHOD = "HMAC-SHA1"
+_ALIYUN_VERSION_PNVS = "2017-05-25"
+_ALIYUN_VERSION_SMS = "2017-05-25"
+
+# 本地验证码存储（仅 aliyun_sms 模式使用）
+# phone -> {"code", "expires_at", "attempts"}
+_CODE_STORE = {}
+_CODE_LOCK = threading.Lock()
+_CODE_TTL_SEC = 300       # 验证码有效期 5 分钟
+_MAX_ATTEMPTS = 5         # 错 5 次作废，需重新发送
 
 
 def _is_test_mode():
@@ -34,6 +45,18 @@ def _is_test_mode():
     if cfg.get("test_mode"):
         return True
     return not (cfg.get("access_key_id") and cfg.get("access_key_secret"))
+
+
+def _provider(cfg):
+    """通道判定：显式 provider 优先；endpoint 是标准短信服务域名也视为 aliyun_sms。"""
+    provider = (cfg.get("provider") or "").strip()
+    if provider == "aliyun_pnvs":
+        return "aliyun_pnvs"
+    if provider == "aliyun_sms":
+        return "aliyun_sms"
+    if cfg.get("endpoint", "") == "dysmsapi.aliyuncs.com":
+        return "aliyun_sms"
+    return "aliyun_pnvs"
 
 
 def _aliyun_sign(params, access_key_secret):
@@ -61,11 +84,11 @@ def _pct_encode(s):
     return urllib.parse.quote(str(s), safe="").replace("+", "%20").replace("*", "%2A").replace("%7E", "~")
 
 
-def _aliyun_call(action, biz_params, cfg):
-    """调用阿里云 dypnsapi 的一个 RPC 接口，返回解析后的 dict。"""
+def _aliyun_call(action, biz_params, cfg, version=None):
+    """调用阿里云 RPC 接口（dypnsapi / dysmsapi），返回解析后的 dict。"""
     common = {
         "Format": _ALIYUN_FORMAT,
-        "Version": _ALIYUN_VERSION,
+        "Version": version or _ALIYUN_VERSION_PNVS,
         "AccessKeyId": cfg["access_key_id"],
         "SignatureMethod": _ALIYUN_SIGN_METHOD,
         "SignatureVersion": "1.0",
@@ -82,6 +105,50 @@ def _aliyun_call(action, biz_params, cfg):
     return resp.json()
 
 
+# ── 本地验证码存储（aliyun_sms 模式） ──────────────────────────────────────
+
+def _store_code(phone, code):
+    with _CODE_LOCK:
+        _purge_expired()
+        _CODE_STORE[phone] = {
+            "code": code,
+            "expires_at": time.time() + _CODE_TTL_SEC,
+            "attempts": 0,
+        }
+
+
+def _purge_expired(now=None):
+    """清掉过期码。调用方需持有 _CODE_LOCK。"""
+    now = now if now is not None else time.time()
+    for p in [p for p, r in _CODE_STORE.items() if r["expires_at"] < now]:
+        _CODE_STORE.pop(p, None)
+
+
+def _check_local_code(phone, code):
+    """本地校验：存在、未过期、未超尝试次数、码匹配。返回 (ok, message)。"""
+    now = time.time()
+    with _CODE_LOCK:
+        _purge_expired(now)
+        rec = _CODE_STORE.get(phone)
+        if rec is None:
+            return False, "请先获取短信验证码"
+        if rec["attempts"] >= _MAX_ATTEMPTS:
+            _CODE_STORE.pop(phone, None)
+            return False, "验证码已失效，请重新获取"
+        if rec["code"] != code:
+            rec["attempts"] += 1
+            left = _MAX_ATTEMPTS - rec["attempts"]
+            if left <= 0:
+                _CODE_STORE.pop(phone, None)
+                return False, "验证码错误次数过多，已作废，请重新获取"
+            return False, f"验证码错误，还可尝试 {left} 次"
+        # 校验通过：一次性使用，立即作废
+        _CODE_STORE.pop(phone, None)
+        return True, "验证码正确"
+
+
+# ── 对外接口 ───────────────────────────────────────────────────────────────
+
 def send_verify_code(phone, scene="register"):
     """发送短信验证码。
 
@@ -92,6 +159,67 @@ def send_verify_code(phone, scene="register"):
     if _is_test_mode():
         print(f"[SMS][TEST_MODE] 验证码已'发送'到 {phone}（scene={scene}），测试模式任意 6 位码均可通过")
         return True, "（测试模式）验证码已生成，可直接输入任意 6 位数字"
+    if _provider(cfg) == "aliyun_sms":
+        return _send_sms_standard(phone, cfg)
+    return _send_pnvs(phone, cfg)
+
+
+def verify_code(phone, code):
+    """校验用户输入的短信验证码。
+
+    返回 (ok, message)。
+    test_mode 下：只要 code 是 4-8 位数字即通过（方便本地跑通）。
+    aliyun_sms：本地存储校验；aliyun_pnvs：调用 CheckSmsVerifyCode 由阿里云校验。
+    """
+    cfg = get_sms_config()
+    if _is_test_mode():
+        ok = bool(code) and code.isdigit() and 4 <= len(code) <= 8
+        if ok:
+            print(f"[SMS][TEST_MODE] 验证码通过: {phone} -> {code}")
+            return True, "验证码正确"
+        return False, "验证码格式不正确（测试模式需 4-8 位数字）"
+    if _provider(cfg) == "aliyun_sms":
+        return _check_local_code(phone, code)
+    return _verify_pnvs(phone, code, cfg)
+
+
+# ── 标准短信服务（dysmsapi SendSms） ───────────────────────────────────────
+
+def _send_sms_standard(phone, cfg):
+    """标准短信服务发码：本地生成 6 位码 → SendSms → 发送成功才入库。"""
+    missing = [k for k in ("sign_name", "template_code") if not cfg.get(k)]
+    if missing:
+        print(f"[SMS] 配置缺少必填项: {missing}")
+        return False, "短信服务未配置完整，请联系管理员"
+    code = f"{secrets.randbelow(1000000):06d}"
+    template_param = json.dumps(
+        {cfg.get("code_param") or "code": code}, ensure_ascii=False)
+    try:
+        result = _aliyun_call("SendSms", {
+            "PhoneNumbers": phone,
+            "SignName": cfg["sign_name"],
+            "TemplateCode": cfg["template_code"],
+            "TemplateParam": template_param,
+        }, cfg, version=_ALIYUN_VERSION_SMS)
+        if str(result.get("Code", "")) == "OK":
+            _store_code(phone, code)
+            print(f"[SMS] SendSms 成功 phone={phone} bizId={result.get('BizId', '')}")
+            return True, "验证码已发送，5 分钟内有效，请查收短信"
+        err_code = str(result.get("Code", ""))
+        print(f"[SMS] SendSms 失败 phone={phone} Code={err_code} "
+              f"Message={result.get('Message', '')}")
+        return False, "短信发送失败，请稍后重试"
+    except requests.RequestException as e:
+        print(f"[SMS] 发送异常: {e}")
+        return False, "短信服务暂时不可用，请稍后重试"
+    except Exception as e:
+        print(f"[SMS] 发送未知错误: {e}")
+        return False, "发送验证码失败，请稍后重试"
+
+
+# ── 旧号码认证服务（dypnsapi PNVS，保留兼容） ──────────────────────────────
+
+def _send_pnvs(phone, cfg):
     try:
         result = _aliyun_call("SendSmsVerifyCode", {
             "Phone": phone,
@@ -110,20 +238,7 @@ def send_verify_code(phone, scene="register"):
         return False, f"发送验证码失败：{e}"
 
 
-def verify_code(phone, code):
-    """校验用户输入的短信验证码。
-
-    返回 (ok, message)。
-    test_mode 下：只要 code 是 4-8 位数字即通过（方便本地跑通）。
-    真实模式：调用 CheckSmsVerifyCode 由阿里云校验。
-    """
-    cfg = get_sms_config()
-    if _is_test_mode():
-        ok = bool(code) and code.isdigit() and 4 <= len(code) <= 8
-        if ok:
-            print(f"[SMS][TEST_MODE] 验证码通过: {phone} -> {code}")
-            return True, "验证码正确"
-        return False, "验证码格式不正确（测试模式需 4-8 位数字）"
+def _verify_pnvs(phone, code, cfg):
     try:
         result = _aliyun_call("CheckSmsVerifyCode", {
             "Phone": phone,

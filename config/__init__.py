@@ -198,15 +198,18 @@ def save_search_config(cfg: dict):
     return True
 
 
-# ── 短信验证码配置（阿里云号码认证服务 PNVS，注册手机号核验用） ─────────────
+# ── 短信验证码配置（默认走阿里云标准「短信服务」SendSms；兼容旧 PNVS） ─────
 # key 唯一来源 = config/sms.json（gitignore）。未配置 access_key_id/secret 时
 # 进入 test_mode：验证码不真发、直接通过，用于本地打通整条注册链路。
 _SMS_CONFIG_PATH = Path(__file__).parent.parent / 'config' / 'sms.json'
 _DEFAULT_SMS = {
-    "provider": "aliyun_pnvs",   # 预留：未来可切换其他通道
+    "provider": "aliyun_sms",    # aliyun_sms=标准短信服务 SendSms；aliyun_pnvs=号码认证服务
     "access_key_id": "",
     "access_key_secret": "",
-    "endpoint": "dypnsapi.aliyuncs.com",
+    "sign_name": "",             # 短信签名名称（签名管理里那个，一字不差）
+    "template_code": "",         # 模板 CODE，形如 SMS_4xxxxx
+    "code_param": "code",        # 模板变量名，须与模板正文 ${...} 占位符一致
+    "endpoint": "dysmsapi.aliyuncs.com",
     "test_mode": False,          # True 时不真发短信，验证码直接通过
 }
 
