@@ -6,6 +6,16 @@
     set $research research:8766;
     set $sales    sales:8767;
 
+    # gzip：门户是纯文本前端（HTML/CSS/JS/JSON），公网 frp 隧道带宽有限，
+    # 压缩后体积约 1/4~1/5，手机端加载明显变快。text/html 在 gzip on 下自动压缩。
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/css text/plain text/xml application/javascript
+               application/json application/xml image/svg+xml;
+
     root /var/www;
     index index.html;
 

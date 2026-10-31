@@ -24,34 +24,32 @@ function getDomainPrefix() {
   return localStorage.getItem('domainPrefix') || LEGACY_PREFIXES[port] || '/research';
 }
 
+// 网关模式判定：只要页面不是直接开在后端自己的端口上（8766/8767/动态域端口），
+// 就认为走 Nginx 网关——API 与页面【同源】，只需拼上域前缀。
+// 同源写法对任何网关端口自动生效（80 / 8765 / 8443 / 以后新增的端口都行）。
+// 旧实现按端口白名单（8765/80）判定，漏了 HTTPS 网关 8443：PWA 从 8443 打开时，
+// API 被拼成 https://host:8766 —— 对明文端口做 TLS 握手，请求永远挂起，
+// 表现为"页面能打开、数据永远加载不出来"。
+function isDirectBackendPort() {
+  return window.location.port === String(getDomainPort());
+}
+
 function apiBase() {
-  var p = window.location.protocol;
-  var h = window.location.hostname;
-  var port = getDomainPort();
-  var locPort = window.location.port;
-  // When accessed via Nginx gateway (port 8765 or default HTTP port with correct host),
-  // prepend domain path prefix for correct API routing through gateway.
-  var isGateway = (locPort === '8765' || locPort === '');
-  if (isGateway) {
-    var gwPort = locPort ? ':' + locPort : '';
-    return p + '//' + h + gwPort + getDomainPrefix();
+  if (isDirectBackendPort()) {
+    // 直连后端端口（开发/内网调试）：API 就在本端口，无域前缀
+    return window.location.protocol + '//' + window.location.hostname + ':' + getDomainPort();
   }
-  return p + '//' + h + ':' + port;
+  // 网关模式：同源 + 域前缀（/research、/sales 或动态域 /d/<slug>）
+  return window.location.origin + getDomainPrefix();
 }
 
 // System API base (always uses research domain for system-level APIs)
 function systemApiBase() {
-  var p = window.location.protocol;
-  var h = window.location.hostname;
-  var locPort = window.location.port;
-  // When accessed via Nginx gateway (port 8765 or default HTTP port),
-  // route through gateway for CORS compatibility
-  var isGateway = (locPort === '8765' || locPort === '');
-  if (isGateway) {
-    var gwPort = locPort ? ':' + locPort : '';
-    return p + '//' + h + gwPort + '/research';
+  if (window.location.port === '8766') {
+    return window.location.protocol + '//' + window.location.hostname + ':8766';
   }
-  return p + '//' + h + ':8766';
+  // 网关模式：同源走 /research（CORS 天然兼容）
+  return window.location.origin + '/research';
 }
 
 var APP_API_BASE = apiBase();

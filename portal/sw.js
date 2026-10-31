@@ -3,7 +3,7 @@
  * 策略：静态资源/页面 = 网络优先，失败回退缓存（保持"改完即生效"）；
  *       /api/ /s/ /sales/ = 只走网络。
  */
-const CACHE = 'intel-pwa-v2';
+const CACHE = 'intel-pwa-v3';
 const PRECACHE = [
   '/portal/shell.html',
   '/portal/login.html',
@@ -39,7 +39,10 @@ self.addEventListener('activate', (e) => {
 });
 
 // 绝不缓存的路径：API、分享页、销售域接口
-const NETWORK_ONLY = [/^\/api\//, /^\/s\//, /^\/sales\/api\//, /^\/_auth/];
+// 网关模式下 API 带域前缀（/research/api/、/sales/api/、/d/<slug>/api/），
+// 必须一并列入，否则 API 响应会被写进 Cache Storage。
+const NETWORK_ONLY = [/^\/api\//, /^\/s\//, /^\/sales\/api\//, /^\/_auth/,
+                      /^\/(research|sales)\/api\//, /^\/d\/[^/]+\/api\//];
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
