@@ -704,7 +704,7 @@ function renderPoster(intel, url) {
   var canvas = document.getElementById('sharePoster');
   var W = 750, PAD = 48;
   var x = PAD + 36, cw = W - PAD*2 - 72;   // 内容左边界 / 内容宽
-  var MIN_H = 820, MAX_H = 1760, GAP_FOOTER = 56, QR = 180;
+  var MIN_H = 820, MAX_H = 20000, GAP_FOOTER = 56, QR = 180;
   var ctx = canvas.getContext('2d');
   var dpr = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -716,7 +716,7 @@ function renderPoster(intel, url) {
   var CTA_TEXT = '注册后，每日自动采集 1200+ 条竞品/商机情报，追踪 5 大行业，分析师每日推送。';
 
   var body = (intel.content || '').replace(/[#*`>\-\[\]()!]/g, '').replace(/\n+/g, '\n').trim();
-  var bodyText = body.length > 260 ? body.slice(0, 260) + '…' : body;
+  var bodyText = body;   // 全文上海报（产品口径：分享出去的内容不截断）
   var titleText = (intel.title || '').slice(0, 60);
   var dateStr = (intel.created_at || '').slice(0, 10);
   var host = location.host || 'intelligence.nat.ywapi.com';
@@ -728,8 +728,17 @@ function renderPoster(intel, url) {
   // ── 第一遍：离屏量高
   var m = document.createElement('canvas').getContext('2d');
   m.font = F_TITLE; var titleLines = splitLines(m, titleText, cw, 3);
-  m.font = F_BODY;  var bodyLines  = splitLines(m, bodyText, cw, 10);
+  m.font = F_BODY;  var bodyLines  = splitLines(m, bodyText, cw, 0);   // 不限行数，全文排版
   m.font = F_CTA;   var ctaLines   = splitLines(m, CTA_TEXT, cw, 3);
+
+  // 极端内容保险：总高超过 MAX_H 时裁掉放不下的正文行（末行加省略号）。
+  // 正常情报（几千字以内）不会触到；只防超长内容把画布撑爆导出空白。
+  var fixedH = 210 + titleLines.length * 44 + 18 + 40 + 24 + 36 + 34 + ctaLines.length * 28 + 34 + QR;
+  var maxBodyLines = Math.floor((MAX_H - GAP_FOOTER - PAD - fixedH) / 32);
+  if (bodyLines.length > maxBodyLines) {
+    bodyLines = bodyLines.slice(0, maxBodyLines);
+    bodyLines[maxBodyLines - 1] = bodyLines[maxBodyLines - 1].replace(/.{1,2}$/, '…');
+  }
 
   var y = 210;                                  // 标题首行基线
   y += titleLines.length * 44 + 18;
@@ -745,6 +754,11 @@ function renderPoster(intel, url) {
   var slackTop = Math.round(slack / 2);
   dividerY += slackTop; ctaY += slackTop; qrY += slack; contentEnd += slack;
   var H = Math.min(Math.max(contentEnd + GAP_FOOTER + PAD, MIN_H), MAX_H);
+
+  // iOS Safari 画布面积上限约 16M px²，超了 toBlob/toDataURL 会导出空白图。
+  // 超长海报自动降 dpr，保证导出永远可用（1x 的 750 宽仍然清晰）。
+  var MAX_AREA = 16000000;
+  if (W * H * dpr * dpr > MAX_AREA) dpr = Math.max(1, Math.floor(Math.sqrt(MAX_AREA / (W * H))));
 
   // ── 第二遍：按最终尺寸绘制
   canvas.width = W * dpr; canvas.height = H * dpr;
