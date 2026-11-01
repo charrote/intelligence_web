@@ -994,7 +994,7 @@ def create_app(project_root, spec):
         Without this, any users.manage holder could hand out private-domain
         access they do not have. Returns a 403 response tuple or None.
         """
-        if actor.get('role') == 'admin':
+        if _is_admin_user(actor):
             return None
         priv = _private_domain_slugs()
         if not priv:
@@ -1073,7 +1073,10 @@ def create_app(project_root, spec):
         user = _verify_token(token) if token else None
         if not user:
             return None  # let the route's own auth check produce the 401
-        if user.get('role') == 'admin':
+        # 内置/持有 admin 角色的账号必定可访问所有域（含私有域）——UA100。
+        # 用 _is_admin_user 同时认 role 字段与多角色关联，避免仅靠 role_ids
+        # 持有 admin 的账号被域门禁误挡。
+        if _is_admin_user(user):
             return None
         domains = user.get('domains') or []
         # Private domains are never covered by the default grant: an empty
@@ -1813,7 +1816,9 @@ def create_app(project_root, spec):
         user = _verify_token(token) if token else None
         if not user:
             return jsonify({'domains': []}), 401
-        if user.get('role') == 'admin':
+        # admin（含通过多角色持有 admin 的账号）永远看到全部启用域，
+        # 私有域也不例外——UA100：内置 admin 必定能访问所有域。
+        if _is_admin_user(user):
             return jsonify({'domains': enabled})
         domains = user.get('domains') or []
         priv = _private_domain_slugs()
@@ -2781,8 +2786,10 @@ location /d/{slug}/ {{
         ok, resp = _require_user_or_perm('users.manage')
         if not ok:
             return resp
-        if user_id == 1:
-            return jsonify({'error': '不能删除超级管理员'}), 403
+        # 内置 admin 账号不可删除（UA100）：按 id=1 或用户名 'admin' 判定，
+        # 不再只认字面量 id==1，避免账号迁移/重建后保护失效。
+        if _is_builtin_admin_id(user_id):
+            return jsonify({'error': '内置管理员账号不能删除'}), 403
         actor = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         if not actor or actor.get('role') != 'admin':
             if _is_admin_user_id(user_id):
