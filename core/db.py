@@ -719,6 +719,17 @@ def create_user_with_phone(db_path, username, password, phone, display_name=''):
                 'VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?)',
                 (username.strip(), password_hash, salt, display_name.strip(), '', 'user', '', phone.strip(), now, now)
             )
+            # Bind the built-in 'user' role in the SAME transaction. Permission
+            # codes are resolved from user_roles only — without this row a
+            # freshly registered user gets an empty permission set in their JWT
+            # and is 403'd from every intel endpoint until the next restart
+            # backfill + re-login (UA98: 「新注册用户什么情报都不能浏览」).
+            role = conn.execute("SELECT id FROM roles WHERE name='user'").fetchone()
+            if role is not None:
+                conn.execute(
+                    'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+                    (cursor.lastrowid, role['id'])
+                )
             conn.commit()
             return cursor.lastrowid, ''
         except Exception as e:
@@ -1228,7 +1239,19 @@ def get_user_permission_codes(db_path, user_id, primary_role=None):
             'WHERE ur.user_id=?',
             (user_id,)
         ).fetchall()
-        return {r['permission_code'] for r in rows}
+        codes = {r['permission_code'] for r in rows}
+        if not codes and primary_role:
+            # Self-heal: user has no user_roles binding (e.g. registered before
+            # UA98's bind-at-registration fix). Derive permissions from the
+            # legacy users.role column so they are never locked out with an
+            # empty permission set.
+            rows = conn.execute(
+                'SELECT rp.permission_code FROM roles r '
+                'JOIN role_permissions rp ON rp.role_id=r.id WHERE r.name=?',
+                (primary_role,)
+            ).fetchall()
+            codes = {r['permission_code'] for r in rows}
+        return codes
 
 
 # =============================================================================

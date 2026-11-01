@@ -88,6 +88,19 @@ def main():
     check("用户名即手机号", body.get("user", {}).get("username") == "13800001111", str(body.get("user")))
     check("注册后码作废", "13800001111" not in sms._CODE_STORE)
 
+    # 4a) UA98 回归：注册用户必须立刻有 user 角色 + intel.view 权限
+    #     （曾经 user_roles 无绑定 → JWT 权限集为空 → 情报列表 403，什么都看不了）
+    codes = body.get("user", {}).get("permission_codes") or []
+    check("注册即有 permission_codes", "intel.view" in codes, str(codes))
+    from core.db import get_db
+    with get_db(db_path) as _conn:
+        _bound = _conn.execute(
+            "SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+            "WHERE ur.user_id=? AND r.name='user'", (body.get("user", {}).get("id"),)).fetchone()
+    check("user_roles 已绑定 user 角色", _bound is not None)
+    r = client.get("/api/intelligence", headers={"Authorization": f"Bearer {body.get('token')}"})
+    check("新用户可浏览情报列表", r.status_code == 200, str(r.status_code))
+
     # 4b) 手机号可直接登录（authenticate_user 回退 phone / username=phone）
     r = client.post("/api/auth/login", json={"username": "13800001111", "password": "pass1234"})
     check("手机号登录 200", r.status_code == 200, r.get_json())
