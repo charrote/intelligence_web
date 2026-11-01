@@ -20,6 +20,10 @@ def check(name, cond, extra=""):
 
 
 class FakeResp:
+    # _aliyun_call 读 resp.status_code 判定阿里云是否拒发（UA99 透传真实错误码），
+    # mock 必须带上它，否则本冒烟会在 mock 上先炸，测不到注册链路。
+    status_code = 200
+
     def raise_for_status(self): pass
     def json(self): return {"Code": "OK", "BizId": "biz-smoke", "Message": "OK"}
 
@@ -71,22 +75,27 @@ def main():
     # 3) register with wrong code -> 400
     wrong = "000000" if code != "000000" else "111111"
     r = client.post("/api/auth/register", json={
-        "username": "smokeuser", "phone": "13800001111", "code": wrong, "password": "pass1234"})
+        "phone": "13800001111", "code": wrong, "password": "pass1234"})
     check("错误码注册 400", r.status_code == 400, r.get_json())
 
-    # 4) register with right code -> 200 + JWT
+    # 4) register with right code -> 200 + JWT（用户名即手机号，无 username 字段）
     # wrong attempt incremented attempts but code still valid
     r = client.post("/api/auth/register", json={
-        "username": "smokeuser", "phone": "13800001111", "code": code, "password": "pass1234"})
+        "phone": "13800001111", "code": code, "password": "pass1234"})
     body = r.get_json() or {}
     check("正确码注册 200", r.status_code == 200, body)
     check("注册即登录(有 token)", bool(body.get("token")))
+    check("用户名即手机号", body.get("user", {}).get("username") == "13800001111", str(body.get("user")))
     check("注册后码作废", "13800001111" not in sms._CODE_STORE)
+
+    # 4b) 手机号可直接登录（authenticate_user 回退 phone / username=phone）
+    r = client.post("/api/auth/login", json={"username": "13800001111", "password": "pass1234"})
+    check("手机号登录 200", r.status_code == 200, r.get_json())
 
     # 5) register disabled -> 403
     set_setting(db_path, "register_enabled", "0")
     r = client.post("/api/auth/register", json={
-        "username": "smokeuser2", "phone": "13800002222", "code": "123456", "password": "pass1234"})
+        "phone": "13800002222", "code": "123456", "password": "pass1234"})
     check("关闭注册后 403", r.status_code == 403, r.get_json())
 
     print(f"\n{PASS} passed, {FAIL} failed")

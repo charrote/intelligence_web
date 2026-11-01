@@ -40,8 +40,9 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e
   <div class="login-logo"><span class="mark"></span>情报平台</div>
   <div class="login-sub">请输入您的账号信息登录</div>
   <div class="form-group">
-    <label for="username">用户名</label>
-    <input type="text" id="username" placeholder="请输入用户名" autocomplete="username">
+    <label for="username">手机号码</label>
+    <input type="tel" id="username" placeholder="请输入手机号" autocomplete="tel" inputmode="tel">
+    <div style="font-size:12px;color:#9a9b9d;margin-top:6px">注册手机号即登录账号；管理员请使用分配的账号登录</div>
   </div>
   <div class="form-group">
     <label for="password">密码</label>
@@ -73,7 +74,7 @@ async function doLogin() {
   const err = document.getElementById('errorMsg');
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
-  if (!username || !password) { err.textContent = '请输入用户名和密码'; err.classList.add('show'); return; }
+  if (!username || !password) { err.textContent = '请输入手机号和密码'; err.classList.add('show'); return; }
   err.classList.remove('show');
   btn.disabled = true;
   btn.textContent = '登录中...';

@@ -2711,14 +2711,14 @@ location /d/{slug}/ {{
         """Authenticate user and return JWT token."""
         data = request.json
         if not data:
-            return jsonify({'error': '请提供用户名和密码'}), 400
+            return jsonify({'error': '请提供手机号和密码'}), 400
         username = data.get('username', '').strip()
         password = data.get('password', '')
         if not username or not password:
-            return jsonify({'error': '用户名和密码不能为空'}), 400
+            return jsonify({'error': '手机号和密码不能为空'}), 400
         user = authenticate_user(db_path, username, password)
         if user is None:
-            return jsonify({'error': '用户名或密码错误'}), 401
+            return jsonify({'error': '手机号或密码错误'}), 401
         # System-level RBAC: compute the user's roles + effective permission codes
         # HERE (research = system/primary domain that owns the identity store) and
         # embed them in the JWT. Both domains then resolve permissions from the
@@ -2732,7 +2732,7 @@ location /d/{slug}/ {{
             'user': user,
         })
 
-    # ── 自助注册（手机号 + 短信验证码 + 用户名 + 密码，role=user，免审核） ──
+    # ── 自助注册（手机号 + 短信验证码 + 密码，role=user，免审核；用户名即手机号） ──
     # 内存限频表：phone -> {last_send_ts, day_date, day_count}
     _sms_rate = {}
     _SMS_COOLDOWN_SEC = 60        # 同号两次发码最小间隔
@@ -2768,10 +2768,11 @@ location /d/{slug}/ {{
 
     @app.route('/api/auth/register', methods=['POST'])
     def auth_register():
-        """自助注册：用户名 + 手机号 + 短信验证码 + 密码。
+        """自助注册：手机号 + 短信验证码 + 密码（用户名即手机号，不再单独设置）。
 
-        校验手机号验证码（PNVS / test_mode）→ 建 user（role=user，免审核）
-        → 直接签发 JWT，前端注册成功即登录进门户。
+        校验手机号验证码（PNVS / test_mode）→ 建 user（username=手机号，
+        role=user，免审核）→ 直接签发 JWT，前端注册成功即登录进门户。
+        登录同样用手机号（authenticate_user 先查 username 再回退 phone）。
         """
         # 注册开关（系统设置，实时生效）。默认关闭；显式开启才放行。
         from core.db import get_setting
@@ -2779,15 +2780,10 @@ location /d/{slug}/ {{
         if reg_flag not in ('1', 'true', 'True'):
             return jsonify({'error': '注册通道已关闭，暂不开放新用户注册'}), 403
         data = request.json or {}
-        username = (data.get('username') or '').strip()
         phone = (data.get('phone') or '').strip()
         code = (data.get('code') or '').strip()
         password = data.get('password') or ''
 
-        if not username:
-            return jsonify({'error': '请输入用户名'}), 400
-        if not (2 <= len(username) <= 32) or not username.replace('_', '').replace('-', '').isalnum():
-            return jsonify({'error': '用户名需 2-32 位字母、数字、下划线或连字符'}), 400
         if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
             return jsonify({'error': '请输入有效的手机号码'}), 400
         if not code or not code.isdigit():
@@ -2795,9 +2791,12 @@ location /d/{slug}/ {{
         if len(password) < 6:
             return jsonify({'error': '密码至少 6 位'}), 400
 
+        # 用户名即手机号（UA100：不再单独设置用户名）
+        username = phone
+
         # 用户名 / 手机号唯一性（友好提示）
         if get_user_by_username(db_path, username):
-            return jsonify({'error': '用户名已被占用，请换一个'}), 409
+            return jsonify({'error': '该手机号已被占用，请直接登录'}), 409
         if get_user_by_phone(db_path, phone):
             return jsonify({'error': '该手机号已注册，请直接登录'}), 409
 

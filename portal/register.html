@@ -59,13 +59,8 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e
   <!-- 注册表单（注册关闭时隐藏） -->
   <div id="regForm" style="display:none">
   <div class="form-group">
-    <label for="username">用户名</label>
-    <input type="text" id="username" placeholder="2-32 位字母、数字、下划线或连字符" autocomplete="username" maxlength="32">
-  </div>
-
-  <div class="form-group">
     <label for="phone">手机号码</label>
-    <input type="tel" id="phone" placeholder="请输入手机号" autocomplete="tel" maxlength="15" inputmode="numeric">
+    <input type="tel" id="phone" placeholder="手机号即登录账号" autocomplete="tel" maxlength="15" inputmode="numeric">
   </div>
 
   <div class="form-group">
@@ -165,12 +160,10 @@ function startCountdown(sec){
 async function doRegister(){
   clearMsg();
   const btn = document.getElementById('regBtn');
-  const username = document.getElementById('username').value.trim();
   const phone = document.getElementById('phone').value.trim();
   const code = document.getElementById('code').value.trim();
   const password = document.getElementById('password').value;
 
-  if(!username){ showErr('请输入用户名'); return; }
   if(!/^\d{11,15}$/.test(phone)){ showErr('请输入有效的手机号码'); return; }
   if(!code){ showErr('请输入短信验证码'); return; }
   if(password.length < 6){ showErr('密码至少 6 位'); return; }
@@ -180,7 +173,7 @@ async function doRegister(){
   try{
     const res = await fetch(API + '/api/auth/register', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({username, phone, code, password})
+      body: JSON.stringify({phone, code, password})
     });
     const data = await res.json();
     if(res.ok){
