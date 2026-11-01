@@ -39,7 +39,7 @@
 
     # Auth endpoints (public) — login/check/register/register-status/sms
     # register, register-status + sms/send are self-service (no existing token required).
-    location ~ ^/api/auth/(login|check|register|register-status|sms/send)$ {
+    location ~ ^/api/auth/(login|check|check-phone|register|register-status|sms/send)$ {
         proxy_pass http://$research;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
