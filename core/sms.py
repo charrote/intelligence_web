@@ -39,6 +39,25 @@ _CODE_TTL_SEC = 300       # 验证码有效期 5 分钟
 _MAX_ATTEMPTS = 5         # 错 5 次作废，需重新发送
 
 
+class AliyunApiError(Exception):
+    """阿里云接口返回错误（网关 4xx/5xx 或业务错误码），携带真实 Code/Message。
+
+    与网络层异常（requests.RequestException）区分开：网络异常是"暂时不可用、
+    重试可能恢复"；而 AliyunApiError 是阿里云明确拒绝（如 AccessKey 被网络
+    访问策略拒绝、签名非法、模板/签名非法等），属持续性配置问题，重试无用，
+    必须把真实原因透传给运维去修。
+    """
+
+    def __init__(self, code, message, request_id="", http_status=0):
+        self.code = code
+        self.message = message
+        self.request_id = request_id
+        self.http_status = http_status
+        super().__init__(
+            f"[{code}] {message}" + (f" (RequestId={request_id})" if request_id else "")
+        )
+
+
 def _is_test_mode():
     """test_mode 判定：显式配置 test_mode=true，或缺少 AccessKey。"""
     cfg = get_sms_config()
@@ -85,7 +104,12 @@ def _pct_encode(s):
 
 
 def _aliyun_call(action, biz_params, cfg, version=None):
-    """调用阿里云 RPC 接口（dypnsapi / dysmsapi），返回解析后的 dict。"""
+    """调用阿里云 RPC 接口（dypnsapi / dysmsapi），返回解析后的 dict。
+
+    网络层异常（连不上/超时）→ 原样抛 requests.RequestException（调用方按
+    "暂时不可用"处理）。阿里云明确返回错误（HTTP>=400 且带业务 Code）→ 抛
+    AliyunApiError，携带真实 Code/Message/RequestId，供调用方透传给运维。
+    """
     common = {
         "Format": _ALIYUN_FORMAT,
         "Version": version or _ALIYUN_VERSION_PNVS,
@@ -101,8 +125,74 @@ def _aliyun_call(action, biz_params, cfg, version=None):
     url = "https://{}?{}".format(cfg.get("endpoint", "dypnsapi.aliyuncs.com"),
                                  urllib.parse.urlencode(params))
     resp = requests.get(url, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    code = str(body.get("Code", ""))
+    # 阿里云对网关级错误（鉴权/访问策略/签名）返回 4xx + Code：抛出，让调用方
+    # 拿到真实原因，而不是被笼统的"暂时不可用"掩盖。
+    if resp.status_code >= 400 and code:
+        raise AliyunApiError(
+            code,
+            body.get("Message", "") or resp.text[:200],
+            request_id=body.get("RequestId", ""),
+            http_status=resp.status_code,
+        )
+    if resp.status_code >= 400 and not code:
+        # 4xx/5xx 但没解析出业务 Code（如 HTML 错误页）：也视为接口错误
+        raise AliyunApiError(
+            f"HTTP_{resp.status_code}",
+            resp.text[:200],
+            request_id="",
+            http_status=resp.status_code,
+        )
+    return body
+
+
+# 已知阿里云短信/鉴权错误码 → 面向运维的可操作提示。
+# 命中这些"配置类"错误时，重试无用，直接告诉管理员该做什么。
+_KNOWN_ALIYUN_ERRORS = {
+    "InvalidAccessKeyId.AccessPolicyDenied":
+        "阿里云 AccessKey 被「网络访问控制」策略拒绝：服务器出口 IP 不在该 "
+        "AccessKey 的 IP 白名单内。请让管理员到 阿里云 RAM 控制台 → 该用户/角色 "
+        "→ 网络访问策略，把本服务器出口 IP 加入允许网段，或换一个不受该策略限制的 "
+        "AccessKey。此为持续性问题，重试不会恢复。",
+    "AccessPolicyDenied":
+        "阿里云 AccessKey 被「网络访问控制」策略拒绝（出口 IP 不在白名单）。"
+        "请到 RAM 控制台调整该 AccessKey 的 IP 白名单，或更换 AccessKey。",
+    "InvalidAccessKeyId.NotFound":
+        "阿里云 AccessKey 不存在（可能已被删除）。请核对 config/sms.json 里的 "
+        "access_key_id / access_key_secret。",
+    "InvalidAccessKeyId.Inactive":
+        "阿里云 AccessKey 已禁用。请到 RAM 控制台启用该 AccessKey 或更换。",
+    "InvalidSignature.SignatureDoesNotMatch":
+        "阿里云签名校验失败：access_key_secret 可能填错。请核对 config/sms.json。",
+    "isv.SMS_SIGNATURE_ILLEGAL":
+        "短信签名非法：sign_name 未通过审核或与签名管理里的名称不一致。请到 "
+        "阿里云短信服务「签名管理」核对签名名称。",
+    "isv.SMS_TEMPLATE_ILLEGAL":
+        "短信模板非法：template_code 无效或已变更。请核对「模板管理」里的模板 CODE。",
+    "isv.BUSINESS_LIMIT_CONTROL":
+        "触发阿里云流控限制（单位时间发送超限）。请稍后再试。",
+    "isv.DAY_LIMIT": "该手机号当日发送已达上限。",
+    "isv.MOBILE_NUMBER_ILLEGAL":
+        "手机号非法：请确认发送的手机号格式正确（11 位大陆手机号）。",
+    "isv.MOBILE_NUMBER_SIGNS_NOT_MATCH":
+        "运营商侧手机号与签名不匹配，短信被拦截。请核对签名归属。",
+}
+
+
+def _friendly_sms_error(err):
+    """把 AliyunApiError 翻译成面向用户/运维的可读提示（未命中则透传原文）。"""
+    if isinstance(err, AliyunApiError):
+        return _KNOWN_ALIYUN_ERRORS.get(
+            err.code,
+            f"短信发送失败：{err.message}（Code={err.code}）",
+        )
+    return "短信发送失败，请稍后重试"
 
 
 # ── 本地验证码存储（aliyun_sms 模式） ──────────────────────────────────────
@@ -206,9 +296,14 @@ def _send_sms_standard(phone, cfg):
             print(f"[SMS] SendSms 成功 phone={phone} bizId={result.get('BizId', '')}")
             return True, "验证码已发送，5 分钟内有效，请查收短信"
         err_code = str(result.get("Code", ""))
-        print(f"[SMS] SendSms 失败 phone={phone} Code={err_code} "
-              f"Message={result.get('Message', '')}")
-        return False, "短信发送失败，请稍后重试"
+        err_msg = result.get("Message", "")
+        print(f"[SMS] SendSms 失败 phone={phone} Code={err_code} Message={err_msg}")
+        # 200 + 业务 Code（签名/模板/手机号/流控等）：透传真实原因
+        return False, _KNOWN_ALIYUN_ERRORS.get(
+            err_code, f"短信发送失败：{err_msg}（Code={err_code}）")
+    except AliyunApiError as e:
+        print(f"[SMS] 阿里云接口错误: {e}")
+        return False, _friendly_sms_error(e)
     except requests.RequestException as e:
         print(f"[SMS] 发送异常: {e}")
         return False, "短信服务暂时不可用，请稍后重试"
@@ -230,6 +325,9 @@ def _send_pnvs(phone, cfg):
         if code == "OK" or "Code" not in result:
             return True, "验证码已发送，请查收短信"
         return False, result.get("Message", f"发送失败（Code={code}）")
+    except AliyunApiError as e:
+        print(f"[SMS] 阿里云接口错误: {e}")
+        return False, _friendly_sms_error(e)
     except requests.RequestException as e:
         print(f"[SMS] 发送异常: {e}")
         return False, "短信服务暂时不可用，请稍后重试"
@@ -252,6 +350,9 @@ def _verify_pnvs(phone, code, cfg):
             # 无 VerifyCode 字段时，以无错误码视为通过
             return True, "验证码正确"
         return False, result.get("Message", "验证码错误")
+    except AliyunApiError as e:
+        print(f"[SMS] 阿里云接口错误: {e}")
+        return False, _friendly_sms_error(e)
     except requests.RequestException as e:
         print(f"[SMS] 校验异常: {e}")
         return False, "验证码校验服务暂时不可用，请稍后重试"
