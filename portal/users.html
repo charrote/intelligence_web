@@ -122,7 +122,7 @@
     <div class="form-group">
       <label>所属域（可访问范围）</label>
       <div id="mu_domains" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;max-height:180px;overflow-y:auto"></div>
-      <div id="muDomainsHint" style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域；勾选后仅可访问所选域。域访问授权统一在系统主域管理</div>
+      <div id="muDomainsHint" style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域（私有域除外）；勾选后仅可访问所选域。私有域仅能在此处授权。域访问授权统一在系统主域管理</div>
     </div>
     <input type="hidden" id="mu_user_id">
     <div id="panelFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px;margin-top:8px"></div>
@@ -149,7 +149,7 @@
       <div class="form-group">
         <label>所属域（可访问范围）</label>
         <div id="batchDomains" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;max-height:200px;overflow-y:auto"></div>
-        <div style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域（清空限制）；勾选后仅可访问所选域</div>
+        <div style="font-size:11px;color:var(--gray-400);margin-top:4px">不勾选 = 可访问全部启用域（私有域除外，清空限制）；勾选后仅可访问所选域</div>
       </div>
       <div id="batchFeedback" style="display:none;padding:10px;border-radius:var(--radius);font-size:13px"></div>
     </div>
@@ -209,7 +209,7 @@ function renderDomainCheckboxes(slugs){
     return '<label class="cb-item'+(checked?' checked':'')+'">'
       +'<input type="checkbox" class="mu-domain-cb" value="'+d.slug+'"'+(checked?' checked':'')+'>'
       +'<span class="cb-text">'
-      +'<span class="cb-name"><span class="cb-dot" style="background:'+color+'"></span>'+escapeHtml(d.name||d.slug)+'</span>'
+      +'<span class="cb-name"><span class="cb-dot" style="background:'+color+'"></span>'+escapeHtml(d.name||d.slug)+(d.private ? '<span style="font-size:10px;color:#b45309;border:1px solid #f0c078;border-radius:3px;padding:0 4px;margin-left:4px">私有</span>' : '')+'</span>'
       +'<span class="cb-code">'+escapeHtml(d.slug)+'</span>'
       +'</span></label>';
   }).join('') + '</div>';
@@ -296,8 +296,8 @@ function isBuiltinAdminUser(u){
 
 var ROLE_HINT_NORMAL = '可分配多个角色，权限取所有角色的并集';
 var ROLE_HINT_LOCKED = '内置管理员：拥有全部角色权限（满权限），不可修改';
-var DOMAIN_HINT_NORMAL = '不勾选 = 可访问全部启用域；勾选后仅可访问所选域。域访问授权统一在系统主域管理';
-var DOMAIN_HINT_LOCKED = '内置管理员：可访问全部启用域（满权限），不可修改';
+var DOMAIN_HINT_NORMAL = '不勾选 = 可访问全部启用域（私有域除外）；勾选后仅可访问所选域。私有域仅能在此处授权。域访问授权统一在系统主域管理';
+var DOMAIN_HINT_LOCKED = '内置管理员：可访问全部启用域（含私有域，满权限），不可修改';
 
 function setBuiltinAdminLock(locked){
   var tip = document.getElementById('builtinAdminTip');
@@ -446,7 +446,7 @@ function deleteUser(id) {
 }
 
 function domainLabel(slugs) {
-  if (!Array.isArray(slugs) || !slugs.length) return '<span style="color:var(--gray-400)">全部启用域</span>';
+  if (!Array.isArray(slugs) || !slugs.length) return '<span style="color:var(--gray-400)">全部启用域（私有除外）</span>';
   return slugs.map(function(s){
     var d = allDomains.find(function(x){ return x.slug === s; });
     var color = d ? (d.theme_color || 'var(--gray-400)') : 'var(--gray-400)';
@@ -507,7 +507,7 @@ function renderBatchDomainCheckboxes(slugs){
     return '<label class="cb-item'+(checked?' checked':'')+'">'
       +'<input type="checkbox" class="batch-domain-cb" value="'+d.slug+'"'+(checked?' checked':'')+'>'
       +'<span class="cb-text">'
-      +'<span class="cb-name"><span class="cb-dot" style="background:'+color+'"></span>'+escapeHtml(d.name||d.slug)+'</span>'
+      +'<span class="cb-name"><span class="cb-dot" style="background:'+color+'"></span>'+escapeHtml(d.name||d.slug)+(d.private ? '<span style="font-size:10px;color:#b45309;border:1px solid #f0c078;border-radius:3px;padding:0 4px;margin-left:4px">私有</span>' : '')+'</span>'
       +'<span class="cb-code">'+escapeHtml(d.slug)+'</span>'
       +'</span></label>';
   }).join('') + '</div>';
@@ -552,7 +552,7 @@ function applyBatch() {
     return r.json().then(function(res){
       var ok = res.updated || 0;
       var fail = (res.failed || []).length;
-      var label = domains.length ? domains.join(', ') : '全部启用域';
+      var label = domains.length ? domains.join(', ') : '全部启用域（私有域除外）';
       if (fail) {
         fb.style.display = 'block'; fb.style.background = '#fff7ed'; fb.style.color = 'var(--orange, #c2410c)';
         fb.textContent = '成功 ' + ok + ' 人，失败 ' + fail + ' 人（' + (res.failed||[]).map(function(f){return 'ID '+f.id}).join('、') + '）';

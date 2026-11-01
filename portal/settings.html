@@ -621,7 +621,7 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
     <div class="settings-section">
       <h2><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>情报域管理</h2>
       <div class="section-body">
-        <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">启用/停用情报域。动态域可在线新建（自动分配端口、创建数据库与搜索索引），删除仅支持"归档"——数据先备份，可恢复。</p>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">启用/停用情报域。开启「私有」后，注册用户默认不能访问该域（域切换器中不显示，接口返回 403），只能在「用户管理」中逐个授权。动态域可在线新建（自动分配端口、创建数据库与搜索索引），删除仅支持"归档"——数据先备份，可恢复。</p>
         <div style="margin-bottom:16px">
           <button class="btn" onclick="toggleNewDomainForm()" id="btnNewDomain" style="background:#3b4f8c;color:#fff;border:none;padding:8px 16px;border-radius:4px;font-size:13px;cursor:pointer">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建域
@@ -1500,6 +1500,7 @@ async function loadDomainController() {
       var enabled = d.enabled !== false;
       var status = d.status || (d.dynamic ? 'started' : 'legacy');
       var isDynamic = !!d.dynamic;
+      var isPrivate = !!d.private;
       var isArchived = status === 'archived';
       var statusClass, statusText;
       if (isArchived) { statusClass = 'status-off'; statusText = '已归档'; }
@@ -1529,7 +1530,7 @@ async function loadDomainController() {
       html += '<div class="domain-card">'
         + '<div class="domain-color" style="background:' + color + '"></div>'
         + '<div class="domain-body">'
-          + '<div class="domain-name">' + escapeHtml(d.name) + (isDynamic ? ' <span style="font-size:10px;color:var(--gray-400);border:1px solid var(--gray-300);border-radius:3px;padding:0 4px;vertical-align:1px">动态</span>' : '') + '</div>'
+          + '<div class="domain-name">' + escapeHtml(d.name) + (isDynamic ? ' <span style="font-size:10px;color:var(--gray-400);border:1px solid var(--gray-300);border-radius:3px;padding:0 4px;vertical-align:1px">动态</span>' : '') + (isPrivate ? ' <span style="font-size:10px;color:#b45309;border:1px solid #f0c078;border-radius:3px;padding:0 4px;vertical-align:1px">私有</span>' : '') + '</div>'
           + '<div class="domain-meta">'
             + '<span>端口 ' + d.port + '</span>'
             + (d.description ? '<span>' + escapeHtml(d.description) + '</span>' : '')
@@ -1538,11 +1539,16 @@ async function loadDomainController() {
         + '</div>'
         + '<div class="domain-toggle">'
           + (actions ? '<div style="margin-right:8px">' + actions + '</div>' : '')
-          + (isArchived ? '' : '<label class="toggle">'
+          + (isArchived ? '' : '<span style="font-size:11px;color:var(--gray-500)">启用</span><label class="toggle">'
             + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' onchange="toggleDomain(' + d.port + ', this.checked)">'
             + '<span class="slider"></span>'
           + '</label>')
           + '<span class="domain-status ' + statusClass + '">' + statusText + '</span>'
+          + (isArchived ? '' : '<span style="font-size:11px;color:var(--gray-500);margin-left:8px" title="私有域：注册用户默认不能访问，只能在用户管理中授权">私有</span><label class="toggle" title="开启后注册用户默认不能访问该域，需在用户管理中授权">'
+            + '<input type="checkbox" ' + (isPrivate ? 'checked' : '') + ' onchange="toggleDomainPrivate(' + d.port + ', this.checked)">'
+            + '<span class="slider"></span>'
+          + '</label>')
+          + '<span class="domain-status ' + (isPrivate ? 'status-off' : 'status-on') + '">' + (isPrivate ? '私有' : '公开') + '</span>'
         + '</div>'
       + '</div>';
     });
@@ -1569,6 +1575,26 @@ async function toggleDomain(port, enabled) {
     if (r.ok) {
       showToast('域状态已更新', 'success');
       setTimeout(loadDomainController, enabled ? 3000 : 1500); // watcher 需要时间启动容器
+    } else {
+      showToast(res.error || '操作失败', 'error');
+      loadDomainController();
+    }
+  } catch(e) {
+    showToast('网络错误', 'error');
+    loadDomainController();
+  }
+}
+
+async function toggleDomainPrivate(port, priv) {
+  try {
+    var r = await apiFetch(apiBase() + '/api/system/domains/' + port + '/private', {
+      method: 'PUT',
+      body: JSON.stringify({ private: priv }),
+    });
+    var res = await r.json();
+    if (r.ok) {
+      showToast(priv ? '已设为私有域：注册用户默认不能访问，请在用户管理中授权' : '已设为公开域', 'success');
+      loadDomainController();
     } else {
       showToast(res.error || '操作失败', 'error');
       loadDomainController();

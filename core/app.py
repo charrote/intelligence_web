@@ -960,6 +960,51 @@ def create_app(project_root, spec):
             return [d.strip() for d in dom.split(',') if d.strip()]
         return [str(d).strip() for d in dom if str(d).strip()]
 
+    # Private-domain slug cache: the registry (config/domains.json) is tiny and
+    # rarely changes, so stat() it per request and only re-parse on mtime change.
+    _private_slugs_cache = {'mtime': None, 'slugs': set()}
+
+    def _private_domain_slugs():
+        """Slugs of domains whose registry entry has private=true.
+
+        A private domain is NOT part of the default grant: even a user whose
+        empty whitelist means "all enabled domains" cannot access it. Only an
+        explicit grant in user management (users.domains contains the slug)
+        or the admin role opens a private domain.
+        """
+        try:
+            mtime = os.path.getmtime(_DOMAINS_FILE)
+        except OSError:
+            return set()
+        if _private_slugs_cache['mtime'] != mtime:
+            try:
+                with open(_DOMAINS_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                _private_slugs_cache['slugs'] = {
+                    d.get('slug') for d in data.get('domains', []) if d.get('private')}
+                _private_slugs_cache['mtime'] = mtime
+            except Exception:
+                pass
+        return _private_slugs_cache['slugs']
+
+    def _check_private_grant(actor, requested_slugs):
+        """Privilege guard for user management: granting a private domain to a
+        user requires the actor to hold it themselves (admin always may).
+
+        Without this, any users.manage holder could hand out private-domain
+        access they do not have. Returns a 403 response tuple or None.
+        """
+        if actor.get('role') == 'admin':
+            return None
+        priv = _private_domain_slugs()
+        if not priv:
+            return None
+        actor_domains = _normalize_domains(actor.get('domains'))
+        missing = [s for s in requested_slugs if s in priv and s not in actor_domains]
+        if missing:
+            return (jsonify({'error': '无权授权私有域: ' + ', '.join(missing)}), 403)
+        return None
+
     def _in_user_domain(actor, target_user_id, target_domains):
         """Scope guard for user management: may `actor` see/act on the user with
         `target_user_id` given their domain whitelist?
@@ -1031,6 +1076,13 @@ def create_app(project_root, spec):
         if user.get('role') == 'admin':
             return None
         domains = user.get('domains') or []
+        # Private domains are never covered by the default grant: an empty
+        # whitelist ("all enabled domains") does NOT include them, and a
+        # non-empty whitelist only includes them if explicitly granted there.
+        if spec['slug'] in _private_domain_slugs():
+            if spec['slug'] not in domains:
+                return jsonify({'error': '「%s」为私有域，请联系管理员在用户管理中授权' % spec['title_prefix']}), 403
+            return None
         if not domains:
             return None  # legacy token / user without a whitelist: allow
         if spec['slug'] not in domains:
@@ -1749,7 +1801,9 @@ def create_app(project_root, spec):
         For the domain switcher: admin sees every enabled domain; a user with a
         non-empty domain whitelist sees only the enabled domains in their list;
         a legacy user (empty whitelist) sees all enabled domains (backward
-        compatible — matches the per-domain API gating rule).
+        compatible — matches the per-domain API gating rule). Private domains
+        are excluded for everyone except admins and users explicitly granted
+        the slug (the default grant never includes them).
         """
         data = _load_domains()
         enabled = [d for d in data.get('domains', []) if d.get('enabled', True)]
@@ -1762,6 +1816,10 @@ def create_app(project_root, spec):
         if user.get('role') == 'admin':
             return jsonify({'domains': enabled})
         domains = user.get('domains') or []
+        priv = _private_domain_slugs()
+        # Drop private domains the user was not explicitly granted.
+        enabled = [d for d in enabled
+                   if d.get('slug') not in priv or d.get('slug') in domains]
         if not domains:
             return jsonify({'domains': enabled})
         return jsonify({'domains': [d for d in enabled if d.get('slug') in domains]})
@@ -1791,6 +1849,26 @@ def create_app(project_root, spec):
                 return jsonify({'success': True, 'port': port, 'enabled': new_enabled})
         return jsonify({'error': '域不存在'}), 404
 
+    @app.route('/api/system/domains/<int:port>/private', methods=['PUT'])
+    @require_permission('settings.manage')
+    def set_domain_private(port):
+        """Mark a domain private or public by port (admin endpoint).
+
+        A private domain is hidden from the domain switcher and blocked at the
+        per-domain API gate for every non-admin user — including users whose
+        empty whitelist normally means "all enabled domains". Only an explicit
+        grant in user management (or the admin role) opens it.
+        """
+        body = request.json or {}
+        new_private = bool(body.get('private', False))
+        data = _load_domains()
+        for d in data.get('domains', []):
+            if d['port'] == port:
+                d['private'] = new_private
+                _save_domains(data)
+                return jsonify({'success': True, 'port': port, 'private': new_private})
+        return jsonify({'error': '域不存在'}), 404
+
     # ------------------------------------------------------------------
     # Dynamic domain lifecycle (create / archive / restore)
     # ------------------------------------------------------------------
@@ -1807,7 +1885,7 @@ def create_app(project_root, spec):
         Registry-level fields (name, description) are accepted alongside
         spec fields but never written into spec.json.
         """
-        registry_only = {'name', 'description'}
+        registry_only = {'name', 'description', 'private'}
         allowed = {
             'slug', 'port', 'title_prefix', 'scout_label', 'agent_names',
             'theme_color', 'inbox_rel', 'db_filename', 'domain_key',
@@ -1930,6 +2008,7 @@ def create_app(project_root, spec):
             'theme_color': spec['theme_color'],
             'description': payload.get('description', ''),
             'enabled': True,
+            'private': bool(payload.get('private', False)),
             'dynamic': True,
             'status': 'pending_start',
             'db_filename': db_filename,
@@ -2490,6 +2569,11 @@ location /d/{slug}/ {{
                 fields['domains'] = ','.join([str(d) for d in domains if d])
             elif isinstance(domains, str):
                 fields['domains'] = domains
+            # Private domains may only be granted by someone who holds them
+            # (admin always may) — user management is the sole grant path.
+            err = _check_private_grant(token_user, _normalize_domains(fields.get('domains')))
+            if err:
+                return err
         if data.get('role_ids') is not None:
             if not can_manage_roles:
                 return jsonify({'error': '修改角色需要用户管理权限'}), 403
@@ -2590,6 +2674,12 @@ location /d/{slug}/ {{
         # domains (judged by the user's current whitelist, before the change).
         actor = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
         is_admin = bool(actor) and actor.get('role') == 'admin'
+        # Private domains may only be granted by someone who holds them
+        # (admin always may) — user management is the sole grant path.
+        if domains_str and actor is not None:
+            err = _check_private_grant(actor, _normalize_domains(domains_str))
+            if err:
+                return err
         updated_ids, failed = [], []
         for uid in user_ids:
             try:
@@ -2659,6 +2749,11 @@ location /d/{slug}/ {{
             return err
         if isinstance(domains, str):
             domains = [d.strip() for d in domains.split(',') if d.strip()]
+        # Private domains may only be granted by someone who holds them
+        # (admin always may) — user management is the sole grant path.
+        err = _check_private_grant(token_user, _normalize_domains(domains))
+        if err:
+            return err
         # Domain scope: a non-admin may only create users within their own
         # domains, so they can actually see and manage the user they create.
         # (An empty/all-domains whitelist puts the new user out of their scope.)
