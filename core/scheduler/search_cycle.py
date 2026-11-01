@@ -214,8 +214,13 @@ def _is_stale(published_date: str, window_days: int, now: datetime = None) -> bo
 
 # ── LLM calls ───────────────────────────────────────────────
 
-def _build_keywords(context: dict) -> list:
-    """LLM call ①: construct 3-5 search keywords from project context."""
+def _build_keywords(context: dict) -> tuple:
+    """LLM call ①: construct 3-5 search keywords from project context.
+
+    返回 (keywords, error)：LLM 调用失败 / 输出无法解析时 keywords 为空、
+    error 非空。调用方据此区分「采集异常」（infra 故障，应重试）与
+    「搜了但没结果」（正常无新料）。
+    """
     from core.scheduler.llm_client import call_llm, parse_json_from_response
 
     system_prompt = (
@@ -240,22 +245,25 @@ def _build_keywords(context: dict) -> list:
 
     result = call_llm(system_prompt, user_prompt, temperature=0.3, max_tokens=500, timeout=30)
     if not result.get("ok"):
-        logger.warning(f"[search_cycle] LLM keyword build failed: {result.get('error', '')}")
-        return []
+        err = result.get("error", "") or "LLM 调用失败"
+        logger.warning(f"[search_cycle] LLM keyword build failed: {err}")
+        return [], err
 
     parsed, ok = parse_json_from_response(result["raw"])
     if ok and isinstance(parsed, list):
-        return [str(k).strip() for k in parsed if str(k).strip()][:5]
+        kws = [str(k).strip() for k in parsed if str(k).strip()][:5]
+        return kws, ("" if kws else "LLM 未输出有效关键词")
 
     # Fallback: extract JSON array from raw
     m = re.search(r"\[([^\]]+)\]", result["raw"], re.DOTALL)
     if m:
         try:
             items = json.loads("[" + m.group(1) + "]")
-            return [str(k).strip() for k in items if str(k).strip()][:5]
+            kws = [str(k).strip() for k in items if str(k).strip()][:5]
+            return kws, ("" if kws else "LLM 未输出有效关键词")
         except Exception:
             pass
-    return []
+    return [], f"关键词解析失败: {(result.get('raw') or '')[:80]}"
 
 def _judge_and_extract(content: str, context: dict, max_chars: int = 400,
                        published_date: str = "", recency_days: int = 0) -> dict:
@@ -337,12 +345,15 @@ def _judge_and_extract(content: str, context: dict, max_chars: int = 400,
 
 # ── Search & Read ───────────────────────────────────────────
 
-def _tavily_search(query: str, max_results: int = 5, recency_days: int = 0) -> list:
+def _tavily_search(query: str, max_results: int = 5, recency_days: int = 0,
+                   error_sink=None) -> list:
     """Search via Tavily API. Returns [{title, url, content, published_date}].
 
     recency_days > 0 时按时效窗口硬过滤：
     1/7/30/365 天 → Tavily time_range（day/week/month/year），
     其余天数 → start_date/end_date。
+    error_sink 非空时，API 调用异常会追加 "query: error" 记录
+    （调用方据此判断「搜索接口故障」与「正常无结果」）。
     """
     from config import get_tavily_config
     cfg = get_tavily_config()
@@ -384,6 +395,8 @@ def _tavily_search(query: str, max_results: int = 5, recency_days: int = 0) -> l
         ]
     except Exception as e:
         logger.warning(f"[search_cycle] Tavily search failed for '{query[:40]}': {e}")
+        if error_sink is not None:
+            error_sink.append(f"{query[:40]}: {e}")
         return []
 
 def _read_content(url: str) -> dict:
@@ -950,6 +963,14 @@ def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
 
 # ── Main cycle ──────────────────────────────────────────────
 
+def _touch_project(db_path, pid):
+    """记录项目 last_search_at（采集完成标记）。失败仅告警，不阻塞采集。"""
+    try:
+        from core.project import touch_project_last_search
+        touch_project_last_search(db_path, pid)
+    except Exception as e:
+        logger.warning(f"[search_cycle] touch last_search_at failed for project {pid}: {e}")
+
 def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
     """Execute one search cycle for the current domain.
 
@@ -1043,12 +1064,13 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
             instruction = project.get("instruction", "")
             target_type = project.get("target_type", "")
 
-            # 进入即记时：本次 run 对该项目的采集"已发生"，下轮到期判定以此为基准
-            # （即使本轮没采到新情报，也不该在下一个 tick 重复触发）
-            try:
-                touch_project_last_search(db_path, pid)
-            except Exception as e:
-                logger.warning(f"[search_cycle] touch last_search_at failed for project {pid}: {e}")
+            # 采集异常跟踪：关键词 LLM 失败 / 搜索接口全部失败 → infra_fail。
+            # infra_fail 时不记 last_search_at（项目保持到期，下个小时 tick 自动重试），
+            # 避免一次瞬时故障烧掉整个每日配额、造成「整天无新情报」。
+            kw_error = ""
+            tavily_errs = []
+            n_tavily_calls = 0
+            n_candidates = 0
 
             # Collect indicators from datasources
             # get_projects 只返回 datasource_count，需按项目单独查关联数据源
@@ -1067,6 +1089,8 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 indicators.extend([i.strip() for i in ind_raw.split(",") if i.strip()])
 
             if not target_name:
+                # 配置不完整的项目：保持旧行为（记时，避免每个 tick 重复进入）
+                _touch_project(db_path, pid)
                 continue
 
             # 时效窗口：项目频率 → 天数（hourly=1 / daily=7 / weekly=30 / monthly=365，
@@ -1117,12 +1141,14 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 )
                 llm_calls += llm_used
                 total_new += project_new
+                _touch_project(db_path, pid)
                 project_summaries.append({
                     "project_id": pid,
                     "project_name": project.get("name", ""),
                     "target_name": target_name,
                     "new_intel": project_new,
                     "source_only": True,
+                    "infra_fail": False,
                 })
                 continue
 
@@ -1151,6 +1177,7 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                     for item in feed_items:
                         if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
                             break
+                        n_candidates += 1
                         _process_candidate(item, context, recency_days, state, auth_map)
 
             # 高频项目（hourly/daily）且 feed 通道可用 → 优先走 feed，跳过全网搜索
@@ -1164,12 +1191,15 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                     f"[search_cycle] project {pid} 高频项目且 feed 可用 → 本轮仅走 feed 通道"
                 )
                 llm_calls, total_new = state["llm_calls"], state["total_new"]
+                # feed 通道可用 = 采集正常发生 → 记时（即使本轮无新料，下轮按频率到期）
+                _touch_project(db_path, pid)
                 project_summaries.append({
                     "project_id": pid,
                     "project_name": project.get("name", ""),
                     "target_name": target_name,
                     "new_intel": state["project_new"],
                     "stale_skips": state["stale_skips"],
+                    "infra_fail": False,
                 })
                 continue
 
@@ -1178,16 +1208,22 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
             if state["llm_calls"] >= max_llm_calls:
                 break
             state["llm_calls"] += 1
-            keywords = _build_keywords(context)
+            keywords, kw_error = _build_keywords(context)
             keywords = keywords[:max_keywords]
             if not keywords:
                 llm_calls, total_new = state["llm_calls"], state["total_new"]
+                # 关键词生成失败（LLM 故障）→ 采集异常：不记时，保持到期，下 tick 重试
+                logger.warning(
+                    f"[search_cycle] project {pid} 关键词生成失败，本轮跳过（保持到期待重试）: {kw_error}"
+                )
                 project_summaries.append({
                     "project_id": pid,
                     "project_name": project.get("name", ""),
                     "target_name": target_name,
-                    "new_intel": state["project_new"],
+                    "new_intel": 0,
                     "stale_skips": state["stale_skips"],
+                    "infra_fail": True,
+                    "keyword_error": kw_error[:120],
                 })
                 continue
 
@@ -1195,7 +1231,9 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
                     break
 
-                results = _tavily_search(kw, max_results=results_per_kw, recency_days=recency_days)
+                n_tavily_calls += 1
+                results = _tavily_search(kw, max_results=results_per_kw, recency_days=recency_days,
+                                          error_sink=tavily_errs)
                 if not results:
                     continue
 
@@ -1230,23 +1268,45 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                             cand["content"] = read["content"]
                         if read.get("published_date"):
                             cand["published_date"] = cand["published_date"] or read["published_date"]
+                    n_candidates += 1
                     _process_candidate(cand, context, recency_days, state, auth_map)
 
             llm_calls, total_new = state["llm_calls"], state["total_new"]
+            # 采集异常判定：搜索接口全部调用失败且无任何候选进入处理
+            # （部分失败但仍有结果 → 正常；全部有结果但都被过滤 → 正常无新料）
+            project_infra_fail = len(tavily_errs) > 0 and len(tavily_errs) >= n_tavily_calls and n_candidates == 0
+            if project_infra_fail:
+                logger.warning(
+                    f"[search_cycle] project {pid} 搜索接口全部失败（{len(tavily_errs)}/{n_tavily_calls}），"
+                    f"保持到期待下 tick 重试: {tavily_errs[0][:100]}"
+                )
+            else:
+                # 采集正常发生（无论有无新料）→ 记时，下轮按频率到期
+                _touch_project(db_path, pid)
             project_summaries.append({
                 "project_id": pid,
                 "project_name": project.get("name", ""),
                 "target_name": target_name,
                 "new_intel": state["project_new"],
                 "stale_skips": state["stale_skips"],
+                "infra_fail": project_infra_fail,
             })
 
         logger.info(
             f"[search_cycle] domain={db_slug} projects={len(project_summaries)} "
             f"new_intel={total_new} llm_calls={llm_calls}"
         )
+        # 整轮所有项目都是采集异常（关键词生成/搜索接口故障）且零产出
+        # → 标记 degraded 进调度履历（不再被 success 掩盖）；
+        # 异常项目未记 last_search_at，下一个小时 tick 自动重试
+        if (total_new == 0 and project_summaries
+                and all(s.get("infra_fail") for s in project_summaries)):
+            acc["status"] = "degraded"
+            acc["error_msg"] = (
+                f"全部 {len(project_summaries)} 个项目采集异常（关键词生成或搜索接口失败），"
+                f"无候选进入相关性判断；项目保持到期，下轮 tick 自动重试"
+            )
         acc.update({
-            "status": "success",
             "projects_processed": len(project_summaries),
             "new_intel": total_new,
             "llm_calls": llm_calls,

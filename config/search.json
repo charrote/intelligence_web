@@ -2,7 +2,7 @@
   "enabled": true,
   "max_per_domain": 20,
   "max_keywords_per_project": 10,
-  "max_llm_calls_per_cycle": 50,
+  "max_llm_calls_per_cycle": 100,
   "results_per_keyword": 5,
   "content_max_chars": 600,
   "max_items_per_source": 10,
