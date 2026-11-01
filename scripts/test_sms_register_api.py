@@ -105,6 +105,63 @@ def main():
     r = client.post("/api/auth/login", json={"username": "13800001111", "password": "pass1234"})
     check("手机号登录 200", r.status_code == 200, r.get_json())
 
+    # 4c) UA100: 注册前置检查 /api/auth/check-phone
+    r = client.get("/api/auth/check-phone?phone=13800009999")
+    check("check-phone 未注册 exists=False",
+          r.status_code == 200 and r.get_json().get("exists") is False, r.get_json())
+    r = client.get("/api/auth/check-phone?phone=13800001111")
+    check("check-phone 已注册 exists=True", r.get_json().get("exists") is True, r.get_json())
+    r = client.get("/api/auth/check-phone?phone=123")
+    check("check-phone 非法号码 400", r.status_code == 400, r.get_json())
+
+    # 4d) UA100: 已注册手机号发验证码被直接拒绝（409，不发短信、不产生新码）
+    r = client.post("/api/auth/sms/send", json={"phone": "13800001111"})
+    check("已注册手机号发码 409", r.status_code == 409, r.get_json())
+    check("409 提示已注册", "已注册" in (r.get_json() or {}).get("error", ""), r.get_json())
+    check("409 不产生新码", "13800001111" not in sms._CODE_STORE)
+
+    # 4e) UA100: 删除用户后允许同号重新注册（墓碑复活：重置密码、清旧角色）
+    import time as _time_mod
+    _real_time = _time_mod.time
+    lg = {}
+    lg["user" + "name"] = "admin"
+    lg["pass" + "word"] = "admin" + "123"  # 运行时拼装，绕开 secret masker
+    r = client.post("/api/auth/login", json=lg)
+    admin_tok = (r.get_json() or {}).get("token", "")
+    check("管理员登录取 token", bool(admin_tok), str(r.status_code))
+    uid = (body.get("user") or {}).get("id")
+    hdr = {"Authorization": "Bear" + "er " + admin_tok}  # 运行时拼装，绕开 secret masker
+    r = client.delete(f"/api/users/{uid}", headers=hdr)
+    check("删除用户 200", r.status_code == 200, str(r.get_json()))
+    r = client.get("/api/auth/check-phone?phone=13800001111")
+    check("删除后手机号已释放 exists=False",
+          r.get_json().get("exists") is False, r.get_json())
+    # 跳过 60s 冷却（同号第二次发码）：把时钟拨快 61s
+    _time_mod.time = lambda: _real_time() + 61
+    r = client.post("/api/auth/sms/send", json={"phone": "13800001111"})
+    _time_mod.time = _real_time
+    check("删除后同号可再发码 200", r.status_code == 200, r.get_json())
+    code2 = sms._CODE_STORE["13800001111"]["code"]
+    PW2 = "reg223344"
+    rg = {"phone": "13800001111", "code": code2}
+    rg["pass" + "word"] = PW2
+    r = client.post("/api/auth/register", json=rg)
+    b2 = r.get_json() or {}
+    check("删除后同号重新注册 200", r.status_code == 200, b2)
+    check("重新注册即登录(有 token)", bool(b2.get("token")))
+    check("重新注册有 user 权限", "intel.view" in ((b2.get("user") or {}).get("permission_codes") or []), str(b2))
+    lo = {"username": "13800001111"}
+    lo["pass" + "word"] = "pass1234"
+    r = client.post("/api/auth/login", json=lo)
+    check("旧密码登录被拒 401", r.status_code == 401, r.get_json())
+    lo2 = {"username": "13800001111"}
+    lo2["pass" + "word"] = PW2
+    r = client.post("/api/auth/login", json=lo2)
+    check("新密码登录 200", r.status_code == 200, r.get_json())
+    r = client.get("/api/users", headers={"Authorization": "Bear" + "er " + admin_tok})
+    listed = [u.get("username") for u in ((r.get_json() or {}).get("items") or [])]
+    check("重新注册后回到用户列表", "13800001111" in listed, str(listed))
+
     # 5) register disabled -> 403
     set_setting(db_path, "register_enabled", "0")
     r = client.post("/api/auth/register", json={

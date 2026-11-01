@@ -2833,13 +2833,37 @@ location /d/{slug}/ {{
     _SMS_COOLDOWN_SEC = 60        # 同号两次发码最小间隔
     _SMS_MAX_PER_DAY = 10         # 同号每日发码上限
 
+    def _phone_occupied(db_path, phone):
+        """手机号是否已被「启用中」的用户占用（用户名或手机号命中均算）。
+
+        已删除用户（软删墓碑 enabled=0）不算占用——UA100：删除后允许同号重新注册。
+        """
+        for u in (get_user_by_phone(db_path, phone), get_user_by_username(db_path, phone)):
+            if u is not None and u.get('enabled'):
+                return True
+        return False
+
+    @app.route('/api/auth/check-phone')
+    def auth_check_phone():
+        """注册前置检查：手机号是否已被占用（供注册页在点击发送验证码前调用）。"""
+        phone = (request.args.get('phone') or '').strip()
+        if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
+            return jsonify({'error': '请输入有效的手机号码'}), 400
+        return jsonify({'exists': _phone_occupied(db_path, phone)})
+
     @app.route('/api/auth/sms/send', methods=['POST'])
     def auth_sms_send():
-        """发送手机验证码（限频：同号 60s 冷却 + 每日 10 次）。"""
+        """发送手机验证码（限频：同号 60s 冷却 + 每日 10 次）。
+
+        UA100: 发码前先查手机号是否已被占用（已注册且启用的用户）——占用则
+        直接 409 提示，不再浪费一条短信。已删除用户（enabled=0 墓碑）不算占用。
+        """
         data = request.json or {}
         phone = (data.get('phone') or '').strip()
         if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
             return jsonify({'error': '请输入有效的手机号码'}), 400
+        if _phone_occupied(db_path, phone):
+            return jsonify({'error': '该手机号已注册，请直接登录'}), 409
         import time as _time
         now_ts = _time.time()
         today = datetime.now().strftime('%Y-%m-%d')
@@ -2889,10 +2913,9 @@ location /d/{slug}/ {{
         # 用户名即手机号（UA100：不再单独设置用户名）
         username = phone
 
-        # 用户名 / 手机号唯一性（友好提示）
-        if get_user_by_username(db_path, username):
-            return jsonify({'error': '该手机号已被占用，请直接登录'}), 409
-        if get_user_by_phone(db_path, phone):
+        # 用户名 / 手机号唯一性（友好提示）。只拦启用中的用户；
+        # 已删除用户（enabled=0 墓碑）放行，由 create_user_with_phone 复活该行。
+        if _phone_occupied(db_path, phone):
             return jsonify({'error': '该手机号已注册，请直接登录'}), 409
 
         # 短信验证码校验（PNVS 真实 / test_mode 本地）

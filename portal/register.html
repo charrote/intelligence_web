@@ -118,6 +118,16 @@ async function sendCode(){
   if(!/^\d{11,15}$/.test(phone)){ showErr('请输入有效的手机号码'); return; }
   const btn = document.getElementById('codeBtn');
   btn.disabled = true;
+  // UA100: 发码前先查手机号是否已注册——已存在直接提示，不发短信、不占发送次数
+  try{
+    const chk = await fetch(API + '/api/auth/check-phone?phone=' + encodeURIComponent(phone));
+    const chkData = await chk.json();
+    if(chk.ok && chkData.exists){
+      showErr('该手机号已注册，请直接登录');
+      btn.disabled = false;
+      return;
+    }
+  }catch(e){ /* 检查失败不阻塞：后端 sms/send 仍会拦截 */ }
   try{
     const res = await fetch(API + '/api/auth/sms/send', {
       method:'POST', headers:{'Content-Type':'application/json'},

@@ -704,15 +704,48 @@ def create_user_with_phone(db_path, username, password, phone, display_name=''):
 
     Returns (user_id, error). user_id is None on error; error is a human
     message string ('', '' when ok, or None when ok).
+
+    UA100: 删除用户是软删（enabled=0 墓碑行）。墓碑不占用手机号/用户名——
+    同号重新注册时复活该行：重置密码、清掉旧角色绑定、重新绑定内置 user 角色、
+    清空旧域授权，等同全新注册用户（保留 id 与历史外键引用）。
     """
     now = datetime.now().isoformat()
     password_hash, salt = _hash_password(password)
     with get_db(db_path) as conn:
-        # Pre-checks (friendly error messages instead of raw UNIQUE violation)
-        if conn.execute('SELECT 1 FROM users WHERE username = ?', (username,)).fetchone():
-            return None, '用户名已存在'
-        if conn.execute('SELECT 1 FROM users WHERE phone = ?', (phone,)).fetchone():
-            return None, '该手机号已注册'
+        # Pre-checks (friendly error messages instead of raw UNIQUE violation).
+        # 只拦截启用中的用户；已删除（enabled=0）的墓碑走下方复活路径。
+        existing_u = conn.execute(
+            'SELECT id, enabled FROM users WHERE username = ?', (username,)).fetchone()
+        existing_p = conn.execute(
+            'SELECT id, enabled FROM users WHERE phone = ?', (phone,)).fetchone()
+        if (existing_u and existing_u['enabled']) or (existing_p and existing_p['enabled']):
+            return None, ('用户名已存在' if (existing_u and existing_u['enabled'])
+                          else '该手机号已注册')
+        tomb = None
+        for row in (existing_p, existing_u):
+            if row is not None and not row['enabled']:
+                tomb = row
+                break
+        if tomb is not None:
+            uid = tomb['id']
+            conn.execute(
+                'UPDATE users SET username = ?, password_hash = ?, salt = ?, '
+                "display_name = ?, remark = '', role = 'user', enabled = 1, "
+                "domains = '', phone = ?, phone_verified = 1, updated_at = ? "
+                'WHERE id = ?',
+                (username.strip(), password_hash, salt, display_name.strip(),
+                 phone.strip(), now, uid)
+            )
+            # 旧角色/域授权随删除一并作废：重新注册 = 全新 user 角色
+            conn.execute('DELETE FROM user_roles WHERE user_id = ?', (uid,))
+            role = conn.execute("SELECT id FROM roles WHERE name='user'").fetchone()
+            if role is not None:
+                conn.execute(
+                    'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+                    (uid, role['id'])
+                )
+            conn.commit()
+            return uid, ''
         try:
             cursor = conn.execute(
                 'INSERT INTO users (username, password_hash, salt, display_name, remark, role, enabled, domains, phone, phone_verified, created_at, updated_at) '
