@@ -812,10 +812,11 @@ function renderPoster(intel, url) {
   dividerY += slackTop; ctaY += slackTop; qrY += slack; contentEnd += slack;
   var H = Math.min(Math.max(contentEnd + GAP_FOOTER + PAD, MIN_H), MAX_H);
 
-  // iOS Safari 画布面积上限约 16M px²，超了 toBlob/toDataURL 会导出空白图。
-  // 超长海报自动降 dpr，保证导出永远可用（1x 的 750 宽仍然清晰）。
-  var MAX_AREA = 16000000;
-  if (W * H * dpr * dpr > MAX_AREA) dpr = Math.max(1, Math.floor(Math.sqrt(MAX_AREA / (W * H))));
+  // 导出安全：① iOS Safari 画布面积上限约 16M px²，超了导出空白；
+  // ② 多数安卓 GPU 单维度上限 4096，超了 toBlob 回调可能永不触发（分享「点了没反应」）。
+  // dpr 同时按面积与单维度收紧（允许低于 1：长海报宁可略糊，不能导不出）。
+  var MAX_AREA = 16000000, MAX_DIM = 4096;
+  dpr = Math.min(dpr, Math.sqrt(MAX_AREA / (W * H)), MAX_DIM / W, MAX_DIM / H);
 
   // ── 第二遍：按最终尺寸绘制
   canvas.width = W * dpr; canvas.height = H * dpr;
@@ -936,12 +937,37 @@ function shareDiag(msg) {
   toast(msg, 5000);
 }
 
+// 把超限画布等比缩小到 maxDim×maxDim 以内（多数设备单维度上限 4096），
+// 长海报直接导出失败时兜底用：宁可略糊，也要给用户一张能发出去的图
+function scaleCanvasFit(canvas, maxDim) {
+  var w = canvas.width, h = canvas.height;
+  var scale = Math.min(1, maxDim / w, maxDim / h);
+  if (scale >= 1) return canvas;
+  var out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(w * scale));
+  out.height = Math.max(1, Math.round(h * scale));
+  out.getContext('2d').drawImage(canvas, 0, 0, out.width, out.height);
+  return out;
+}
+
 // 通用：海报画布 → 系统分享面板（可选微信等 App 直接发送）；不支持/异常回退为下载，并逐分支给出明确提示
 // 单篇分享与批量长海报共用，保证「生成海报 → 系统分享 → 到 App」路径一致
+// 关键：任何分支都必须有可见反馈，绝不静默（此前批量长海报 toBlob 回调不来时点了毫无反应）：
+//  · toBlob 1.5s 内无回调 → 先提示「生成中」（长海报 PNG 导出较慢，避免用户以为点没点上）
+//  · toBlob 回调始终不来（设备画布尺寸超限）→ 15s 强制兜底：缩小画布后下载
+//  · toBlob 同步抛异常（如画布被跨域污染）→ 提示并下载
 function shareCanvasPoster(canvas, filename, title, text) {
-  function fb(reason) {
+  var done = false, tipTimer = null, hardTimer = null;
+  function stopTimers() {
+    if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
+    if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
+  }
+  function fb(reason, srcCanvas) {
+    if (done) return;
+    done = true;
+    stopTimers();
     if (reason) shareDiag(reason);
-    downloadPosterFile(canvas, filename);
+    downloadPosterFile(srcCanvas || canvas, filename);
   }
   // ① 非 HTTPS（非安全上下文）：浏览器根本不暴露 navigator.share
   if (!window.isSecureContext) {
@@ -953,29 +979,42 @@ function shareCanvasPoster(canvas, filename, title, text) {
     fb('当前浏览器不支持系统分享面板（微信内置浏览器、部分手机自带浏览器常见），已改为下载海报。原因：浏览器不支持 [SHARE_API_MISSING]');
     return;
   }
-  canvas.toBlob(function(blob) {
-    if (!blob) { fb('海报图片生成失败，请重试。原因：图片转换失败 [BLOB_NULL]'); return; }
-    var file = new File([blob], filename, { type: 'image/png' });
-    var ok = true;
-    if (navigator.canShare) {
-      try { ok = navigator.canShare({ files: [file] }); }
-      catch(e) { ok = false; }
-    }
-    if (!ok) {
-      fb('当前浏览器不支持分享图片文件，已改为下载海报。原因：不支持发图 [FILE_SHARE_UNSUPPORTED]');
-      return;
-    }
-    try {
-      navigator.share({ files: [file], title: title || '情报分享', text: text || '' }).catch(function(err) {
-        var name = (err && err.name) || 'Error';
-        // 用户取消（AbortError）不算失败，静默；其余异常回退为下载并说明原因
-        if (name === 'AbortError') return;
-        fb('系统分享被中断（' + name + '），已改为下载海报。若反复出现，刷新页面后再试。原因：系统拒绝 [SHARE_REJECTED]');
-      });
-    } catch(e) {
-      fb('系统分享被中断（' + ((e && e.name) || 'Error') + '），已改为下载海报。原因：系统拒绝 [SHARE_REJECTED]');
-    }
-  }, 'image/png');
+  // ③ 导出等待期反馈
+  tipTimer = setTimeout(function() {
+    if (!done) toast('分享图片生成中，长海报导出较慢，请稍候…', 5000);
+  }, 1500);
+  hardTimer = setTimeout(function() {
+    fb('分享图片导出超时，已自动缩小海报并保存，可在「文件 / 相册」里转发。原因：导出超时 [TOBLOB_TIMEOUT]');
+  }, 15000);
+  try {
+    canvas.toBlob(function(blob) {
+      if (done) return;   // 超时兜底已处理，不再重复动作
+      stopTimers();       // 导出完成，清除等待期定时器
+      if (!blob) { fb('海报图片生成失败，请重试。原因：图片转换失败 [BLOB_NULL]'); return; }
+      var file = new File([blob], filename, { type: 'image/png' });
+      var ok = true;
+      if (navigator.canShare) {
+        try { ok = navigator.canShare({ files: [file] }); }
+        catch(e) { ok = false; }
+      }
+      if (!ok) {
+        fb('当前浏览器不支持分享图片文件，已改为下载海报。原因：不支持发图 [FILE_SHARE_UNSUPPORTED]');
+        return;
+      }
+      try {
+        navigator.share({ files: [file], title: title || '情报分享', text: text || '' }).catch(function(err) {
+          var name = (err && err.name) || 'Error';
+          // 用户取消（AbortError）不算失败，静默；其余异常回退为下载并说明原因
+          if (name === 'AbortError') return;
+          fb('系统分享被中断（' + name + '），已改为下载海报。若反复出现，刷新页面后再试。原因：系统拒绝 [SHARE_REJECTED]');
+        });
+      } catch(e) {
+        fb('系统分享被中断（' + ((e && e.name) || 'Error') + '），已改为下载海报。若反复出现，刷新页面后再试。原因：系统拒绝 [SHARE_REJECTED]');
+      }
+    }, 'image/png');
+  } catch(e) {
+    fb('海报图片生成失败，请重试。原因：图片导出异常 [TOBLOB_THREW]');
+  }
 }
 
 function downloadPoster() {
@@ -1130,10 +1169,12 @@ function renderBatchPoster(items) {
   itemsH += (items.length - 1) * 28; // 篇间分隔线
   var H = 260 + itemsH + 434; // 头部 260 + 情报区 + 尾部 CTA/二维码（434 保证 slogan 落在二维码框下方）
 
-  // iOS Safari 画布面积上限约 16M px²，超了 toDataURL 会导出空白图。
-  // 超长海报自动降 dpr（与单篇海报同一策略；750 宽 1x 仍清晰）。
-  var MAX_AREA = 16000000;
-  if (W * H * dpr * dpr > MAX_AREA) dpr = Math.max(1, Math.floor(Math.sqrt(MAX_AREA / (W * H))));
+  // 导出安全（批量长海报高度不设上限，5 篇全文轻松超 6000px）：
+  // ① iOS Safari 画布面积上限约 16M px²，超了导出空白；
+  // ② 多数安卓 GPU 单维度上限 4096，超了 toBlob 回调可能永不触发（分享「点了没反应」）。
+  // dpr 同时按面积与单维度收紧（允许低于 1：长海报宁可略糊，不能导不出）。
+  var MAX_AREA = 16000000, MAX_DIM = 4096;
+  dpr = Math.min(dpr, Math.sqrt(MAX_AREA / (W * H)), MAX_DIM / W, MAX_DIM / H);
 
   // ── 第二遍：按实际高度重设 canvas 并绘制 ──
   // 不写 canvas.style 尺寸：交给 .share-poster-wrap canvas{width:100%} 等比缩放，
@@ -1259,10 +1300,10 @@ function renderBatchPoster(items) {
 
 function downloadBatchPoster() {
   var canvas = document.getElementById('batchPoster');
-  if (!canvas) return;
+  if (!canvas) { toast('海报未生成，请关闭弹窗后重试'); return; }
   if (!batchState.ready) { toast('海报生成中，请稍候'); return; }
   var d = new Date();
-  var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + d.getDate().padStart(2, '0');
+  var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   // 与单篇分享一致：优先系统分享面板（可选微信等 App 直接发送），不支持则下载
   shareCanvasPoster(canvas, '情报合集分享_' + ds + '.png', '情报合集分享', '');
 }
