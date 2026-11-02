@@ -710,13 +710,13 @@ async function copyShareLink() {
   }
 }
 
-function toast(msg) {
+function toast(msg, duration) {
   var t = document.createElement('div');
   t.textContent = msg;
-  t.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);background:#1F2937;color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;z-index:2000;opacity:0;transition:opacity .2s';
+  t.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);background:#1F2937;color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;z-index:2000;opacity:0;transition:opacity .2s;max-width:86vw;text-align:center;line-height:1.5';
   document.body.appendChild(t);
   requestAnimationFrame(function(){ t.style.opacity='1'; });
-  setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ t.remove(); }, 250); }, 1600);
+  setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ t.remove(); }, 250); }, duration || 1600);
 }
 
 // 按最大宽度折行（中文按字断行），返回行数组；超过 maxLines 截断加省略号
@@ -920,37 +920,62 @@ function posterFilename() {
 }
 
 // 回退路径：浏览器不支持系统分享（桌面端 / 非 HTTPS 环境）时直接下载图片
+// 下载成功必须明确告知用户（失败不能无声）
 function downloadPosterFile(canvas, filename) {
   try {
     var a = document.createElement('a');
     a.download = filename || posterFilename();
     a.href = canvas.toDataURL('image/png');
     a.click();
+    toast('海报已保存，可在手机「文件 / 相册」里找到并转发到微信', 4000);
   } catch(e) { alert('海报下载失败：' + e); }
 }
 
-// 通用：海报画布 → 系统分享面板（可选微信等 App 直接发送）；不支持/异常回退为下载
+// 系统分享不可用 / 失败时的明确提示（带原因码，便于用户回报定位）
+function shareDiag(msg) {
+  toast(msg, 5000);
+}
+
+// 通用：海报画布 → 系统分享面板（可选微信等 App 直接发送）；不支持/异常回退为下载，并逐分支给出明确提示
 // 单篇分享与批量长海报共用，保证「生成海报 → 系统分享 → 到 App」路径一致
 function shareCanvasPoster(canvas, filename, title, text) {
-  function fb() { downloadPosterFile(canvas, filename); }
-  if (navigator.share && navigator.canShare) {
-    canvas.toBlob(function(blob) {
-      if (!blob) { fb(); return; }
-      var file = new File([blob], filename, { type: 'image/png' });
-      try {
-        if (navigator.canShare({ files: [file] })) {
-          navigator.share({ files: [file], title: title || '情报分享', text: text || '' }).catch(function(err) {
-            // 用户取消（AbortError）不算失败；其余异常回退为下载
-            if (!(err && err.name === 'AbortError')) fb();
-          });
-          return;
-        }
-      } catch(e) { /* canShare 不支持 files 等异常 → 走下载 */ }
-      fb();
-    }, 'image/png');
-  } else {
-    fb();
+  function fb(reason) {
+    if (reason) shareDiag(reason);
+    downloadPosterFile(canvas, filename);
   }
+  // ① 非 HTTPS（非安全上下文）：浏览器根本不暴露 navigator.share
+  if (!window.isSecureContext) {
+    fb('当前是 HTTP 入口，浏览器无法打开系统分享面板，已改为下载海报。请从手机桌面「业务情报社」图标（HTTPS）进入。原因：非HTTPS入口 [NOT_SECURE_CONTEXT]');
+    return;
+  }
+  // ② 浏览器不支持 Web Share API（桌面浏览器 / 微信内置浏览器 / 部分国产浏览器）
+  if (!navigator.share) {
+    fb('当前浏览器不支持系统分享面板（微信内置浏览器、部分手机自带浏览器常见），已改为下载海报。原因：浏览器不支持 [SHARE_API_MISSING]');
+    return;
+  }
+  canvas.toBlob(function(blob) {
+    if (!blob) { fb('海报图片生成失败，请重试。原因：图片转换失败 [BLOB_NULL]'); return; }
+    var file = new File([blob], filename, { type: 'image/png' });
+    var ok = true;
+    if (navigator.canShare) {
+      try { ok = navigator.canShare({ files: [file] }); }
+      catch(e) { ok = false; }
+    }
+    if (!ok) {
+      fb('当前浏览器不支持分享图片文件，已改为下载海报。原因：不支持发图 [FILE_SHARE_UNSUPPORTED]');
+      return;
+    }
+    try {
+      navigator.share({ files: [file], title: title || '情报分享', text: text || '' }).catch(function(err) {
+        var name = (err && err.name) || 'Error';
+        // 用户取消（AbortError）不算失败，静默；其余异常回退为下载并说明原因
+        if (name === 'AbortError') return;
+        fb('系统分享被中断（' + name + '），已改为下载海报。若反复出现，刷新页面后再试。原因：系统拒绝 [SHARE_REJECTED]');
+      });
+    } catch(e) {
+      fb('系统分享被中断（' + ((e && e.name) || 'Error') + '），已改为下载海报。原因：系统拒绝 [SHARE_REJECTED]');
+    }
+  }, 'image/png');
 }
 
 function downloadPoster() {
