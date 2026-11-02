@@ -183,7 +183,8 @@ def _run_intel_ttl():
 
 
 def _run_search_tick():
-    """Search tick — hourly heartbeat: only projects whose frequency is due."""
+    """Search tick — hourly heartbeat: enqueue due projects under the
+    concurrency cap (settings: scheduler.search_concurrency)."""
     from core.scheduler.search_cycle import run_search_tick
 
     logger.info("[search_tick] Running hourly search tick")
@@ -193,10 +194,12 @@ def _run_search_tick():
             logger.info(f"[search_tick] Skipped: {result.get('reason')}")
         else:
             logger.info(
-                f"[search_tick] Done: domain={result.get('domain')}, "
-                f"due={result.get('due')}, "
-                f"new_intel={result.get('new_intel')}, "
-                f"llm_calls={result.get('llm_calls')}"
+                f"[search_tick] Enqueued: domain={result.get('domain')}, "
+                f"due={len(result.get('due', []))}, "
+                f"concurrency={result.get('concurrency')}, "
+                f"enqueued={result.get('enqueued')}, "
+                f"skipped_inflight={result.get('skipped_inflight')}, "
+                f"queued={result.get('queued')}, running={result.get('running')}"
             )
             _update_scheduler("last_search_time", _now_iso())
     except Exception as e:
