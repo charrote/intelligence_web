@@ -124,12 +124,12 @@
     </div>
     <div class="share-modal-body">
       <div id="batchShareList" style="max-height:140px;overflow:auto"></div>
-      <div class="share-label" style="margin-top:16px">拼接长海报（每篇含摘要）</div>
+      <div class="share-label" style="margin-top:16px">拼接长海报（每篇含全文）</div>
       <div class="share-poster-wrap"><canvas id="batchPoster"></canvas></div>
       <div class="share-actions">
         <button class="btn btn-primary" id="batchPosterBtn" onclick="downloadBatchPoster()">下载长海报</button>
       </div>
-      <div class="share-tip">最多支持 5 篇 · 每篇自动摘要后拼接为一张长海报<br>保存后直接发朋友圈 / 微信群</div>
+      <div class="share-tip">最多支持 5 篇 · 每篇展示全文（不含来源）后拼接为一张长海报<br>保存后直接发朋友圈 / 微信群</div>
     </div>
   </div>
 </div>
@@ -785,7 +785,7 @@ function downloadPoster() {
   } catch(e) { alert('海报下载失败：' + e); }
 }
 
-// ── 批量分享：多选（最多 5 篇）→ 拼接一张长海报，每篇进一步摘要 ──────────
+// ── 批量分享：多选（最多 5 篇）→ 拼接一张长海报，每篇展示全文（不显示来源）──
 var MAX_BATCH_SHARE = 5;
 var shareSelection = [];      // 已勾选的情报 id（可跨页保留）
 var batchState = { ready: false };
@@ -844,7 +844,8 @@ function openBatchShare() {
 
 function closeBatchShare() { document.getElementById('batchShareModal').classList.remove('open'); }
 
-// 进一步摘要：去 Markdown 符号、链接只留文字、图片去掉、压成单行后截断
+// 全文清洗：去 Markdown 符号、链接只留文字、图片去掉、压成单行；
+// maxChars 传值则截断（单篇摘要用），不传则返回全文（批量长海报用）
 function summarizeContent(content, maxChars) {
   var t = String(content || '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
@@ -853,7 +854,8 @@ function summarizeContent(content, maxChars) {
     .replace(/[#*`>~_]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return t.length > maxChars ? t.slice(0, maxChars) + '…' : t;
+  if (maxChars && t.length > maxChars) return t.slice(0, maxChars) + '…';
+  return t;
 }
 
 // 只测量不绘制：按 maxW 换行，返回行数组（与 wrapText 同算法）
@@ -886,9 +888,9 @@ function renderBatchPoster(items) {
     ctx.font = '700 26px sans-serif';
     var titleLines = splitLines(ctx, (it.title || '').slice(0, 60), cw - 48, 3);
     ctx.font = '400 17px sans-serif';
-    var sumLines = splitLines(ctx, summarizeContent(it.content, 120), cw, 4);
-    var h = titleLines.length * 38 + 14 + 44 + sumLines.length * 28 + 20;
-    return { it: it, titleLines: titleLines, sumLines: sumLines, h: h };
+    var contentLines = splitLines(ctx, summarizeContent(it.content), cw);
+    var h = titleLines.length * 38 + 14 + 44 + contentLines.length * 28 + 20;
+    return { it: it, titleLines: titleLines, contentLines: contentLines, h: h };
   });
   var itemsH = 0;
   blocks.forEach(function(b) { itemsH += b.h; });
@@ -930,7 +932,7 @@ function renderBatchPoster(items) {
   }
   y = 260;
 
-  // 各篇：编号 + 标题 + 标签 + 摘要
+  // 各篇：编号 + 标题 + 标签 + 全文（不含来源）
   blocks.forEach(function(b, bi) {
     var it = b.it;
     ctx.fillStyle = '#3B82F6';
@@ -960,12 +962,12 @@ function renderBatchPoster(items) {
       tagX += tw + 10;
     }
     y += 44;
-    // 摘要（进一步压缩）
+    // 全文（不显示来源；已去 Markdown 符号、链接只留文字、图片去掉）
     ctx.fillStyle = '#4B5563'; ctx.font = '400 17px sans-serif';
-    for (var si = 0; si < b.sumLines.length; si++) {
-      ctx.fillText(b.sumLines[si], x, y + si * 28);
+    for (var si = 0; si < b.contentLines.length; si++) {
+      ctx.fillText(b.contentLines[si], x, y + si * 28);
     }
-    y += b.sumLines.length * 28 + 20;
+    y += b.contentLines.length * 28 + 20;
     // 篇间分隔线（最后一篇后不画，尾部分隔线在 CTA 前）
     if (bi < blocks.length - 1) {
       ctx.strokeStyle = '#E5E7EB'; ctx.setLineDash([4,4]); ctx.lineWidth = 1;
