@@ -22,40 +22,113 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#f5f6f8;color:#1e
 .login-wrap{width:400px;max-width:90vw;padding:40px}
 .login-logo{font-weight:600;font-size:20px;color:var(--gray-800);display:flex;align-items:center;gap:10px;margin-bottom:8px;letter-spacing:-0.3px}
 .login-logo .mark{width:8px;height:8px;border-radius:2px;background:var(--accent);display:inline-block}
-.login-sub{font-size:14px;color:var(--gray-400);margin-bottom:32px}
+.login-sub{font-size:14px;color:var(--gray-400);margin-bottom:24px}
+/* UA107: 登录方式切换（密码 / 验证码） */
+.tabs{display:flex;gap:24px;border-bottom:1px solid var(--gray-200);margin-bottom:24px}
+.tab{appearance:none;border:none;background:none;padding:0 0 10px;font-size:14px;font-weight:500;color:var(--gray-400);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .form-group{margin-bottom:20px}
 .form-group label{display:block;font-size:13px;font-weight:500;color:var(--gray-600);margin-bottom:6px}
 .form-group input{width:100%;padding:10px 14px;border:1px solid var(--gray-200);border-radius:var(--radius);font-size:14px;color:var(--gray-800);outline:none;transition:border-color 0.2s;background:#fff}
 .form-group input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
 .form-group input::placeholder{color:var(--gray-400)}
+/* UA107: 验证码行（输入框 + 获取按钮，与注册页同款） */
+.code-row{display:flex;gap:8px}
+.code-row input{flex:1;min-width:0}
+.btn-code{flex:0 0 auto;width:120px;padding:10px 0;border:1px solid var(--accent);border-radius:var(--radius);background:#fff;color:var(--accent);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s;white-space:nowrap}
+.btn-code:hover:not(:disabled){background:var(--accent-light)}
+.btn-code:disabled{border-color:var(--gray-200);color:var(--gray-400);cursor:not-allowed;background:#fff}
+.hint{font-size:12px;color:var(--gray-400);margin-top:6px}
 .btn-login{width:100%;padding:10px;border:none;border-radius:var(--radius);background:var(--accent);color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background 0.15s}
 .btn-login:hover{background:#2f3f70}
 .btn-login:disabled{opacity:0.6;cursor:not-allowed}
 .error-msg{color:#b33a3a;font-size:13px;margin-top:12px;display:none}
 .error-msg.show{display:block}
+.success-msg{color:#2a7d4f;font-size:13px;margin-top:12px;display:none}
+.success-msg.show{display:block}
+.links-row{margin-top:16px;display:flex;justify-content:space-between;align-items:center;font-size:14px;color:#545557}
+.links-row a{color:#3b4f8c;font-weight:500;text-decoration:none}
+.links-row a:hover{text-decoration:underline}
+.links-row .right{text-align:right}
 </style>
 </head>
 <body>
 <div class="login-wrap">
   <div class="login-logo"><span class="mark"></span>情报平台</div>
-  <div class="login-sub">请输入您的账号信息登录</div>
-  <div class="form-group">
-    <label for="username">手机号码</label>
-    <input type="tel" id="username" placeholder="请输入手机号" autocomplete="tel" inputmode="tel">
-    <div style="font-size:12px;color:#9a9b9d;margin-top:6px">注册手机号即登录账号；管理员请使用分配的账号登录</div>
+  <div class="login-sub" id="subTitle">请输入您的账号信息登录</div>
+
+  <!-- 登录方式切换（UA107）；忘记密码模式下隐藏 -->
+  <div class="tabs" id="tabs">
+    <button class="tab active" id="tabPwd" onclick="switchMode('pwd')">密码登录</button>
+    <button class="tab" id="tabSms" onclick="switchMode('sms')">验证码登录</button>
   </div>
-  <div class="form-group">
-    <label for="password">密码</label>
-    <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+
+  <!-- ① 密码登录 -->
+  <div id="panelPwd">
+    <div class="form-group">
+      <label for="username">手机号码</label>
+      <input type="tel" id="username" placeholder="请输入手机号" autocomplete="tel" inputmode="tel">
+      <div style="font-size:12px;color:#9a9b9d;margin-top:6px">注册手机号即登录账号；管理员请使用分配的账号登录</div>
+    </div>
+    <div class="form-group">
+      <label for="password">密码</label>
+      <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn-login" id="loginBtn" onclick="doLogin()">登 录</button>
+    <div class="links-row">
+      <span id="regLink" style="display:none">还没有账号？<a href="/portal/register.html">注册</a></span>
+      <span class="right"><a href="javascript:void(0)" onclick="switchMode('reset')">忘记密码？</a></span>
+    </div>
   </div>
-  <button class="btn-login" id="loginBtn" onclick="doLogin()">登 录</button>
+
+  <!-- ② 验证码登录（UA107） -->
+  <div id="panelSms" style="display:none">
+    <div class="form-group">
+      <label for="smsPhone">手机号码</label>
+      <input type="tel" id="smsPhone" placeholder="请输入手机号" autocomplete="tel" maxlength="15" inputmode="numeric">
+    </div>
+    <div class="form-group">
+      <label for="smsCode">短信验证码</label>
+      <div class="code-row">
+        <input type="text" id="smsCode" placeholder="6 位验证码" maxlength="8" inputmode="numeric" autocomplete="one-time-code" onkeydown="if(event.key==='Enter')doSmsLogin()">
+        <button class="btn-code" id="smsCodeBtn" onclick="sendCode('login','smsPhone','smsCodeBtn')">获取验证码</button>
+      </div>
+      <div class="hint" id="smsHint"></div>
+    </div>
+    <button class="btn-login" id="smsLoginBtn" onclick="doSmsLogin()">登 录</button>
+  </div>
+
+  <!-- ③ 忘记密码：手机号验证码重置（UA107） -->
+  <div id="panelReset" style="display:none">
+    <div class="form-group">
+      <label for="rsPhone">手机号码</label>
+      <input type="tel" id="rsPhone" placeholder="注册时使用的手机号" autocomplete="tel" maxlength="15" inputmode="numeric">
+      <div style="font-size:12px;color:#9a9b9d;margin-top:6px">仅支持已绑定手机号的账号；管理员账号请联系管理员重置</div>
+    </div>
+    <div class="form-group">
+      <label for="rsCode">短信验证码</label>
+      <div class="code-row">
+        <input type="text" id="rsCode" placeholder="6 位验证码" maxlength="8" inputmode="numeric" autocomplete="one-time-code">
+        <button class="btn-code" id="rsCodeBtn" onclick="sendCode('reset','rsPhone','rsCodeBtn')">获取验证码</button>
+      </div>
+      <div class="hint" id="rsHint"></div>
+    </div>
+    <div class="form-group">
+      <label for="rsPwd">新密码</label>
+      <input type="password" id="rsPwd" placeholder="至少 6 位" autocomplete="new-password" onkeydown="if(event.key==='Enter')doReset()">
+    </div>
+    <button class="btn-login" id="rsBtn" onclick="doReset()">重置密码</button>
+    <div class="links-row">
+      <span><a href="javascript:void(0)" onclick="switchMode('pwd')">返回登录</a></span>
+    </div>
+  </div>
+
   <div class="error-msg" id="errorMsg"></div>
-  <div class="reg-link" id="regLink" style="margin-top:20px;text-align:center;font-size:14px;color:#545557;display:none">
-    还没有账号？<a href="/portal/register.html" style="color:#3b4f8c;font-weight:500;text-decoration:none">注册</a>
-  </div>
+  <div class="success-msg" id="successMsg"></div>
 </div>
 <script>
 const API = '';
+let mode = 'pwd';
 
 // 加载时查询注册开放状态：开放才显示"注册"入口（实时生效）
 async function loadRegisterStatus() {
@@ -68,6 +141,68 @@ async function loadRegisterStatus() {
   } catch(e) { /* 查询失败保持隐藏，避免误开放 */ }
 }
 loadRegisterStatus();
+
+function showErr(msg){ const e=document.getElementById('errorMsg'); e.textContent=msg; e.classList.add('show'); document.getElementById('successMsg').classList.remove('show'); }
+function showOk(msg){ const s=document.getElementById('successMsg'); s.textContent=msg; s.classList.add('show'); document.getElementById('errorMsg').classList.remove('show'); }
+function clearMsg(){ document.getElementById('errorMsg').classList.remove('show'); document.getElementById('successMsg').classList.remove('show'); }
+
+// UA107: 三种面板切换（pwd / sms / reset），切换时清掉旧提示
+function switchMode(m) {
+  mode = m;
+  clearMsg();
+  document.getElementById('panelPwd').style.display = (m === 'pwd') ? '' : 'none';
+  document.getElementById('panelSms').style.display = (m === 'sms') ? '' : 'none';
+  document.getElementById('panelReset').style.display = (m === 'reset') ? '' : 'none';
+  document.getElementById('tabs').style.display = (m === 'reset') ? 'none' : '';
+  document.getElementById('tabPwd').classList.toggle('active', m === 'pwd');
+  document.getElementById('tabSms').classList.toggle('active', m === 'sms');
+  document.getElementById('subTitle').textContent =
+    (m === 'reset') ? '输入注册手机号与验证码，设置新密码' : '请输入您的账号信息登录';
+}
+
+// UA107: 发码（scene=login/reset 对应不同用途，后端分仓校验不可混用）。
+// 同号 60s 冷却由后端统一限频，前端按钮倒计时只是提示。
+async function sendCode(scene, phoneId, btnId) {
+  clearMsg();
+  const phone = document.getElementById(phoneId).value.trim();
+  if(!/^\d{11,15}$/.test(phone)){ showErr('请输入有效的手机号码'); return; }
+  const btn = document.getElementById(btnId);
+  btn.disabled = true;
+  try {
+    const res = await fetch(API + '/api/auth/sms/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ phone: phone, scene: scene })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showOk(data.message || '验证码已发送，请查收短信');
+      startCountdown(btn, (data.cooldown || 60) + 1);
+    } else {
+      showErr(data.error || '发送失败');
+      btn.disabled = false;
+    }
+  } catch(e) {
+    showErr('网络连接失败，请检查网络');
+    btn.disabled = false;
+  }
+}
+
+function startCountdown(btn, sec) {
+  let left = sec;
+  btn.textContent = left + 's 后重发';
+  const t = setInterval(() => {
+    left--;
+    if (left <= 0) { clearInterval(t); btn.disabled = false; btn.textContent = '重新获取'; }
+    else btn.textContent = left + 's 后重发';
+  }, 1000);
+}
+
+function enterPortal(data) {
+  localStorage.setItem('token', data.token);
+  localStorage.setItem('user', JSON.stringify(data.user));
+  window.location.href = '/portal/';
+}
 
 async function doLogin() {
   const btn = document.getElementById('loginBtn');
@@ -86,9 +221,7 @@ async function doLogin() {
     });
     const data = await res.json();
     if (res.ok) {
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      window.location.href = '/portal/';
+      enterPortal(data);
     } else {
       err.textContent = data.error || '登录失败';
       err.classList.add('show');
@@ -99,6 +232,67 @@ async function doLogin() {
   }
   btn.disabled = false;
   btn.textContent = '登 录';
+}
+
+// UA107: 手机验证码登录
+async function doSmsLogin() {
+  const btn = document.getElementById('smsLoginBtn');
+  const phone = document.getElementById('smsPhone').value.trim();
+  const code = document.getElementById('smsCode').value.trim();
+  if (!/^\d{11,15}$/.test(phone)) { showErr('请输入有效的手机号码'); return; }
+  if (!code) { showErr('请输入短信验证码'); return; }
+  clearMsg();
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  try {
+    const res = await fetch(API + '/api/auth/login-sms', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ phone: phone, code: code })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      enterPortal(data);
+    } else {
+      showErr(data.error || '登录失败');
+    }
+  } catch(e) {
+    showErr('网络连接失败，请检查网络');
+  }
+  btn.disabled = false;
+  btn.textContent = '登 录';
+}
+
+// UA107: 忘记密码 → 手机号验证码重置，成功后直接登录进入
+async function doReset() {
+  const btn = document.getElementById('rsBtn');
+  const phone = document.getElementById('rsPhone').value.trim();
+  const code = document.getElementById('rsCode').value.trim();
+  const password = document.getElementById('rsPwd').value;
+  if (!/^\d{11,15}$/.test(phone)) { showErr('请输入有效的手机号码'); return; }
+  if (!code) { showErr('请输入短信验证码'); return; }
+  if (password.length < 6) { showErr('密码至少 6 位'); return; }
+  clearMsg();
+  btn.disabled = true;
+  btn.textContent = '重置中...';
+  try {
+    const res = await fetch(API + '/api/auth/reset-password', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ phone: phone, code: code, password: password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showOk('密码已重置，正在进入...');
+      setTimeout(() => enterPortal(data), 600);
+    } else {
+      showErr(data.error || '重置失败');
+    }
+  } catch(e) {
+    showErr('网络连接失败，请检查网络');
+  }
+  btn.disabled = false;
+  btn.textContent = '重置密码';
 }
 </script>
 </body>

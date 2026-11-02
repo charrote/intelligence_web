@@ -2867,17 +2867,31 @@ location /d/{slug}/ {{
 
     @app.route('/api/auth/sms/send', methods=['POST'])
     def auth_sms_send():
-        """发送手机验证码（限频：同号 60s 冷却 + 每日 10 次）。
+        """发送手机验证码（限频：同号 60s 冷却 + 每日 10 次，跨 scene 共用额度）。
+
+        scene（UA107）：register=注册（默认，兼容旧前端不传）；login=验证码登录；
+        reset=找回密码。register 要求手机号未被占用；login/reset 要求手机号
+        已注册且启用（墓碑不算）。不同 scene 的码在 core/sms 分仓存储，
+        不可跨用途复用。
 
         UA100: 发码前先查手机号是否已被占用（已注册且启用的用户）——占用则
         直接 409 提示，不再浪费一条短信。已删除用户（enabled=0 墓碑）不算占用。
         """
         data = request.json or {}
         phone = (data.get('phone') or '').strip()
+        scene = (data.get('scene') or 'register').strip()
+        if scene not in ('register', 'login', 'reset'):
+            return jsonify({'error': '验证码用途不合法'}), 400
         if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
             return jsonify({'error': '请输入有效的手机号码'}), 400
-        if _phone_occupied(db_path, phone):
-            return jsonify({'error': '该手机号已注册，请直接登录'}), 409
+        if scene == 'register':
+            if _phone_occupied(db_path, phone):
+                return jsonify({'error': '该手机号已注册，请直接登录'}), 409
+        else:
+            # login/reset：手机号必须属于启用中的用户（enabled=0 墓碑不算）
+            _u = get_user_by_phone(db_path, phone)
+            if _u is None or not _u.get('enabled'):
+                return jsonify({'error': '该手机号未注册，请先注册'}), 404
         import time as _time
         now_ts = _time.time()
         today = datetime.now().strftime('%Y-%m-%d')
@@ -2891,7 +2905,7 @@ location /d/{slug}/ {{
             wait = int(_SMS_COOLDOWN_SEC - (now_ts - rec['last_send_ts']))
             return jsonify({'error': f'发送过于频繁，请 {wait} 秒后再试'}), 429
         from core.sms import send_verify_code
-        ok, msg = send_verify_code(phone, scene='register')
+        ok, msg = send_verify_code(phone, scene=scene)
         if not ok:
             return jsonify({'error': msg}), 502
         rec['last_send_ts'] = now_ts
@@ -2960,6 +2974,84 @@ location /d/{slug}/ {{
             'token': token,
             'user': user,
         })
+
+    # ── UA107: 手机验证码登录 / 忘记密码（手机号验证码取回） ──────────────
+
+    def _verify_sms_code_and_find_user(phone, code, scene):
+        """校验 scene 对应的短信验证码（一次性，通过即作废），并取「启用中」的
+        手机号用户。返回 (row, None) 或 (None, (json_response, status))。"""
+        from core.sms import verify_code
+        ok, msg = verify_code(phone, code, scene=scene)
+        if not ok:
+            return None, (jsonify({'error': msg}), 400)
+        row = get_user_by_phone(db_path, phone)
+        if row is None or not row.get('enabled'):
+            # 码已作废（一次性）；手机号未注册/已删除——与发码侧同一提示
+            return None, (jsonify({'error': '该手机号未注册，请先注册'}), 404)
+        return row, None
+
+    def _login_payload_from_row(row):
+        """由 users 行构造登录返回体（与 /api/auth/login 同构：JWT 内嵌
+        role_ids/permission_codes/domains 声明，见 auth_login 注释）。"""
+        domains_raw = row.get('domains') or ''
+        user = {
+            'id': row['id'],
+            'username': row['username'],
+            'display_name': row.get('display_name') or row['username'],
+            'role': row['role'],
+            'domains': [d.strip() for d in domains_raw.split(',') if d.strip()],
+        }
+        user['role_ids'] = get_user_role_ids(db_path, user['id'])
+        user['permission_codes'] = sorted(
+            get_user_permission_codes(db_path, user['id'], user['role']))
+        return {'token': _generate_token(user), 'user': user}
+
+    @app.route('/api/auth/login-sms', methods=['POST'])
+    def auth_login_sms():
+        """UA107: 手机验证码登录。手机号 + 短信验证码（scene=login）→ JWT。
+
+        仅支持已绑定手机号且启用中的账号（管理员等未绑手机的账号用密码登录）。
+        验证码经 /api/auth/sms/send {scene:'login'} 获取。
+        """
+        data = request.json or {}
+        phone = (data.get('phone') or '').strip()
+        code = (data.get('code') or '').strip()
+        if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
+            return jsonify({'error': '请输入有效的手机号码'}), 400
+        if not code or not code.isdigit():
+            return jsonify({'error': '请输入短信验证码'}), 400
+        row, err = _verify_sms_code_and_find_user(phone, code, 'login')
+        if err is not None:
+            return err
+        return jsonify(_login_payload_from_row(row))
+
+    @app.route('/api/auth/reset-password', methods=['POST'])
+    def auth_reset_password():
+        """UA107: 忘记密码。手机号 + 短信验证码（scene=reset）+ 新密码 → 重置。
+
+        验证码经 /api/auth/sms/send {scene:'reset'} 获取；重置成功后直接签发
+        JWT（等同登录），前端免二次输入。仅支持已绑定手机号且启用中的账号；
+        未绑定手机号的账号（如管理员）请联系管理员重置。
+        """
+        data = request.json or {}
+        phone = (data.get('phone') or '').strip()
+        code = (data.get('code') or '').strip()
+        password = data.get('password') or ''
+        if not phone or not phone.isdigit() or not (11 <= len(phone) <= 15):
+            return jsonify({'error': '请输入有效的手机号码'}), 400
+        if not code or not code.isdigit():
+            return jsonify({'error': '请输入短信验证码'}), 400
+        if len(password) < 6:
+            return jsonify({'error': '密码至少 6 位'}), 400
+        row, err = _verify_sms_code_and_find_user(phone, code, 'reset')
+        if err is not None:
+            return err
+        assert row is not None  # err/row 互斥（见 _verify_sms_code_and_find_user）
+        if not update_user_password(db_path, row['id'], password):
+            return jsonify({'error': '密码重置失败，请稍后重试'}), 500
+        payload = _login_payload_from_row(row)
+        payload.update({'ok': True, 'message': '密码已重置，已为您登录'})
+        return jsonify(payload)
 
     @app.route('/api/auth/check')
     def auth_check():

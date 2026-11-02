@@ -65,8 +65,9 @@ def main():
     check("sms/send 200", r.status_code == 200, r.get_json())
     check("send ok=True", r.get_json().get("ok") is True, r.get_json())
     check("真实模式提示(非测试模式)", "测试模式" not in r.get_json().get("message", ""), r.get_json())
-    check("码已入内存存储", "13800001111" in sms._CODE_STORE)
-    code = sms._CODE_STORE["13800001111"]["code"]
+    KEY = sms._store_key("13800001111", "register")  # UA107: scene 分仓键
+    check("码已入内存存储", KEY in sms._CODE_STORE)
+    code = sms._CODE_STORE[KEY]["code"]
 
     # 2) cooldown
     r = client.post("/api/auth/sms/send", json={"phone": "13800001111"})
@@ -86,7 +87,7 @@ def main():
     check("正确码注册 200", r.status_code == 200, body)
     check("注册即登录(有 token)", bool(body.get("token")))
     check("用户名即手机号", body.get("user", {}).get("username") == "13800001111", str(body.get("user")))
-    check("注册后码作废", "13800001111" not in sms._CODE_STORE)
+    check("注册后码作废", KEY not in sms._CODE_STORE)
 
     # 4a) UA98 回归：注册用户必须立刻有 user 角色 + intel.view 权限
     #     （曾经 user_roles 无绑定 → JWT 权限集为空 → 情报列表 403，什么都看不了）
@@ -118,7 +119,7 @@ def main():
     r = client.post("/api/auth/sms/send", json={"phone": "13800001111"})
     check("已注册手机号发码 409", r.status_code == 409, r.get_json())
     check("409 提示已注册", "已注册" in (r.get_json() or {}).get("error", ""), r.get_json())
-    check("409 不产生新码", "13800001111" not in sms._CODE_STORE)
+    check("409 不产生新码", KEY not in sms._CODE_STORE)
 
     # 4e) UA100: 删除用户后允许同号重新注册（墓碑复活：重置密码、清旧角色）
     import time as _time_mod
@@ -141,7 +142,7 @@ def main():
     r = client.post("/api/auth/sms/send", json={"phone": "13800001111"})
     _time_mod.time = _real_time
     check("删除后同号可再发码 200", r.status_code == 200, r.get_json())
-    code2 = sms._CODE_STORE["13800001111"]["code"]
+    code2 = sms._CODE_STORE[KEY]["code"]
     PW2 = "reg223344"
     rg = {"phone": "13800001111", "code": code2}
     rg["pass" + "word"] = PW2

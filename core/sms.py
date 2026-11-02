@@ -32,7 +32,9 @@ _ALIYUN_VERSION_PNVS = "2017-05-25"
 _ALIYUN_VERSION_SMS = "2017-05-25"
 
 # 本地验证码存储（仅 aliyun_sms 模式使用）
-# phone -> {"code", "expires_at", "attempts"}
+# f"{scene}|{phone}" -> {"code", "expires_at", "attempts"}
+# UA107: 按 scene（register/login/reset）分仓——注册用的码不能拿来登录，
+# 找回密码的码不能拿来登录，用途之间不可复用；重发作废仅限同 scene。
 _CODE_STORE = {}
 _CODE_LOCK = threading.Lock()
 _CODE_TTL_SEC = 300       # 验证码有效期 5 分钟
@@ -197,10 +199,15 @@ def _friendly_sms_error(err):
 
 # ── 本地验证码存储（aliyun_sms 模式） ──────────────────────────────────────
 
-def _store_code(phone, code):
+def _store_key(phone, scene):
+    """scene 分仓键。register 为默认用途，兼容旧调用方不传 scene。"""
+    return f"{scene or 'register'}|{phone}"
+
+
+def _store_code(phone, code, scene="register"):
     with _CODE_LOCK:
         _purge_expired()
-        _CODE_STORE[phone] = {
+        _CODE_STORE[_store_key(phone, scene)] = {
             "code": code,
             "expires_at": time.time() + _CODE_TTL_SEC,
             "attempts": 0,
@@ -214,26 +221,30 @@ def _purge_expired(now=None):
         _CODE_STORE.pop(p, None)
 
 
-def _check_local_code(phone, code):
-    """本地校验：存在、未过期、未超尝试次数、码匹配。返回 (ok, message)。"""
+def _check_local_code(phone, code, scene="register"):
+    """本地校验：存在、未过期、未超尝试次数、码匹配。返回 (ok, message)。
+
+    UA107: 校验与 scene 绑定——登录/重置/注册的码各查各仓，不可跨用途复用。
+    """
     now = time.time()
+    key = _store_key(phone, scene)
     with _CODE_LOCK:
         _purge_expired(now)
-        rec = _CODE_STORE.get(phone)
+        rec = _CODE_STORE.get(key)
         if rec is None:
             return False, "请先获取短信验证码"
         if rec["attempts"] >= _MAX_ATTEMPTS:
-            _CODE_STORE.pop(phone, None)
+            _CODE_STORE.pop(key, None)
             return False, "验证码已失效，请重新获取"
         if rec["code"] != code:
             rec["attempts"] += 1
             left = _MAX_ATTEMPTS - rec["attempts"]
             if left <= 0:
-                _CODE_STORE.pop(phone, None)
+                _CODE_STORE.pop(key, None)
                 return False, "验证码错误次数过多，已作废，请重新获取"
             return False, f"验证码错误，还可尝试 {left} 次"
         # 校验通过：一次性使用，立即作废
-        _CODE_STORE.pop(phone, None)
+        _CODE_STORE.pop(key, None)
         return True, "验证码正确"
 
 
@@ -241,6 +252,10 @@ def _check_local_code(phone, code):
 
 def send_verify_code(phone, scene="register"):
     """发送短信验证码。
+
+    scene（UA107）：register=注册 / login=验证码登录 / reset=找回密码。
+    aliyun_sms 模式下按 scene 分仓存储，码不可跨用途复用；PNVS 模式由
+    阿里云保管验证码，不区分 scene（旧链路，保留兼容）。
 
     返回 (ok, message)。ok=False 时 message 为人类可读错误。
     test_mode 下不真发，直接 ok=True（验证码走 verify_code 时直接通过）。
@@ -250,16 +265,17 @@ def send_verify_code(phone, scene="register"):
         print(f"[SMS][TEST_MODE] 验证码已'发送'到 {phone}（scene={scene}），测试模式任意 6 位码均可通过")
         return True, "（测试模式）验证码已生成，可直接输入任意 6 位数字"
     if _provider(cfg) == "aliyun_sms":
-        return _send_sms_standard(phone, cfg)
+        return _send_sms_standard(phone, cfg, scene=scene)
     return _send_pnvs(phone, cfg)
 
 
-def verify_code(phone, code):
+def verify_code(phone, code, scene="register"):
     """校验用户输入的短信验证码。
 
     返回 (ok, message)。
     test_mode 下：只要 code 是 4-8 位数字即通过（方便本地跑通）。
-    aliyun_sms：本地存储校验；aliyun_pnvs：调用 CheckSmsVerifyCode 由阿里云校验。
+    aliyun_sms：本地存储校验（scene 分仓，UA107）；
+    aliyun_pnvs：调用 CheckSmsVerifyCode 由阿里云校验（不区分 scene）。
     """
     cfg = get_sms_config()
     if _is_test_mode():
@@ -269,14 +285,14 @@ def verify_code(phone, code):
             return True, "验证码正确"
         return False, "验证码格式不正确（测试模式需 4-8 位数字）"
     if _provider(cfg) == "aliyun_sms":
-        return _check_local_code(phone, code)
+        return _check_local_code(phone, code, scene=scene)
     return _verify_pnvs(phone, code, cfg)
 
 
 # ── 标准短信服务（dysmsapi SendSms） ───────────────────────────────────────
 
-def _send_sms_standard(phone, cfg):
-    """标准短信服务发码：本地生成 6 位码 → SendSms → 发送成功才入库。"""
+def _send_sms_standard(phone, cfg, scene="register"):
+    """标准短信服务发码：本地生成 6 位码 → SendSms → 发送成功才入库（按 scene 分仓）。"""
     missing = [k for k in ("sign_name", "template_code") if not cfg.get(k)]
     if missing:
         print(f"[SMS] 配置缺少必填项: {missing}")
@@ -292,7 +308,7 @@ def _send_sms_standard(phone, cfg):
             "TemplateParam": template_param,
         }, cfg, version=_ALIYUN_VERSION_SMS)
         if str(result.get("Code", "")) == "OK":
-            _store_code(phone, code)
+            _store_code(phone, code, scene=scene)
             print(f"[SMS] SendSms 成功 phone={phone} bizId={result.get('BizId', '')}")
             return True, "验证码已发送，5 分钟内有效，请查收短信"
         err_code = str(result.get("Code", ""))
