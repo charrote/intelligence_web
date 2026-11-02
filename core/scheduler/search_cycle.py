@@ -16,6 +16,8 @@ import os
 import json
 import re
 import time
+import queue as queue_mod
+import threading
 import requests
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -1289,26 +1291,129 @@ def trigger_search_once() -> dict:
     return run_search_cycle(trigger_type='manual')
 
 def trigger_search_async() -> dict:
-    """Start one manual search cycle in a background thread, return immediately.
+    """Start a manual search cycle in the background queue, return immediately.
 
-    A full cycle can exceed gunicorn's worker timeout (~120s), so the manual
-    API trigger must not block the request. The cycle runs in a daemon thread;
-    its result is recorded in the search_run history (visible via
-    /api/system/search/runs).
+    与定时 tick 共用同一采集队列与并发上限（scheduler.search_concurrency），
+    避免手动触发与定时采集同时压垮 LLM。每个 active 项目单独入队，
+    结果逐项目记录在 search_run 履历（/api/system/search/runs）。
     """
-    import threading
+    from core.db import get_db_path
+    from core.project import get_projects
 
-    def _worker():
-        try:
-            result = run_search_cycle(trigger_type='manual')
-            logger.info(f"[search_cycle] manual run done: {result}")
-        except Exception as e:
-            logger.exception(f"[search_cycle] manual run failed: {e}")
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    db_slug = os.environ.get("ANALYZER_DB_SLUG", "intelligence")
+    db_path = get_db_path(project_root, db_slug)
 
-    threading.Thread(target=_worker, daemon=True).start()
-    return {"ok": True, "started": True}
+    projects = get_projects(db_path, {"status": "active"})
+    pids = [p["id"] for p in projects if p.get("target_name")]
+    if not pids:
+        return {"ok": True, "started": False, "enqueued": 0, "reason": "no_active_projects"}
+
+    enq = enqueue_search_jobs(db_path, db_slug, pids, trigger_type='manual')
+    logger.info(f"[search_cycle] manual run enqueued: {enq}")
+    return {"ok": True, "started": enq["enqueued"] > 0, **enq}
 
 # ── 频率感知调度（方案B：单一 tick + 每项目到期判定） ──────────
+
+# ── 采集排队（并发上限可配，默认串行 1） ──────────────────────
+# 同一时刻最多 N 个"采集请求"（= 单项目一轮 run_search_cycle）在执行，
+# 其余到期项目排队等待。N 读 settings: scheduler.search_concurrency
+# （默认 1，上限 4），每轮 tick 重新读取，改配置保存后对后续 tick 生效、无需重启。
+#
+# 结构：FIFO 队列 + 工作线程（每轮按 N 派生，消费完队列即退出）。
+# _inflight 记录"已入队/执行中"的项目 id，下一 tick 不重复入队（防重入）。
+
+_search_queue = queue_mod.Queue()
+_queue_lock = threading.Lock()
+_inflight = set()      # 已入队或执行中的项目 id
+_workers_active = 0    # 当前存活的采集工作线程数
+
+
+def get_search_concurrency(db_path) -> int:
+    """并发上限 N：settings `scheduler.search_concurrency`，默认 1，夹紧 [1, 4]。"""
+    from core.db import get_setting
+
+    raw = get_setting(db_path, "scheduler.search_concurrency")
+    try:
+        n = int(str(raw).strip()) if raw not in (None, "") else 1
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, min(n, 4))
+
+
+def _spawn_search_workers(db_path, db_slug, trigger_type, count: int):
+    """派生 count 个采集工作线程（必须在 _queue_lock 内调用）。"""
+    global _workers_active
+    for _ in range(count):
+        _workers_active += 1
+        threading.Thread(
+            target=_search_worker,
+            args=(db_path, db_slug, trigger_type),
+            daemon=True,
+            name=f"search-worker-{db_slug}",
+        ).start()
+
+
+def _search_worker(db_path, db_slug, trigger_type):
+    """从队列逐个消费采集请求：执行单项目采集，单项目失败不阻塞后续。"""
+    global _workers_active
+    try:
+        while True:
+            try:
+                pid = _search_queue.get(timeout=0.5)
+            except queue_mod.Empty:
+                break
+            t0 = time.time()
+            try:
+                logger.info(
+                    f"[search_queue] start domain={db_slug} project={pid} "
+                    f"queued={_search_queue.qsize()} running={len(_inflight)}"
+                )
+                result = run_search_cycle(trigger_type=trigger_type, project_ids=[pid])
+                logger.info(
+                    f"[search_queue] done domain={db_slug} project={pid} "
+                    f"new_intel={result.get('new_intel')} "
+                    f"llm_calls={result.get('llm_calls')} "
+                    f"elapsed={int(time.time() - t0)}s"
+                )
+            except Exception as e:
+                logger.exception(f"[search_queue] project {pid} failed: {e}")
+            finally:
+                with _queue_lock:
+                    _inflight.discard(pid)
+    finally:
+        with _queue_lock:
+            _workers_active -= 1
+
+
+def enqueue_search_jobs(db_path, db_slug, pids, trigger_type='tick') -> dict:
+    """到期/手动项目入队，并按并发上限 N 派生工作线程。
+
+    已在队列/执行中的项目不重复入队（防重入）。存活工作线程数 + 本轮
+    新派生数 ≤ N；旧线程未退时新任务由旧线程循环消费（排队等待）。
+    返回 {concurrency, enqueued, skipped_inflight, queued, running}。
+    """
+    n = get_search_concurrency(db_path)
+    enqueued, skipped = 0, 0
+    with _queue_lock:
+        for pid in pids:
+            if pid in _inflight:
+                skipped += 1
+                continue
+            _inflight.add(pid)
+            _search_queue.put(pid)
+            enqueued += 1
+        to_spawn = max(0, min(n - _workers_active, enqueued)) if enqueued else 0
+        if to_spawn:
+            _spawn_search_workers(db_path, db_slug, trigger_type, to_spawn)
+    return {
+        "concurrency": n,
+        "enqueued": enqueued,
+        "skipped_inflight": skipped,
+        "queued": _search_queue.qsize(),
+        "running": len(_inflight),
+    }
+
 
 def _due_project_ids(db_path) -> list:
     """查询本域 active 项目中已到期的项目 id。
@@ -1343,11 +1448,12 @@ def _due_project_ids(db_path) -> list:
     return ids
 
 def run_search_tick(trigger_type='tick') -> dict:
-    """每小时心跳：检查本域项目的采集频率，只跑"到期"的项目。
+    """每小时心跳：检查本域项目的采集频率，只把"到期"的项目送进采集队列。
 
     无到期项目时零成本直接返回（不调 LLM、不写 search_run）。
-    有到期项目时复用 run_search_cycle（project_ids 子集），
-    调度履历里能看到每轮实际采集了哪些项目。
+    有到期项目时按并发上限 N（settings: scheduler.search_concurrency，
+    默认 1 = 串行）派生工作线程消费队列，其余排队等待；同一项目上一轮
+    未完成时不重复入队。每个项目单独记录一条 search_run 履历。
     """
     from core.db import get_db_path
     from core.project import get_projects
@@ -1367,6 +1473,12 @@ def run_search_tick(trigger_type='tick') -> dict:
         logger.info(f"[search_tick] domain={db_slug} due=0/{n_active} active, nothing to do")
         return {"domain": db_slug, "due": [], "skipped": True, "reason": "none_due"}
 
-    result = run_search_cycle(trigger_type=trigger_type, project_ids=due)
-    result["due"] = due
+    enq = enqueue_search_jobs(db_path, db_slug, due, trigger_type)
+    logger.info(
+        f"[search_tick] domain={db_slug} due={len(due)} concurrency={enq['concurrency']} "
+        f"enqueued={enq['enqueued']} skipped_inflight={enq['skipped_inflight']} "
+        f"queued={enq['queued']} running={enq['running']}"
+    )
+    result = {"domain": db_slug, "due": due}
+    result.update(enq)
     return result

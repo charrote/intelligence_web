@@ -466,6 +466,13 @@ h1{font-size:20px;font-weight:600;color:var(--gray-800);margin-bottom:4px}
             <div class="hint">两次自动报告生成之间的最短间隔</div>
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>智能处理并发数</label>
+            <input type="number" id="sched_search_concurrency" data-key="scheduler.search_concurrency" min="1" max="4" value="1">
+            <div class="hint">每次同时智能处理的采集请求数（默认 1 = 串行，其余排队等待）</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -810,6 +817,16 @@ async function loadSchedulerSettings() {
     document.getElementById('sched_report_enabled').checked = d.report_enabled !== 0;
     if (d.extract_interval_min) document.getElementById('sched_extract_interval').value = d.extract_interval_min;
     if (d.report_interval_min) document.getElementById('sched_report_interval').value = d.report_interval_min;
+    // 采集并发数走 settings 表（与 extract/report 间隔同一套存取机制）
+    try {
+      var r2 = await apiFetch(apiBase() + '/api/system/settings');
+      if (r2.ok) {
+        var s = await r2.json();
+        if (s && s['scheduler.search_concurrency']) {
+          document.getElementById('sched_search_concurrency').value = s['scheduler.search_concurrency'];
+        }
+      }
+    } catch(e) {}
   } catch(e) {
     console.error('加载调度器配置失败:', e);
   }
@@ -832,6 +849,7 @@ async function saveSchedulerSettings() {
     var data = {
       'scheduler.extract_interval_min': document.getElementById('sched_extract_interval').value,
       'scheduler.report_interval_min': document.getElementById('sched_report_interval').value,
+      'scheduler.search_concurrency': document.getElementById('sched_search_concurrency').value,
       'llm.extract_timeout': document.getElementById('sched_llm_extract_timeout').value,
       'llm.report_timeout': document.getElementById('sched_llm_report_timeout').value,
       'report.max_retries': document.getElementById('sched_report_max_retries').value,
