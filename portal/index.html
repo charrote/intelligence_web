@@ -65,6 +65,14 @@
 .batch-item{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--gray-100);font-size:13px;color:var(--gray-700)}
 .batch-item .no{color:var(--gray-400);font-size:12px;flex-shrink:0}
 .batch-item .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 分享选择模式：点「分享」进入，此时点条目=选择（不打开详情）；选择指示点 + 选中行高亮 + 选择态按钮 + 提示条 */
+.sel-dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--gray-300);display:inline-block;box-sizing:border-box;position:relative}
+.sel-dot.on{background:var(--accent);border-color:var(--accent)}
+.sel-dot.on::after{content:"";position:absolute;left:5px;top:2px;width:5px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.row.selected{border-color:var(--accent);background:var(--accent-light)}
+.btn-sm.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.select-mode-banner{font-size:12px;color:var(--accent);background:var(--accent-light);border:1px solid var(--accent);border-radius:6px;padding:6px 12px;margin:0 0 8px;display:none;align-items:center;gap:6px;line-height:1.5}
+.select-mode-banner.show{display:flex}
 </style>
 </head>
 <body>
@@ -84,9 +92,11 @@
     <select id="projFilter" onchange="onProjChange()">
       <option value="">全部项目</option>
     </select>
-    <button class="btn btn-primary btn-sm" id="batchShareBtn" onclick="openBatchShare()" style="display:none;align-items:center;gap:4px">批量分享</button>
+    <button class="btn btn-sm" id="shareModeBtn" onclick="toggleShareSelectMode()" style="display:none;align-items:center;gap:4px">分享</button>
+    <button class="btn btn-primary btn-sm" id="batchShareBtn" onclick="openBatchShare()" style="display:none;align-items:center;gap:4px">确认分享</button>
     <span class="spacer"></span>
   </div>
+  <div class="select-mode-banner" id="selectModeBanner">选择模式：点按条目选择要分享的情报（最多 5 篇），完成点「确认分享」，再点「取消选择」退出</div>
   <div class="feed" id="feed"></div>
   <div class="pager" id="pager"></div>
 </main>
@@ -138,9 +148,9 @@
       <div class="share-label" style="margin-top:16px">拼接长海报（每篇含全文）</div>
       <div class="share-poster-wrap"><canvas id="batchPoster"></canvas></div>
       <div class="share-actions">
-        <button class="btn btn-primary" id="batchPosterBtn" onclick="downloadBatchPoster()">下载长海报</button>
+        <button class="btn btn-primary" id="batchPosterBtn" onclick="downloadBatchPoster()">分享长海报</button>
       </div>
-      <div class="share-tip">最多支持 5 篇 · 每篇展示全文（不含来源）后拼接为一张长海报<br>保存后直接发朋友圈 / 微信群</div>
+      <div class="share-tip">最多支持 5 篇 · 每篇展示全文（不含来源）拼接为一张长海报<br>点「分享长海报」选微信等 App 直接发送，或保存后发朋友圈 / 微信群</div>
     </div>
   </div>
 </div>
@@ -222,6 +232,7 @@ async function init() {
   await loadData();
   render();
   buildSidebarCats();
+  updateShareButtons();
   // 聚焦消费：从工作台跳转来，定位到指定情报详情
   var focusId = localStorage.getItem('qm_open_intel');
   if (focusId) {
@@ -328,6 +339,7 @@ function renderFeed(items) {
   if(!total){
     feed.innerHTML='<div style="padding:40px;text-align:center;color:var(--gray-400);font-size:13px;">暂无匹配的情报</div>';
     renderPager(0);
+    updateShareButtons();
     return;
   }
   feed.innerHTML=pageItems.map(function(item,pi){
@@ -340,11 +352,12 @@ function renderFeed(items) {
       if(proj) projTag='<span class="tag" style="background:var(--accent-light);color:var(--accent);font-size:10px">'+escapeHtml(proj.name)+'</span>';
     }
     var staleTag=(item.is_expired===1||item.is_expired===true)?'<span class="tag" style="background:var(--gray-100);color:var(--gray-400);font-size:10px" title="已超过情报 TTL，仅降权保留">陈旧</span>':'';
-    // 批量分享选择框：仅对持有分享权限的用户显示；无权限时渲染空占位保持列对齐
-    var checkCol = canShareIntel()
-      ? '<div class="row-check"><input type="checkbox" data-id="'+item.id+'" '+(shareSelection.indexOf(item.id)!==-1?'checked':'')+' onclick="toggleShareSelect('+item.id+', this.checked, event)"></div>'
+    // 分享选择模式：仅在选择模式下渲染选择指示点（点按整行切换选择）；非选择模式不显示，空占位保持列对齐
+    var selOn = shareSelection.indexOf(item.id) !== -1;
+    var checkCol = (canShareIntel() && shareSelectMode)
+      ? '<div class="row-check"><span class="sel-dot'+(selOn?' on':'')+'"></span></div>'
       : '<div class="row-check"></div>';
-    return '<div class="row" onclick="openDetail('+item.id+')">'
+    return '<div class="row'+(selOn?' selected':'')+'" data-id="'+item.id+'" onclick="onRowClick('+item.id+')">'
     +checkCol
     +'<div class="row-index">'+(gi+1).toString().padStart(2,'0')+'</div>'
     +'<div class="row-body"><div class="row-title'+(isRead(item.id)?' read':'')+'">'+escapeHtml(item.title||'')+'</div>'
@@ -356,6 +369,7 @@ function renderFeed(items) {
     +'</div></div></div>'
     }).join('');
   renderPager(total);
+  updateShareButtons();
 }
 
 // 分页控制条：上一页 / 页码（窗口化+省略号）/ 下一页
@@ -906,73 +920,114 @@ function posterFilename() {
 }
 
 // 回退路径：浏览器不支持系统分享（桌面端 / 非 HTTPS 环境）时直接下载图片
-function downloadPosterFile(canvas) {
+function downloadPosterFile(canvas, filename) {
   try {
     var a = document.createElement('a');
-    a.download = posterFilename();
+    a.download = filename || posterFilename();
     a.href = canvas.toDataURL('image/png');
     a.click();
   } catch(e) { alert('海报下载失败：' + e); }
+}
+
+// 通用：海报画布 → 系统分享面板（可选微信等 App 直接发送）；不支持/异常回退为下载
+// 单篇分享与批量长海报共用，保证「生成海报 → 系统分享 → 到 App」路径一致
+function shareCanvasPoster(canvas, filename, title, text) {
+  function fb() { downloadPosterFile(canvas, filename); }
+  if (navigator.share && navigator.canShare) {
+    canvas.toBlob(function(blob) {
+      if (!blob) { fb(); return; }
+      var file = new File([blob], filename, { type: 'image/png' });
+      try {
+        if (navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file], title: title || '情报分享', text: text || '' }).catch(function(err) {
+            // 用户取消（AbortError）不算失败；其余异常回退为下载
+            if (!(err && err.name === 'AbortError')) fb();
+          });
+          return;
+        }
+      } catch(e) { /* canShare 不支持 files 等异常 → 走下载 */ }
+      fb();
+    }, 'image/png');
+  } else {
+    fb();
+  }
 }
 
 function downloadPoster() {
   var canvas = document.getElementById('sharePoster');
   if (!canvas || !shareState.url) return;
   if (!shareState.posterReady) { toast('海报生成中，请稍候'); return; }
-  // 移动端优先：生成海报文件 → 打开系统分享面板（可选微信等 App 直接发送）
-  if (navigator.share && navigator.canShare) {
-    canvas.toBlob(function(blob) {
-      if (!blob) { downloadPosterFile(canvas); return; }
-      var file = new File([blob], posterFilename(), { type: 'image/png' });
-      try {
-        if (navigator.canShare({ files: [file] })) {
-          navigator.share({
-            files: [file],
-            title: (currentIntel && currentIntel.title) || '情报分享',
-            text: shareState.url
-          }).catch(function(err) {
-            // 用户取消（AbortError）不算失败；其余异常回退为下载
-            if (!(err && err.name === 'AbortError')) downloadPosterFile(canvas);
-          });
-          return;
-        }
-      } catch(e) { /* canShare 不支持 files 等异常 → 走下载 */ }
-      downloadPosterFile(canvas);
-    }, 'image/png');
-  } else {
-    downloadPosterFile(canvas);
-  }
+  shareCanvasPoster(canvas, posterFilename(), (currentIntel && currentIntel.title) || '情报分享', shareState.url);
 }
 
 // ── 批量分享：多选（最多 5 篇）→ 拼接一张长海报，每篇展示全文（不显示来源）──
 var MAX_BATCH_SHARE = 5;
 var shareSelection = [];      // 已勾选的情报 id（可跨页保留）
+var shareSelectMode = false;  // 分享选择模式开关：点工具栏「分享」进入，此时点条目=选择而非打开详情
 var batchState = { ready: false };
 
-function toggleShareSelect(id, checked, ev) {
-  if (ev && ev.stopPropagation) ev.stopPropagation();
-  if (checked) {
-    if (shareSelection.indexOf(id) === -1) {
-      if (shareSelection.length >= MAX_BATCH_SHARE) {
-        toast('最多选择 ' + MAX_BATCH_SHARE + ' 篇');
-        var cb = document.querySelector('.row-check input[data-id="' + id + '"]');
-        if (cb) cb.checked = false;
-        return;
-      }
-      shareSelection.push(id);
-    }
-  } else {
-    shareSelection = shareSelection.filter(function(x) { return x !== id; });
-  }
-  updateBatchShareBtn();
+// 行点击分发：选择模式下点行=切换选择（不打开详情），否则打开详情
+function onRowClick(id) {
+  if (shareSelectMode && canShareIntel()) { toggleSelect(id); return; }
+  openDetail(id);
 }
 
-function updateBatchShareBtn() {
-  var b = document.getElementById('batchShareBtn');
-  if (!b) return;
-  if (!canShareIntel() || !shareSelection.length) { b.style.display = 'none'; return; }
-  b.style.display = 'inline-flex';
-  b.textContent = '批量分享（' + shareSelection.length + '）';
+// 切换某条情报的选择态（上限 5 篇），就地刷新该行指示点/高亮 + 工具栏按钮，不整页重渲（避免滚动跳变）
+function toggleSelect(id) {
+  var idx = shareSelection.indexOf(id);
+  var on;
+  if (idx === -1) {
+    if (shareSelection.length >= MAX_BATCH_SHARE) { toast('最多选择 ' + MAX_BATCH_SHARE + ' 篇'); return; }
+    shareSelection.push(id); on = true;
+  } else {
+    shareSelection.splice(idx, 1); on = false;
+  }
+  var row = document.querySelector('.row[data-id="' + id + '"]');
+  if (row) {
+    row.classList.toggle('selected', on);
+    var dot = row.querySelector('.sel-dot');
+    if (dot) dot.classList.toggle('on', on);
+  }
+  updateShareButtons();
+}
+
+// 「分享」按钮：进入/退出选择模式
+function toggleShareSelectMode() {
+  if (!canShareIntel()) { alert('没有分享权限（需在角色中勾选"开放情报分享"）'); return; }
+  shareSelectMode = !shareSelectMode;
+  if (shareSelectMode) toast('选择要分享的情报（最多 ' + MAX_BATCH_SHARE + ' 篇）');
+  applyFilters();      // 重渲列表：显示/隐藏选择指示点
+  updateShareButtons();
+}
+
+// 工具栏分享相关按钮 + 选择模式提示条的显隐与文案
+function updateShareButtons() {
+  var modeBtn = document.getElementById('shareModeBtn');
+  var confirmBtn = document.getElementById('batchShareBtn');
+  var banner = document.getElementById('selectModeBanner');
+  var n = shareSelection.length;
+  if (!canShareIntel()) {
+    if (modeBtn) modeBtn.style.display = 'none';
+    if (confirmBtn) confirmBtn.style.display = 'none';
+    if (banner) banner.classList.remove('show');
+    return;
+  }
+  if (banner) banner.classList.toggle('show', shareSelectMode);
+  if (modeBtn) {
+    modeBtn.style.display = 'inline-flex';
+    modeBtn.classList.toggle('active', shareSelectMode);
+    modeBtn.innerHTML = shareSelectMode
+      ? '取消选择'
+      : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>分享';
+  }
+  if (confirmBtn) {
+    if (shareSelectMode && n > 0) {
+      confirmBtn.style.display = 'inline-flex';
+      confirmBtn.textContent = '确认分享（' + n + '）';
+    } else {
+      confirmBtn.style.display = 'none';
+    }
+  }
 }
 
 function openBatchShare() {
@@ -986,7 +1041,7 @@ function openBatchShare() {
   if (!items.length) {
     toast('所选情报已不存在');
     shareSelection = [];
-    updateBatchShareBtn();
+    updateShareButtons();
     return;
   }
   shareSelection = items.map(function(i) { return i.id; });
@@ -1001,7 +1056,7 @@ function openBatchShare() {
   renderBatchPoster(items);
 }
 
-function closeBatchShare() { document.getElementById('batchShareModal').classList.remove('open'); }
+function closeBatchShare() { document.getElementById('batchShareModal').classList.remove('open'); updateShareButtons(); }
 
 // 全文清洗：去 Markdown 符号、链接只留文字、图片去掉；
 // 段落以换行分隔、逐段清洗后保留（不再压成单行，海报按段落首行缩进渲染）；
@@ -1181,14 +1236,10 @@ function downloadBatchPoster() {
   var canvas = document.getElementById('batchPoster');
   if (!canvas) return;
   if (!batchState.ready) { toast('海报生成中，请稍候'); return; }
-  try {
-    var a = document.createElement('a');
-    var d = new Date();
-    var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + d.getDate().padStart(2, '0');
-    a.download = '情报合集分享_' + ds + '.png';
-    a.href = canvas.toDataURL('image/png');
-    a.click();
-  } catch(e) { alert('长海报下载失败：' + e); }
+  var d = new Date();
+  var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + d.getDate().padStart(2, '0');
+  // 与单篇分享一致：优先系统分享面板（可选微信等 App 直接发送），不支持则下载
+  shareCanvasPoster(canvas, '情报合集分享_' + ds + '.png', '情报合集分享', '');
 }
 
 document.addEventListener('click', function(e) {
