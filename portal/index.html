@@ -724,9 +724,9 @@ function renderPoster(intel, url) {
   }
   y += 40;
 
-  // 正文
+  // 正文（段落首行缩进 2 字符）
   ctx.fillStyle = '#4B5563'; ctx.font = '400 19px sans-serif';
-  var bodyLines = wrapText(ctx, bodyText, x, y, cw, 32, 12);
+  var bodyLines = wrapText(ctx, indentParagraphs(bodyText), x, y, cw, 32, 12);
   y += bodyLines * 32 + 24;
 
   // 分隔线
@@ -844,18 +844,29 @@ function openBatchShare() {
 
 function closeBatchShare() { document.getElementById('batchShareModal').classList.remove('open'); }
 
-// 全文清洗：去 Markdown 符号、链接只留文字、图片去掉、压成单行；
+// 全文清洗：去 Markdown 符号、链接只留文字、图片去掉；
+// 段落以换行分隔、逐段清洗后保留（不再压成单行，海报按段落首行缩进渲染）；
 // maxChars 传值则截断（单篇摘要用），不传则返回全文（批量长海报用）
 function summarizeContent(content, maxChars) {
-  var t = String(content || '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/^[#>\s\-\*]+/gm, '')
-    .replace(/[#*`>~_]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  var paras = String(content || '').split(/\n+/).map(function(p) {
+    return p
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/^[#>\s\-\*]+/gm, '')
+      .replace(/[#*`>~_]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }).filter(Boolean);
+  var t = paras.join('\n');
   if (maxChars && t.length > maxChars) return t.slice(0, maxChars) + '…';
   return t;
+}
+
+// 段落首行缩进：每个非空段落首行前补 2 个全角空格（= 2 字符，与详情页 text-indent:2em 一致）
+function indentParagraphs(text) {
+  return String(text || '').split('\n').map(function(p) {
+    return p ? '\u3000\u3000' + p : p;
+  }).join('\n');
 }
 
 // 只测量不绘制：按 maxW 换行，返回行数组（与 wrapText 同算法）
@@ -888,7 +899,7 @@ function renderBatchPoster(items) {
     ctx.font = '700 26px sans-serif';
     var titleLines = splitLines(ctx, (it.title || '').slice(0, 60), cw - 48, 3);
     ctx.font = '400 17px sans-serif';
-    var contentLines = splitLines(ctx, summarizeContent(it.content), cw);
+    var contentLines = splitLines(ctx, indentParagraphs(summarizeContent(it.content)), cw);
     var h = titleLines.length * 38 + 14 + 44 + contentLines.length * 28 + 20;
     return { it: it, titleLines: titleLines, contentLines: contentLines, h: h };
   });
