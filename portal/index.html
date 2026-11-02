@@ -58,6 +58,13 @@
 .share-meta{font-size:12px;color:var(--gray-500);margin-top:8px;line-height:1.5}
 .share-expiry{width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;color:var(--gray-700);background:#fff;outline:none;cursor:pointer}
 .share-expiry:focus{border-color:var(--accent)}
+/* ── 批量分享（多选 → 长海报）── */
+.row-check{width:34px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding-top:12px}
+.row-check input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+.row-check:empty{display:none}
+.batch-item{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--gray-100);font-size:13px;color:var(--gray-700)}
+.batch-item .no{color:var(--gray-400);font-size:12px;flex-shrink:0}
+.batch-item .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -77,6 +84,7 @@
     <select id="projFilter" onchange="onProjChange()">
       <option value="">全部项目</option>
     </select>
+    <button class="btn btn-primary btn-sm" id="batchShareBtn" onclick="openBatchShare()" style="display:none;align-items:center;gap:4px">批量分享</button>
     <span class="spacer"></span>
   </div>
   <div class="feed" id="feed"></div>
@@ -115,6 +123,24 @@
         <button class="btn btn-ghost" id="weiboBtn" onclick="shareToWeibo()">分享到微博</button>
       </div>
       <div class="share-tip">点「分享海报」选微信等 App 直接发送，或保存海报发朋友圈<br>外链展示标题与摘要，注册后可查看全文</div>
+    </div>
+  </div>
+</div>
+<!-- 批量分享弹窗（多选 → 长海报） -->
+<div class="share-modal-overlay" id="batchShareModal">
+  <div class="share-modal" style="max-width:400px">
+    <div class="share-modal-head">
+      <h3 id="batchShareTitle">批量分享情报</h3>
+      <button class="panel-close" onclick="closeBatchShare()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="share-modal-body">
+      <div id="batchShareList" style="max-height:140px;overflow:auto"></div>
+      <div class="share-label" style="margin-top:16px">拼接长海报（每篇含全文）</div>
+      <div class="share-poster-wrap"><canvas id="batchPoster"></canvas></div>
+      <div class="share-actions">
+        <button class="btn btn-primary" id="batchPosterBtn" onclick="downloadBatchPoster()">下载长海报</button>
+      </div>
+      <div class="share-tip">最多支持 5 篇 · 每篇展示全文（不含来源）后拼接为一张长海报<br>保存后直接发朋友圈 / 微信群</div>
     </div>
   </div>
 </div>
@@ -162,6 +188,18 @@ function renderMarkdown(text) {
   // 由全局外链守卫拦截：弹提示 → 新标签页打开，绝不在系统内导航。
   var tmp = document.createElement('div');
   tmp.innerHTML = html;
+  // 段落首行缩进统一为 2em（CSS .detail-content p）：
+  // LLM 产出的正文里部分段落带 2~3 个前导空格（HTML 渲染会保留 1 个空格），
+  // 造成"有些段落缩进、有些没有"的参差——这里把 <p> 开头的前导空白剥掉。
+  var ps = tmp.querySelectorAll('p');
+  for (var pi = 0; pi < ps.length; pi++) {
+    var p = ps[pi];
+    while (p.firstChild && p.firstChild.nodeType === 3) {
+      p.firstChild.textContent = p.firstChild.textContent.replace(/^\s+/, '');
+      if (p.firstChild.textContent) break;
+      p.removeChild(p.firstChild);
+    }
+  }
   var links = tmp.querySelectorAll('a[href]');
   for (var i = 0; i < links.length; i++) {
     var a = links[i];
@@ -302,7 +340,12 @@ function renderFeed(items) {
       if(proj) projTag='<span class="tag" style="background:var(--accent-light);color:var(--accent);font-size:10px">'+escapeHtml(proj.name)+'</span>';
     }
     var staleTag=(item.is_expired===1||item.is_expired===true)?'<span class="tag" style="background:var(--gray-100);color:var(--gray-400);font-size:10px" title="已超过情报 TTL，仅降权保留">陈旧</span>':'';
+    // 批量分享选择框：仅对持有分享权限的用户显示；无权限时渲染空占位保持列对齐
+    var checkCol = canShareIntel()
+      ? '<div class="row-check"><input type="checkbox" data-id="'+item.id+'" '+(shareSelection.indexOf(item.id)!==-1?'checked':'')+' onclick="toggleShareSelect('+item.id+', this.checked, event)"></div>'
+      : '<div class="row-check"></div>';
     return '<div class="row" onclick="openDetail('+item.id+')">'
+    +checkCol
     +'<div class="row-index">'+(gi+1).toString().padStart(2,'0')+'</div>'
     +'<div class="row-body"><div class="row-title'+(isRead(item.id)?' read':'')+'">'+escapeHtml(item.title||'')+'</div>'
     +'<div class="row-meta">'+(item.category?'<span class="tag">'+escapeHtml(item.category)+'</span>':'')
@@ -728,7 +771,7 @@ function renderPoster(intel, url) {
   // ── 第一遍：离屏量高
   var m = document.createElement('canvas').getContext('2d');
   m.font = F_TITLE; var titleLines = splitLines(m, titleText, cw, 3);
-  m.font = F_BODY;  var bodyLines  = splitLines(m, bodyText, cw, 0);   // 不限行数，全文排版
+  m.font = F_BODY;  var bodyLines  = splitLines(m, indentParagraphs(bodyText), cw, 0);   // 不限行数，全文排版（段落首行缩进 2 字符）
   m.font = F_CTA;   var ctaLines   = splitLines(m, CTA_TEXT, cw, 3);
 
   // 极端内容保险：总高超过 MAX_H 时裁掉放不下的正文行（末行加省略号）。
@@ -899,6 +942,253 @@ function downloadPoster() {
   } else {
     downloadPosterFile(canvas);
   }
+}
+
+// ── 批量分享：多选（最多 5 篇）→ 拼接一张长海报，每篇展示全文（不显示来源）──
+var MAX_BATCH_SHARE = 5;
+var shareSelection = [];      // 已勾选的情报 id（可跨页保留）
+var batchState = { ready: false };
+
+function toggleShareSelect(id, checked, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  if (checked) {
+    if (shareSelection.indexOf(id) === -1) {
+      if (shareSelection.length >= MAX_BATCH_SHARE) {
+        toast('最多选择 ' + MAX_BATCH_SHARE + ' 篇');
+        var cb = document.querySelector('.row-check input[data-id="' + id + '"]');
+        if (cb) cb.checked = false;
+        return;
+      }
+      shareSelection.push(id);
+    }
+  } else {
+    shareSelection = shareSelection.filter(function(x) { return x !== id; });
+  }
+  updateBatchShareBtn();
+}
+
+function updateBatchShareBtn() {
+  var b = document.getElementById('batchShareBtn');
+  if (!b) return;
+  if (!canShareIntel() || !shareSelection.length) { b.style.display = 'none'; return; }
+  b.style.display = 'inline-flex';
+  b.textContent = '批量分享（' + shareSelection.length + '）';
+}
+
+function openBatchShare() {
+  if (!canShareIntel()) { alert('没有分享权限（需在角色中勾选"开放情报分享"）'); return; }
+  if (!shareSelection.length) { toast('请先在列表勾选要分享的情报'); return; }
+  var items = [];
+  shareSelection.forEach(function(id) {
+    var it = allItems.find(function(i) { return i.id === id; });
+    if (it) items.push(it);
+  });
+  if (!items.length) {
+    toast('所选情报已不存在');
+    shareSelection = [];
+    updateBatchShareBtn();
+    return;
+  }
+  shareSelection = items.map(function(i) { return i.id; });
+  document.getElementById('batchShareTitle').textContent = '批量分享情报（' + items.length + ' 篇）';
+  document.getElementById('batchShareList').innerHTML = items.map(function(it, idx) {
+    return '<div class="batch-item"><span class="no">' + String(idx + 1).padStart(2, '0') + '</span><span class="t">' + escapeHtml(it.title || '') + '</span></div>';
+  }).join('');
+  document.getElementById('batchShareModal').classList.add('open');
+  var pb = document.getElementById('batchPosterBtn');
+  if (pb) { pb.disabled = true; pb.style.opacity = '.6'; }
+  batchState.ready = false;
+  renderBatchPoster(items);
+}
+
+function closeBatchShare() { document.getElementById('batchShareModal').classList.remove('open'); }
+
+// 全文清洗：去 Markdown 符号、链接只留文字、图片去掉；
+// 段落以换行分隔、逐段清洗后保留（不再压成单行，海报按段落首行缩进渲染）；
+// maxChars 传值则截断（单篇摘要用），不传则返回全文（批量长海报用）
+function summarizeContent(content, maxChars) {
+  var paras = String(content || '').split(/\n+/).map(function(p) {
+    return p
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/^[#>\s\-\*]+/gm, '')
+      .replace(/[#*`>~_]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }).filter(Boolean);
+  var t = paras.join('\n');
+  if (maxChars && t.length > maxChars) return t.slice(0, maxChars) + '…';
+  return t;
+}
+
+// 段落首行缩进：每个非空段落首行前补 2 个全角空格（= 2 字符，与详情页 text-indent:2em 一致）
+function indentParagraphs(text) {
+  return String(text || '').split('\n').map(function(p) {
+    return p ? '\u3000\u3000' + p : p;
+  }).join('\n');
+}
+
+function renderBatchPoster(items) {
+  var canvas = document.getElementById('batchPoster');
+  var W = 750, PAD = 48;
+  var ctx = canvas.getContext('2d');
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var x = PAD + 36, cw = W - PAD*2 - 72;
+
+  // ── 第一遍：测量各区块行数，算出长海报总高 ──
+  canvas.width = W * dpr; canvas.height = 100 * dpr; // 临时尺寸，仅取 ctx 测量
+  var blocks = items.map(function(it) {
+    ctx.font = '700 26px sans-serif';
+    var titleLines = splitLines(ctx, (it.title || '').slice(0, 60), cw - 48, 3);
+    ctx.font = '400 17px sans-serif';
+    var contentLines = splitLines(ctx, indentParagraphs(summarizeContent(it.content)), cw);
+    var h = titleLines.length * 38 + 14 + 44 + contentLines.length * 28 + 20;
+    return { it: it, titleLines: titleLines, contentLines: contentLines, h: h };
+  });
+  var itemsH = 0;
+  blocks.forEach(function(b) { itemsH += b.h; });
+  itemsH += (items.length - 1) * 28; // 篇间分隔线
+  var H = 260 + itemsH + 434; // 头部 260 + 情报区 + 尾部 CTA/二维码（434 保证 slogan 落在二维码框下方）
+
+  // iOS Safari 画布面积上限约 16M px²，超了 toDataURL 会导出空白图。
+  // 超长海报自动降 dpr（与单篇海报同一策略；750 宽 1x 仍清晰）。
+  var MAX_AREA = 16000000;
+  if (W * H * dpr * dpr > MAX_AREA) dpr = Math.max(1, Math.floor(Math.sqrt(MAX_AREA / (W * H))));
+
+  // ── 第二遍：按实际高度重设 canvas 并绘制 ──
+  // 不写 canvas.style 尺寸：交给 .share-poster-wrap canvas{width:100%} 等比缩放，
+  // 弹窗里看到完整长海报（位图仍按 750×H×dpr 高清导出）。
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // 背景 + 白色主卡
+  ctx.fillStyle = '#F5F6F8'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, PAD, PAD, W - PAD*2, H - PAD*2, 20); ctx.fill();
+
+  // 品牌
+  ctx.fillStyle = '#3B82F6';
+  roundRect(ctx, x, 88, 52, 52, 12); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = '700 26px sans-serif';
+  ctx.textBaseline = 'middle'; ctx.fillText('情', x + 14, 116);
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#1F2937'; ctx.font = '600 24px sans-serif';
+  ctx.fillText('业务情报社', x + 68, 112);
+  ctx.fillStyle = '#9CA3AF'; ctx.font = '400 16px sans-serif';
+  ctx.fillText('每日自动采集 · 行业情报', x + 68, 138);
+
+  // 区块标题 + 日期范围（先按标题字号测宽，再切小字号排日期，避免叠字）
+  var dates = items.map(function(it) { return (it.created_at || '').slice(0, 10); }).filter(Boolean).sort();
+  var headText = '情报精选（' + items.length + ' 篇）';
+  var y = 208;
+  ctx.fillStyle = '#1F2937'; ctx.font = '700 26px sans-serif';
+  var headW = ctx.measureText(headText).width;
+  ctx.fillText(headText, x, y);
+  if (dates.length) {
+    var rangeStr = (dates[0] === dates[dates.length-1]) ? dates[0] : (dates[0] + ' 至 ' + dates[dates.length-1]);
+    ctx.fillStyle = '#9CA3AF'; ctx.font = '400 15px sans-serif';
+    ctx.fillText(rangeStr, x + headW + 14, y);
+  }
+  y = 260;
+
+  // 各篇：编号 + 标题 + 标签 + 全文（不含来源）
+  blocks.forEach(function(b, bi) {
+    var it = b.it;
+    ctx.fillStyle = '#3B82F6';
+    roundRect(ctx, x, y, 34, 34, 8); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '700 17px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(bi + 1).padStart(2, '0'), x + 7, y + 19);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#1F2937'; ctx.font = '700 26px sans-serif';
+    for (var li = 0; li < b.titleLines.length; li++) {
+      ctx.fillText(b.titleLines[li], x + 48, y + 13 + li * 38);
+    }
+    y += b.titleLines.length * 38 + 14;
+    // 标签
+    ctx.font = '500 15px sans-serif';
+    var tags = [];
+    if (it.category) tags.push(it.category);
+    if (it.company) tags.push(it.company);
+    tags.push((it.created_at || '').slice(0, 10));
+    var tagX = x;
+    for (var ti = 0; ti < tags.length; ti++) {
+      var tw = ctx.measureText(tags[ti]).width + 22;
+      ctx.fillStyle = '#EEF0F3';
+      roundRect(ctx, tagX, y - 16, tw, 30, 6); ctx.fill();
+      ctx.fillStyle = ti === 0 ? '#722ED1' : '#4B5563';
+      ctx.fillText(tags[ti], tagX + 11, y + 4);
+      tagX += tw + 10;
+    }
+    y += 44;
+    // 全文（不显示来源；已去 Markdown 符号、链接只留文字、图片去掉；段落首行缩进 2 字符）
+    ctx.fillStyle = '#4B5563'; ctx.font = '400 17px sans-serif';
+    for (var si = 0; si < b.contentLines.length; si++) {
+      ctx.fillText(b.contentLines[si], x, y + si * 28);
+    }
+    y += b.contentLines.length * 28 + 20;
+    // 篇间分隔线（最后一篇后不画，尾部分隔线在 CTA 前）
+    if (bi < blocks.length - 1) {
+      ctx.strokeStyle = '#E5E7EB'; ctx.setLineDash([4,4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + cw, y); ctx.stroke(); ctx.setLineDash([]);
+      y += 28;
+    }
+  });
+
+  // 尾部：分隔线 + CTA
+  ctx.strokeStyle = '#E5E7EB'; ctx.setLineDash([4,4]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + cw, y); ctx.stroke(); ctx.setLineDash([]);
+  y += 36;
+  ctx.fillStyle = '#1F2937'; ctx.font = '700 24px sans-serif';
+  ctx.fillText('想看更多情报？', x, y);
+  ctx.fillStyle = '#4B5563'; ctx.font = '400 17px sans-serif';
+  drawLines(ctx, splitLines(ctx, '注册后，每日自动采集 1200+ 条竞品/商机情报，追踪 5 大行业，分析师每日推送。', cw, 2), x, y + 34, 28);
+  y += 96;
+
+  // 二维码 + 文案 + 底部 slogan：白底框/边框/文字先同步绘制，
+  // QR 图在 toCanvas 异步回调后画在最上层（若框后画会把 QR 盖掉）
+  var qrSize = 180, qrX = x, qrY = y;
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 12); ctx.fill();
+  ctx.strokeStyle = '#D6E4FF'; ctx.lineWidth = 1;
+  roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 12); ctx.stroke();
+  var tx = qrX + qrSize + 28;
+  ctx.fillStyle = '#1F2937'; ctx.font = '600 20px sans-serif';
+  ctx.fillText('业务情报社', tx, qrY + 30);
+  ctx.fillStyle = '#9CA3AF'; ctx.font = '400 16px sans-serif';
+  drawLines(ctx, splitLines(ctx, '长按识别二维码\n进入业务情报社\n每日 10:00 推送行业情报', W - PAD*2 - (qrSize + 28) - 72, 3), tx, qrY + 62, 26);
+  ctx.fillStyle = '#9CA3AF'; ctx.font = '400 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('本海报由 业务情报社 自动采集生成 · 内容仅供参考', W/2, H - PAD - 36);
+  ctx.textAlign = 'left';
+  var finish = function() {
+    batchState.ready = true;
+    var btn = document.getElementById('batchPosterBtn');
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+  };
+  if (typeof QRCode !== 'undefined') {
+    var qrCanvas = document.createElement('canvas');
+    QRCode.toCanvas(qrCanvas, window.location.origin, { width: qrSize, margin: 1, color: { dark: '#1F2937', light: '#ffffff' } }, function(err) {
+      if (!err) ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+      finish();
+    });
+  } else {
+    finish();
+  }
+}
+
+function downloadBatchPoster() {
+  var canvas = document.getElementById('batchPoster');
+  if (!canvas) return;
+  if (!batchState.ready) { toast('海报生成中，请稍候'); return; }
+  try {
+    var a = document.createElement('a');
+    var d = new Date();
+    var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + d.getDate().padStart(2, '0');
+    a.download = '情报合集分享_' + ds + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch(e) { alert('长海报下载失败：' + e); }
 }
 
 document.addEventListener('click', function(e) {
