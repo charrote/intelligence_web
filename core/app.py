@@ -1158,17 +1158,21 @@ def create_app(project_root, spec):
                 'error': f'invalid target_type, must be one of: {target_types}'
             }), 400
 
-        project_id = projlib.create_project(
-            db_path,
-            name=data['name'],
-            target_type=data['target_type'],
-            target_name=data.get('target_name', ''),
-            scope=data.get('scope', ''),
-            frequency=data.get('frequency', 'weekly'),
-            instruction=data.get('instruction', ''),
-            datasource_ids=data.get('datasource_ids', []),
-            source_only=data.get('source_only', False),
-        )
+        try:
+            project_id = projlib.create_project(
+                db_path,
+                name=data['name'],
+                target_type=data['target_type'],
+                target_name=data.get('target_name', ''),
+                scope=data.get('scope', ''),
+                frequency=data.get('frequency', 'weekly'),
+                instruction=data.get('instruction', ''),
+                datasource_ids=data.get('datasource_ids', []),
+                source_only=data.get('source_only', False),
+                frequency_interval=data.get('frequency_interval', 1),
+            )
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
         project = projlib.get_project_by_id(db_path, project_id)
         return jsonify(_mask_project(project)), 201
 
@@ -1182,7 +1186,10 @@ def create_app(project_root, spec):
     @app.route('/api/projects/<int:id>', methods=['PUT'])
     @require_permission('projects.manage')
     def update_project_endpoint(id):
-        project = projlib.update_project(db_path, id, request.json)
+        try:
+            project = projlib.update_project(db_path, id, request.json)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
         if project is None:
             return jsonify({'error': 'not found'}), 404
         return jsonify(_mask_project(project))

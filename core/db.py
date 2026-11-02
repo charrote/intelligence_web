@@ -1868,6 +1868,7 @@ def migrate_db(db_path, domain_key=None):
                     target_name TEXT NOT NULL DEFAULT '',
                     scope TEXT DEFAULT '',
                     frequency TEXT NOT NULL DEFAULT 'weekly',
+                    frequency_interval INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL DEFAULT 'active',
                     instruction TEXT DEFAULT '',
                     last_search_at TEXT,
@@ -1884,6 +1885,11 @@ def migrate_db(db_path, domain_key=None):
             # Migration: 存量库补 source_only（仅采集源开关：1=只从关联数据源采集，0=开放式搜索）
             try:
                 c.execute("ALTER TABLE projects ADD COLUMN source_only INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass  # column already exists
+            # Migration: 存量库补 frequency_interval（采集频率数值：单位+数值，默认 1 = 单位本身，存量行为不变）
+            try:
+                c.execute("ALTER TABLE projects ADD COLUMN frequency_interval INTEGER NOT NULL DEFAULT 1")
             except Exception:
                 pass  # column already exists
 

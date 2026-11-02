@@ -72,15 +72,17 @@ def _get_config() -> dict:
     from config import get_search_config
     return get_search_config()
 
-def _recency_window_days(frequency: str, cfg: dict) -> int:
+def _recency_window_days(frequency: str, cfg: dict, interval: int = 1) -> int:
     """项目采集频率 → 时效窗口（天）。
 
-    hourly→1 / daily→7 / weekly→30 / monthly→365；oneshot 及未知频率
-    回落到 config/search.json 的 recency_days（默认 30）。
+    基础窗口按单位：hourly→1 / daily→7 / weekly→30 / monthly→365；
+    数值化后按 数值×单位 折算（interval 为"每 N 单位"的 N，缺省 1）。
+    oneshot 及未知频率回落到 config/search.json 的 recency_days（默认 30）。
     """
+    n = interval if isinstance(interval, int) and interval > 0 else 1
     mapped = _FREQ_RECENCY_DAYS.get(frequency)
     if mapped is not None:
-        return mapped
+        return mapped * n
     try:
         return max(1, int(cfg.get('recency_days', 30)))
     except (TypeError, ValueError):
@@ -732,9 +734,13 @@ _ATOM = '{http://www.w3.org/2005/Atom}'
 _DC_DATE = '{http://purl.org/dc/elements/1.1/}date'
 _RDF_ITEM = '{http://purl.org/rss/1.0/}item'
 
-def _recency_cutoff(frequency) -> datetime:
-    """给定频率的新鲜度窗口起点（UTC）。未知频率默认 7 天。"""
-    hours = _RECENCY_HOURS.get(frequency, 7 * 24)
+def _recency_cutoff(frequency, interval: int = 1) -> datetime:
+    """给定频率的新鲜度窗口起点（UTC）。未知频率默认 7 天。
+
+    数值化后按 数值×单位 折算（interval 为"每 N 单位"的 N，缺省 1）。
+    """
+    n = interval if isinstance(interval, int) and interval > 0 else 1
+    hours = _RECENCY_HOURS.get(frequency, 7 * 24) * n
     return datetime.now(timezone.utc) - timedelta(hours=hours)
 
 def _looks_like_feed(text: str) -> bool:
@@ -914,7 +920,7 @@ def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
         )
         return 0, 0
 
-    cutoff = _recency_cutoff(project.get("frequency"))
+    cutoff = _recency_cutoff(project.get("frequency"), project.get("frequency_interval") or 1)
     llm_calls_before = llm_calls
     # 复用 state 单一事实来源：_process_candidate 读写 llm_calls/total_new/
     # project_new/seen_urls，与开放式采集路径保持一致的预算与去重语义。
@@ -1094,8 +1100,10 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 continue
 
             # 时效窗口：项目频率 → 天数（hourly=1 / daily=7 / weekly=30 / monthly=365，
-            # oneshot 用 config recency_days 兜底）。"新旧"由此硬约束，不靠模型自觉。
-            recency_days = _recency_window_days(project.get("frequency", ""), cfg)
+            # 再 ×数值 折算；oneshot 用 config recency_days 兜底）。"新旧"由此硬约束，不靠模型自觉。
+            recency_days = _recency_window_days(
+                project.get("frequency", ""), cfg, project.get("frequency_interval") or 1
+            )
 
             # Recent intel for dedup
             recent = get_intelligence_by_project(db_path, pid, limit=20)
@@ -1374,7 +1382,9 @@ def _due_project_ids(db_path) -> list:
     """查询本域 active 项目中已到期的项目 id。
 
     到期 = last_search_at 为空（存量项目首次调度）或距上次采集
-    >= 该频率的间隔（hourly=1h / daily=24h / weekly=168h / monthly=720h）。
+    >= 该频率的间隔。间隔 = 单位基础小时 × 数值：
+    hourly×N=N h / daily×N=24N h / weekly×N=168N h / monthly×N=720N h
+    （数值缺省 1，等价于原"每小时/每日…"语义）。
     oneshot 无自动调度（_FREQ_HOURS 里查不到 → 永不到期）。
     """
     now = datetime.now()
@@ -1382,13 +1392,21 @@ def _due_project_ids(db_path) -> list:
     from core.db import get_db
     with get_db(db_path) as conn:
         rows = conn.execute(
-            "SELECT id, frequency, last_search_at FROM projects WHERE status = 'active'"
+            "SELECT id, frequency, frequency_interval, last_search_at "
+            "FROM projects WHERE status = 'active'"
         ).fetchall()
     for r in rows:
         freq = r["frequency"]
-        hours = _FREQ_HOURS.get(freq)
-        if hours is None:
+        base_hours = _FREQ_HOURS.get(freq)
+        if base_hours is None:
             continue  # oneshot / 未知频率：不参与自动调度
+        # 数值（interval）：防御旧库缺列 → 缺省 1
+        try:
+            interval = r["frequency_interval"]
+        except (KeyError, IndexError):
+            interval = 1
+        interval = interval if (isinstance(interval, int) and interval > 0) else 1
+        hours = base_hours * interval
         last = r["last_search_at"]
         if not last:
             ids.append(r["id"])  # 存量项目：首次到期，立即采集

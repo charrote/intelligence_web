@@ -170,13 +170,17 @@ tr.cursor-pointer:hover td{background:var(--accent-light)}
       </div>
       <div class="form-group">
         <label>采集频率 *</label>
-        <select id="fFrequency">
-          <option value="hourly">每小时</option>
-          <option value="daily">每日</option>
-          <option value="weekly">每周</option>
-          <option value="monthly">每月</option>
-          <option value="oneshot">一次性</option>
-        </select>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="fFrequency" onchange="onFreqChange('fFrequency','fFreqInterval')">
+            <option value="hourly">每小时</option>
+            <option value="daily">每日</option>
+            <option value="weekly">每周</option>
+            <option value="monthly">每月</option>
+            <option value="oneshot">一次性</option>
+          </select>
+          <input type="number" id="fFreqInterval" class="freq-interval" min="1" max="24" value="1" style="width:72px" title="每 N 个单位">
+        </div>
+        <div class="hint">单位后填数值：如"小时 + 3" = 每 3 小时；默认 1。一次性无数值。</div>
       </div>
     </div>
     <div class="form-group">
@@ -256,6 +260,28 @@ let availableTargetTypes = [];
 const FREQ_LABELS = {
   hourly: '每小时', daily: '每日', weekly: '每周', monthly: '每月', oneshot: '一次性'
 };
+// 频率单位词 + 数值上限（与后端 _FREQ_INTERVAL_MAX 一致）
+const FREQ_UNIT_WORDS = { hourly: '小时', daily: '日', weekly: '周', monthly: '月' };
+const FREQ_INTERVAL_MAX = { hourly: 24, daily: 31, weekly: 4, monthly: 12 };
+// 可读频率文案：每 N 小时 / 每小时（数值=1 时省略 N）/ 一次性
+function freqText(freq, interval){
+  if(freq === 'oneshot') return '一次性';
+  const w = FREQ_UNIT_WORDS[freq] || freq;
+  const n = (interval && interval > 1) ? interval : 1;
+  return (n > 1) ? ('每 '+n+' '+w) : ('每 '+w);
+}
+// 频率单位变化 → 联动数值输入框的上限 / 禁用
+function onFreqChange(selId, inputId){
+  const unit = document.getElementById(selId).value;
+  const inp = document.getElementById(inputId);
+  if(!inp) return;
+  if(unit === 'oneshot'){ inp.disabled = true; inp.value = 1; return; }
+  inp.disabled = false;
+  inp.max = FREQ_INTERVAL_MAX[unit] || 31;
+  let v = parseInt(inp.value, 10);
+  if(isNaN(v) || v < 1) inp.value = 1;
+  else if(v > inp.max) inp.value = inp.max;
+}
 
 // ── Datasource selection state ─────────────────────────────────────────────
 let allDatasources = [];
@@ -442,7 +468,7 @@ async function loadProjects(){
         +'<td><span class="tag '+(p.target_type||'')+'">'+(TARGET_TYPE_LABELS[p.target_type]||p.target_type||p.target_type)+'</span></td>'
         +'<td>'+escapeHtml(p.target_name)+'</td>'
         +'<td>'+dsText+soBadge+'</td>'
-        +'<td><span class="tag '+p.frequency+'">'+(FREQ_LABELS[p.frequency]||p.frequency)+'</span></td>'
+        +'<td><span class="tag '+p.frequency+'">'+freqText(p.frequency, p.frequency_interval)+'</span></td>'
         +'<td>'+(p.total_intel||0)+'</td>'
         +'<td><span class="tag '+p.status+'">'+p.status+'</span></td>'
         +'<td>'+formatDate(p.created_at)+'</td>'
@@ -468,6 +494,9 @@ function openCreate(){
   document.getElementById('fTarget').value='';
   document.getElementById('fScope').value='';
   document.getElementById('fSourceOnly').checked=false;
+  document.getElementById('fFrequency').value='hourly';
+  document.getElementById('fFreqInterval').value=1;
+  onFreqChange('fFrequency','fFreqInterval');
   selectedDsIds = [];
   updateDsChips();
   document.getElementById('createFormFeedback').style.display='none';
@@ -481,13 +510,14 @@ async function createProject(){
   const target=document.getElementById('fTarget').value.trim();
   const scope=document.getElementById('fScope').value.trim();
   const freq=document.getElementById('fFrequency').value;
+  const freqInterval=parseInt(document.getElementById('fFreqInterval').value,10)||1;
   const fb=document.getElementById('createFormFeedback');
   if(!name){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入项目名称';return}
   if(!target){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='请输入目标名称';return}
   if(document.getElementById('fSourceOnly').checked&&selectedDsIds.length===0){fb.style.display='block';fb.style.background='#fceef0';fb.style.color='var(--red)';fb.textContent='开启「仅采集源」需至少关联一个数据源';return}
   try{
     const r=await apiFetch(APP_API_BASE+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      name, target_type:type_, target_name:target, scope, frequency:freq, datasource_ids:selectedDsIds,
+      name, target_type:type_, target_name:target, scope, frequency:freq, frequency_interval:freqInterval, datasource_ids:selectedDsIds,
       source_only:document.getElementById('fSourceOnly').checked
     })});
     if(r.status===201){
@@ -526,7 +556,7 @@ async function openDetail(pid){
     let html='<div class="detail-section"><h3>项目信息</h3><div class="detail-meta">'
       +'<span class="tag '+(p.target_type||'')+'">'+typeLabel+'</span>'
       +'<span class="tag '+p.status+'">'+p.status+'</span>'
-      +'<span class="tag '+p.frequency+'">'+(FREQ_LABELS[p.frequency]||p.frequency)+'</span>'
+      +'<span class="tag '+p.frequency+'">'+freqText(p.frequency, p.frequency_interval)+'</span>'
       +(p.source_only?'<span class="tag source-only">仅采集源</span>':'<span class="tag daily">开放式采集</span>')+'</div>'
       +'<div class="detail-info"><strong>名称：</strong>'+escapeHtml(p.name)+'</div>'
       +'<div class="detail-info"><strong>目标：</strong>'+escapeHtml(p.target_name)+'</div>'
@@ -618,7 +648,7 @@ async function openEdit(pid){
     body.innerHTML='<div class="form-group"><label>项目名称 *</label><input type="text" id="editName" value="'+escapeHtml(p.name)+'" maxlength="80"></div>'
       +'<div class="form-row">'
       +'<div class="form-group"><label>目标类型</label><select id="editType">'+availableTargetTypes.map(t=>'<option value="'+t+'" '+(p.target_type===t?'selected':'')+'>'+TARGET_TYPE_LABELS[t]+'<\/option>').join('')+'</select></div>'
-      +'<div class="form-group"><label>采集频率</label><select id="editFrequency"><option value="hourly" '+(p.frequency==='hourly'?'selected':'')+'>每小时<\/option><option value="daily" '+(p.frequency==='daily'?'selected':'')+'>每日<\/option><option value="weekly" '+(p.frequency==='weekly'?'selected':'')+'>每周<\/option><option value="monthly" '+(p.frequency==='monthly'?'selected':'')+'>每月<\/option><option value="oneshot" '+(p.frequency==='oneshot'?'selected':'')+'>一次性<\/option><\/select></div>'
+      +'<div class="form-group"><label>采集频率</label><div style="display:flex;gap:8px;align-items:center"><select id="editFrequency" onchange="onFreqChange(\'editFrequency\',\'editFreqInterval\')"><option value="hourly" '+(p.frequency==='hourly'?'selected':'')+'>每小时<\/option><option value="daily" '+(p.frequency==='daily'?'selected':'')+'>每日<\/option><option value="weekly" '+(p.frequency==='weekly'?'selected':'')+'>每周<\/option><option value="monthly" '+(p.frequency==='monthly'?'selected':'')+'>每月<\/option><option value="oneshot" '+(p.frequency==='oneshot'?'selected':'')+'>一次性<\/option><\/select><input type="number" id="editFreqInterval" class="freq-interval" min="1" value="'+(p.frequency_interval||1)+'" style="width:72px" title="每 N 个单位"></div></div>'
       +'</div>'
       +'<div class="form-group"><label>目标名称</label><input type="text" id="editTarget" value="'+escapeHtml(p.target_name)+'"></div>'
       +'<div class="form-group"><label>范围/描述</label><textarea id="editScope" rows="3">'+escapeHtml(p.scope||'')+'</textarea></div>'
@@ -632,6 +662,7 @@ async function openEdit(pid){
       +'<span class="spacer"></span>'
       +'<button class="btn btn-ghost" onclick="openDetail('+pid+')">返回</button>'
       +'<button class="btn-icon btn-danger" onclick="deleteProject('+pid+')" data-tip="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>';
+    onFreqChange('editFrequency','editFreqInterval');
     document.getElementById('detailPanel').classList.add('open');
   }catch(e){
     document.getElementById('detailBody').innerHTML='<div class="empty">加载失败</div>';
@@ -645,13 +676,14 @@ async function saveEdit(pid){
   const scope=document.getElementById('editScope').value.trim();
   const freq=document.getElementById('editFrequency').value;
   const sourceOnly=document.getElementById('editSourceOnly').checked;
+  const freqInterval=parseInt(document.getElementById('editFreqInterval').value,10)||1;
   if(!name||!target){alert('项目名称和目标名称为必填项');return}
   if(sourceOnly&&selectedDsIds.length===0){alert('开启「仅采集源」需至少关联一个数据源');return}
   try{
     const r0=await apiFetch(APP_API_BASE+'/api/projects/'+pid+'/datasources',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({datasource_ids:selectedDsIds})});
-    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq,source_only:sourceOnly})});
+    const r=await apiFetch(APP_API_BASE+'/api/projects/'+pid,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target_type:type_,target_name:target,scope,frequency:freq,frequency_interval:freqInterval,source_only:sourceOnly})});
     if(r0.ok&&r.ok){openDetail(pid);await loadProjects();}
-    else alert('保存失败');
+    else{let msg='保存失败';try{const e=await r.json();msg=e.error||msg;}catch(_){}alert(msg);}
   }catch(e){alert('保存失败');}
 }
 
