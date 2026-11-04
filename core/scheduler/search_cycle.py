@@ -640,12 +640,14 @@ def _process_candidate(cand: dict, context: dict, window_days: int, state: dict,
            seen_urls / recent_titles / intel_items 等）。
     返回 True 表示产生了新情报。
     """
-    from core.db import create_intelligence, update_intelligence_status
+    from core.db import create_intelligence, update_intelligence_status, _normalize_source_url
 
     url = (cand.get("url") or "").strip()
-    if not url or url in state["seen_urls"]:
+    # 统一用归一化 URL 做集合键（与种子来源、feed 通道一致），fragment/大小写差异不穿透
+    url_key = _normalize_source_url(url)
+    if not url_key or url_key in state["seen_urls"]:
         return False
-    state["seen_urls"].add(url)
+    state["seen_urls"].add(url_key)
 
     content = (cand.get("content") or "").strip()
     # 鉴权采集：URL 命中配置了凭证的源（按域名）→ 带鉴权抓全文（比 snippet 更全）；
@@ -910,6 +912,7 @@ def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
     last_crawled_at。返回 (project_new, llm_used)。
     """
     from core.datasource import get_datasources_for_project, update_source_last_crawled
+    from core.db import _normalize_source_url
 
     datasources = [
         ds for ds in get_datasources_for_project(db_path, project["id"])
@@ -955,7 +958,9 @@ def _collect_from_sources(db_path, project, context, recent_titles, recent_urls,
             if state["total_new"] + state["project_new"] >= max_per_domain or state["llm_calls"] >= max_llm_calls:
                 break
             link = (it.get("link") or url).strip()
-            if not link or link in seen_links:
+            # 与 _process_candidate 相同的归一化键，保证跨通道去重一致
+            link_key = _normalize_source_url(link)
+            if not link_key or link_key in seen_links:
                 continue
 
             before_new = state["project_new"]
@@ -994,7 +999,7 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
         get_db_path, create_intelligence,
         get_intelligence_by_project, update_intelligence_status,
         record_search_run_start, record_search_run_end,
-        finalize_stale_search_runs,
+        finalize_stale_search_runs, _normalize_source_url,
     )
     from core.project import get_projects, touch_project_last_search
 
@@ -1109,13 +1114,22 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
 
             # Recent intel for dedup
             recent = get_intelligence_by_project(db_path, pid, limit=20)
+            # URL 去重种子：项目近期情报的 source_url（归一化键）。之前 seen_urls 每轮
+            # 从空集合开始，同一文章跨轮再次命中搜索时只有标题精确匹配一道闸——
+            # LLM 提炼标题措辞漂移即穿透，造成重复入库。预置后重复 URL 在进入
+            # LLM 判断前直接跳过（省调用）；20 条窗口外/跨项目的兜底由
+            # create_intelligence 的持久化 source_url 判重负责。
+            recent_urls = {
+                _normalize_source_url(r.get("source_url"))
+                for r in recent if (r.get("source_url") or "").strip()
+            } - {""}
             state = {
                 "db_path": db_path,
                 "pid": pid,
                 "project_name": project.get("name", ""),
                 "target_type": target_type,
                 "content_max": content_max,
-                "seen_urls": set(),
+                "seen_urls": recent_urls,
                 "recent_titles": {r.get("title", "").lower() for r in recent},
                 "intel_items": intel_items,
                 "llm_calls": llm_calls,
@@ -1143,7 +1157,11 @@ def run_search_cycle(trigger_type='scheduled', project_ids=None) -> dict:
                 # source_only 模式扩大标题去重窗口并按 source_url 去重
                 recent_wide = get_intelligence_by_project(db_path, pid, limit=50)
                 recent_wide_titles = {r.get("title", "").lower() for r in recent_wide}
-                recent_wide_urls = {(r.get("source_url") or "").strip() for r in recent_wide if r.get("source_url")}
+                # 归一化键：与 _process_candidate 的集合键一致，fragment/大小写差异不会穿透
+                recent_wide_urls = {
+                    _normalize_source_url(r.get("source_url"))
+                    for r in recent_wide if (r.get("source_url") or "").strip()
+                } - {""}
                 project_new, llm_used = _collect_from_sources(
                     db_path, project, context, recent_wide_titles, recent_wide_urls,
                     max_per_domain, total_new, max_llm_calls, llm_calls,

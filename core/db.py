@@ -2,6 +2,7 @@
 
 import sqlite3
 import os
+import re
 import json
 import shutil
 import glob
@@ -491,6 +492,22 @@ def get_db(db_path):
         conn.close()
 
 
+def _normalize_source_url(url):
+    """Normalize a source URL for dedup comparison.
+
+    去首尾空白、去掉 #fragment、协议与主机名转小写（路径保持大小写敏感）。
+    空值 → ""。采集入库与去重比较必须共用同一归一化，保证键一致。
+    """
+    u = (url or "").strip()
+    if not u:
+        return ""
+    u = u.split("#", 1)[0]
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)([^/]+)(/.*)?$", u)
+    if m:
+        return m.group(1).lower() + m.group(2).lower() + (m.group(3) or "")
+    return u
+
+
 def create_intelligence(db_path, title, content, category, contact_name, metadata=None, project_id=None, published_date=""):
     """Create a new intelligence record. Returns the id or None on duplicate."""
     with get_db(db_path) as conn:
@@ -506,6 +523,17 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
         deal_value = metadata.get("deal_value", 0) if metadata else 0
         industry = metadata.get("industry", "") if metadata else ""
         source_url = metadata.get("source_url", "") if metadata else ""
+        # 持久化 URL 去重：同一来源链接已入库（跨项目/跨轮次）→ 判重跳过。
+        # 搜刮标题由 LLM 每轮重新提炼，措辞会漂移，仅靠标题精确匹配拦不住
+        # 同一篇文章被反复采集；source_url 是文章的稳定身份，作为第二道去重。
+        url_norm = _normalize_source_url(source_url)
+        if url_norm:
+            dup_url = conn.execute(
+                "SELECT id FROM intelligence WHERE source_url = ?",
+                (url_norm,)
+            ).fetchone()
+            if dup_url:
+                return None
         published = (published_date or "").strip()[:10]  # 文章发布时间 YYYY-MM-DD（可空）
         now = datetime.now().isoformat()
         # 分类归一到受控词表（空值保持"未分类"语义，不强制归类）
@@ -516,7 +544,7 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
             try:
                 cursor = conn.execute(
                     'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, source_url, published_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, published, now, now)
+                    (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, url_norm, published, now, now)
                 )
             except sqlite3.OperationalError as col_err:
                 # 滚动发布窗口：旧库尚无 published_date 列（web 进程启动时迁移）→ 降级写入
@@ -524,7 +552,7 @@ def create_intelligence(db_path, title, content, category, contact_name, metadat
                     raise
                 cursor = conn.execute(
                     'INSERT INTO intelligence (title, content, category, status, opinion, contact_name, company, deal_value, industry, project_id, source_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, source_url, now, now)
+                    (title.strip(), content, category_norm, 'pending', '', contact_name or '', company, deal_value, industry, project_id, url_norm, now, now)
                 )
             conn.commit()
             return cursor.lastrowid
@@ -2142,6 +2170,9 @@ def migrate_db(db_path, domain_key=None):
                 c.execute('ALTER TABLE intelligence ADD COLUMN is_expired INTEGER DEFAULT 0')
             except Exception:
                 pass  # column already exists
+
+            # Migration: source_url 去重索引（create_intelligence 每次入库都按 source_url 判重）
+            c.execute('CREATE INDEX IF NOT EXISTS idx_intel_source_url ON intelligence(source_url)')
 
             # Migration: add user_id to comments table if missing (human comments)
             try:
