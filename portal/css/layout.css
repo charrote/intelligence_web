@@ -1,6 +1,10 @@
 /* portal/css/layout.css */
 .layout{display:flex;min-height:calc(100vh - 56px)}
-.main{flex:1;padding:28px 32px;overflow-y:auto;overscroll-behavior:contain}
+/* 注意：不可在 .main 上用 overscroll-behavior:contain——部分浏览器/WebView 内核
+   （微信内置浏览器等）对该属性实现有缺陷，会把整个容器的触摸滚动直接干掉
+   （UANTEK-109 线上反馈：首页/列表页全部无法滚动）。下拉刷新的手势抑制
+   已由 index.html 内的 touchmove preventDefault 处理，无需该属性。 */
+.main{flex:1;padding:28px 32px;overflow-y:auto;-webkit-overflow-scrolling:touch}
 
 /* ── Page Title Block ── */
 .main > h1{font-size:22px;font-weight:700;color:var(--gray-900);margin:0 0 4px 0;line-height:1.3;letter-spacing:-0.2px}

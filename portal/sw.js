@@ -3,7 +3,7 @@
  * 策略：静态资源/页面 = 网络优先，失败回退缓存（保持"改完即生效"）；
  *       /api/ /s/ /sales/ = 只走网络。
  */
-const CACHE = 'intel-pwa-v6';  // UANTEK-109b: 情报列表下拉刷新+滚动修复，强制换缓存（v5 里缓存的是吞滚动的旧版页面）
+const CACHE = 'intel-pwa-v7';  // UANTEK-109c: 移除全局 overscroll-behavior（部分内核实现缺陷致全页无法滚动），强制换缓存
 const PRECACHE = [
   '/portal/shell.html',
   '/portal/login.html',
