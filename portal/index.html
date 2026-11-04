@@ -1334,7 +1334,7 @@ document.addEventListener('click', function(e) {
   var indicator = document.getElementById('pullRefresh');
   if (!main || !indicator) return;
 
-  var THRESHOLD = 60, MAX_PULL = 84, RESIST = 0.45;
+  var THRESHOLD = 60, MAX_PULL = 84, RESIST = 0.45, PULL_TRIGGER = 10;
   var startY = 0, armed = false, pulling = false, pullPx = 0, refreshing = false;
 
   function setPull(px) {
@@ -1387,10 +1387,30 @@ document.addEventListener('click', function(e) {
   main.addEventListener('touchmove', function (e) {
     if (!armed || refreshing) return;
     var dy = e.touches[0].clientY - startY;
-    if (!pulling && dy > 0 && main.scrollTop <= 0) pulling = true;
-    if (!pulling) return;
-    e.preventDefault(); // 抑制浏览器原生下拉（页面刷新/弹性滚动）
-    setPull(Math.min(dy * RESIST, MAX_PULL));
+    // ① 内容已被滚下去 → 本手势是正常滚动：若已劫持则立刻交还
+    if (main.scrollTop > 0) {
+      if (pulling) { pulling = false; collapse(); }
+      return;
+    }
+    // ② 已触发下拉：跟手（带阻力）移动指示器；手指收回低于触发阈值 → 取消下拉、交还正常滚动
+    if (pulling) {
+      if (dy < PULL_TRIGGER) {
+        pulling = false;
+        collapse();
+        return;
+      }
+      e.preventDefault();
+      setPull(Math.min(dy * RESIST, MAX_PULL));
+      return;
+    }
+    // ③ 明确的下拉位移（≥PULL_TRIGGER）才劫持手势：
+    //    起始 1~2px 的抖动不得吞掉整个手势——否则列表在顶部无法开始正常下滑滚动
+    if (dy > PULL_TRIGGER) {
+      pulling = true;
+      e.preventDefault(); // 抑制浏览器原生下拉（页面刷新/弹性滚动）
+      setPull(Math.min(dy * RESIST, MAX_PULL));
+    }
+    // dy ≤ PULL_TRIGGER（含上滑）：不 preventDefault，交给浏览器正常滚动
   }, { passive: false });
 
   function endPull() {
