@@ -1369,7 +1369,7 @@ document.addEventListener('click', function(e) {
       updateShareButtons();
       applyFilters();
       var d = new Date();
-      toast('已刷新 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0') + '（' + PAGE_VERSION + '）');
+      toast('已刷新 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'));
     } catch (e) {
       console.log('[PULL-REFRESH] error:', e);
       toast('刷新失败，请重试');
