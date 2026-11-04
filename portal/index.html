@@ -168,6 +168,7 @@
 <script>
 console.log("[TEST] Script loaded");
 var currentIntel = null;
+var PAGE_VERSION = 'v109b';  // 页面版本标识（刷新 toast / console 展示，便于确认设备跑的是哪版）
 var allItems = [];
 var currentPage = 1;       // 当前页码（1 起）
 var PAGE_SIZE = 20;        // 每页条数
@@ -237,6 +238,7 @@ function renderMarkdown(text) {
 function closePanel(){document.getElementById('detailPanel').classList.remove('open');currentIntel=null;applyFilters()}
 
 async function init() {
+  console.log('[PWA] 情报列表页面版本: ' + PAGE_VERSION);
   initExternalLinkGuard(); // 情报详情超链接 → 弹提示 + 新标签页打开，不在系统内导航
   await loadDomainConfig();
   await loadProjectsList();
@@ -1367,7 +1369,7 @@ document.addEventListener('click', function(e) {
       updateShareButtons();
       applyFilters();
       var d = new Date();
-      toast('已刷新 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'));
+      toast('已刷新 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0') + '（' + PAGE_VERSION + '）');
     } catch (e) {
       console.log('[PULL-REFRESH] error:', e);
       toast('刷新失败，请重试');
