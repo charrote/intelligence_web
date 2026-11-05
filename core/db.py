@@ -315,6 +315,9 @@ def init_db(project_root, spec):
         c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_domain ON ai_analysis_run(domain)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_ai_run_status ON ai_analysis_run(status)')
 
+        # 操作日志表（UA110）。此前 /api/audit/logs 直接查 history（情报变更履历表），
+        # 字段对不上、且全代码库没有任何请求采集层，页面永远是空的。
+        _ensure_audit_logs(c)
 
         conn.commit()
 
@@ -1580,6 +1583,154 @@ def get_history(db_path, intelligence_id):
             (intelligence_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ──────────────────────────────────────────────
+# 操作日志 audit_logs（UA110）
+#
+# history 是「单条情报的变更履历」，字段只有 intelligence_id/action/detail/
+# file_location/created_at；操作日志要的是「谁在什么时候对系统做了什么 HTTP
+# 写操作」，两者不是一张表。audit_logs 由 core/app.py 的 after_request 采集层
+# 写入，本模块只负责建表、写入与查询。
+# ──────────────────────────────────────────────
+
+def _ensure_audit_logs(c):
+    """建 audit_logs 表与索引（幂等，init_db 与存量补齐共用）。
+
+    history_id 非空 = 这条记录是从 history 迁移/补齐来的存量履历，
+    它没有方法/路径/用户/状态码可填（当时根本没采集），只能留空；
+    同时它也是补齐的去重键，保证重复启动不会重复插入。
+    """
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT DEFAULT '',
+            method TEXT DEFAULT '',
+            path TEXT DEFAULT '',
+            resource TEXT DEFAULT '',
+            resource_id TEXT DEFAULT '',
+            status_code INTEGER,
+            ip_address TEXT DEFAULT '',
+            user_agent TEXT DEFAULT '',
+            detail TEXT DEFAULT '',
+            history_id INTEGER,
+            created_at TEXT NOT NULL
+        )
+    ''')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_audit_username ON audit_logs(username)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_audit_history ON audit_logs(history_id)')
+
+
+def add_audit_log(db_path, user_id=None, username='', method='', path='',
+                  resource='', resource_id='', status_code=None, ip_address='',
+                  user_agent='', detail='', created_at=None):
+    """写一条操作日志。返回新行 id。"""
+    now = created_at or datetime.now().isoformat()
+    with get_db(db_path) as conn:
+        cursor = conn.execute(
+            'INSERT INTO audit_logs (user_id, username, method, path, resource, '
+            'resource_id, status_code, ip_address, user_agent, detail, created_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (user_id, username, method, path, resource, resource_id,
+             status_code, ip_address, user_agent, detail, now)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def backfill_audit_logs_from_history(db_path):
+    """把 history（情报变更履历）里尚未进入 audit_logs 的记录补进操作日志。
+
+    history 只记了 intelligence_id / action / detail / created_at，方法、路径、
+    操作人、状态码、IP、UA 当时没有采集，只能留空——这是数据本身没有，不是丢数据。
+    按 history_id 去重，可重复执行；之后由批量导入新产生的 history 行，
+    也会在下次启动时一并补齐。返回本次新迁入的行数。
+    """
+    with get_db(db_path) as conn:
+        _ensure_audit_logs(conn)
+        has_history = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='history'"
+        ).fetchone()[0]
+        if not has_history:
+            return 0
+        cur = conn.execute('''
+            INSERT INTO audit_logs (user_id, username, method, path, resource,
+                                    resource_id, status_code, ip_address, user_agent,
+                                    detail, history_id, created_at)
+            SELECT NULL, '', '', '', 'intelligence', CAST(h.intelligence_id AS TEXT),
+                   NULL, '', '',
+                   TRIM(COALESCE(h.action, '')
+                        || CASE WHEN COALESCE(h.detail, '') = '' THEN ''
+                                ELSE '：' || h.detail END),
+                   h.id, h.created_at
+            FROM history h
+            WHERE h.created_at IS NOT NULL AND h.created_at <> ''
+              AND NOT EXISTS (
+                    SELECT 1 FROM audit_logs a WHERE a.history_id = h.id)
+        ''')
+        conn.commit()
+        return cur.rowcount
+
+
+def _audit_where(action='', resource='', username='', start_date='', end_date=''):
+    """构造 audit_logs 的过滤条件（SQL 片段 + 参数）。
+
+    列表与计数必须共用这一份：UA110 的成因正是两条查询各写一遍，
+    其中一条引用了不存在的列，于是「共 28 条记录」配「暂无操作记录」。
+    """
+    clauses = ['1=1']
+    params = []
+    if action:
+        clauses.append('method = ?')
+        params.append(action)
+    if resource:
+        clauses.append('(resource LIKE ? OR path LIKE ?)')
+        params.extend(['%' + resource + '%', '%' + resource + '%'])
+    if username:
+        clauses.append('username = ?')
+        params.append(username)
+    if start_date:
+        clauses.append('created_at >= ?')
+        params.append(start_date)
+    if end_date:
+        clauses.append('created_at <= ?')
+        params.append(end_date)
+    return ' AND '.join(clauses), params
+
+
+def query_audit_logs(db_path, action='', resource='', username='',
+                     start_date='', end_date='', limit=50, offset=0):
+    """分页查询操作日志：{'items': [...], 'total': N, 'users': [...]}。
+
+    users 给页面顶部的「用户」下拉框用（去重，不含空值）。
+    这里不吞异常——查询出错要让调用方拿到 500，而不是一个看起来正常的空页面。
+    """
+    clause, params = _audit_where(action=action, resource=resource, username=username,
+                                  start_date=start_date, end_date=end_date)
+    with get_db(db_path) as conn:
+        total = conn.execute(
+            'SELECT COUNT(*) AS cnt FROM audit_logs WHERE ' + clause, params
+        ).fetchone()['cnt']
+        rows = conn.execute(
+            'SELECT * FROM audit_logs WHERE ' + clause +
+            ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+            list(params) + [limit, offset]
+        ).fetchall()
+        users = [r['username'] for r in conn.execute(
+            "SELECT DISTINCT username FROM audit_logs "
+            "WHERE username IS NOT NULL AND username <> '' ORDER BY username"
+        ).fetchall()]
+        return {'items': [dict(r) for r in rows], 'total': total, 'users': users}
+
+
+def get_audit_log(db_path, log_id):
+    """按 id 取一条操作日志，不存在返回 None。"""
+    with get_db(db_path) as conn:
+        row = conn.execute('SELECT * FROM audit_logs WHERE id = ?', (log_id,)).fetchone()
+        return dict(row) if row else None
 
 
 # 受控分类词表（closed vocabulary）。采集/导入/手动创建都应归一到该表。

@@ -11,6 +11,8 @@ from core.db import (
     get_intelligence_count_for_project, update_intelligence_status,
     delete_intelligence,
     get_history, get_categories,
+    add_audit_log, query_audit_logs, get_audit_log,
+    backfill_audit_logs_from_history,
     _seed_research_demos,
     add_comment, get_comments,
     add_summary, get_summary, get_dashboard_stats,
@@ -198,6 +200,18 @@ def create_app(project_root, spec):
     # Pass the domain key so the empty-DB built-in seed creates only THIS domain's
     # built-in rule/template (never a cross-domain record).
     migrate_db(db_path, domain_key=spec.get("domain_key"))
+
+    # --- 存量补齐：把 history（情报变更履历）里已有的记录迁进操作日志（UA110）---
+    # 幂等，按 history_id 去重，重复启动只会补入新增的履历行。
+    # 失败不阻断启动，但必须打印完整堆栈——静默失败正是 UA110 拖到没人发现的成因。
+    try:
+        _migrated = backfill_audit_logs_from_history(db_path)
+        if _migrated:
+            print(f"[create_app] 操作日志: 从 history 补齐 {_migrated} 条存量履历")
+    except Exception as e:
+        import traceback
+        print(f"[create_app] 操作日志存量补齐失败: {type(e).__name__}: {e}")
+        print(traceback.format_exc())
 
     # --- 情报 TTL 同步：domain spec 的 intelligence_ttl_days 是单一事实来源，
     #     整体（含按分类的 TTL）落到 settings 表供 scheduler 的每日淘汰任务读取。 ---
@@ -1116,6 +1130,78 @@ def create_app(project_root, spec):
         if _verify_token(token) is None:
             return jsonify({'error': '未登录或登录已过期'}), 401
         return None
+
+    # ========================================================================
+    # 操作日志采集 (UA110)
+    # ========================================================================
+    # 「操作日志」页面此前只有一条 SQL，没有任何东西往库里写。这里补上采集层：
+    # 只记会改数据的请求（POST/PUT/PATCH/DELETE）。GET 是读，量最大且无副作用，
+    # 全记的话日志会被前端轮询刷满，真正要追责的写操作反而被埋掉。
+    _AUDIT_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
+    # 请求体里出现这些键名就整体打码：操作日志绝不能变成明文密码仓库。
+    _AUDIT_MASK_KEYS = ('password', 'passwd', 'pwd', 'token', 'secret', 'code',
+                        'credential', 'authorization', 'apikey', 'api_key',
+                        'accesskey', 'access_key', 'salt', 'otp', 'sms')
+
+    def _audit_mask(value, depth=0):
+        """递归脱敏请求体：敏感键换成 ***，长字符串截断，数组只留前 20 项。"""
+        if depth > 4:
+            return '…'
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                key_l = str(k).lower()
+                out[k] = ('***' if any(m in key_l for m in _AUDIT_MASK_KEYS)
+                          else _audit_mask(v, depth + 1))
+            return out
+        if isinstance(value, (list, tuple)):
+            return [_audit_mask(v, depth + 1) for v in list(value)[:20]]
+        if isinstance(value, str) and len(value) > 200:
+            return value[:200] + '…'
+        return value
+
+    def _audit_resource(path):
+        """从 /api/<resource>/<id>/... 提取资源类型与资源 ID。"""
+        parts = [p for p in path.split('/') if p][1:]  # 去掉开头的 api
+        resource = parts[0] if parts else ''
+        resource_id = parts[1] if len(parts) > 1 and parts[1].isdigit() else ''
+        return resource, resource_id
+
+    @app.after_request
+    def record_audit_log(response):
+        """把一次写操作记进 audit_logs —— 操作日志页面的数据来源。"""
+        path = request.path or ''
+        if request.method not in _AUDIT_METHODS or not path.startswith('/api/'):
+            return response
+        try:
+            auth_header = request.headers.get('Authorization', '')
+            token = auth_header[len('Bearer '):] if auth_header.startswith('Bearer ') else ''
+            actor = _verify_token(token) if token else None
+            resource, resource_id = _audit_resource(path)
+            # 登录/验证码类接口的请求体本身就是秘密，连打码版都不取。
+            body = (None if path.startswith('/api/auth/')
+                    else _audit_mask(request.get_json(silent=True)))
+            detail = '' if body is None else json.dumps(body, ensure_ascii=False)
+            fwd = (request.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
+            add_audit_log(
+                db_path,
+                user_id=(actor or {}).get('user_id'),
+                username=(actor or {}).get('username') or '',
+                method=request.method,
+                path=path[:300],
+                resource=resource,
+                resource_id=resource_id,
+                status_code=response.status_code,
+                ip_address=(fwd or request.remote_addr or '')[:100],
+                user_agent=(request.headers.get('User-Agent') or '')[:300],
+                detail=detail[:2000],
+            )
+        except Exception as e:
+            # 采集失败绝不能改变响应，但必须留下痕迹——
+            # 「except 之后静默返回空」正是 UA110 里把 500 变成空页面的那个写法。
+            print(f'[audit] 写入操作日志失败 {request.method} {path}: '
+                  f'{type(e).__name__}: {e}')
+        return response
 
     # ========================================================================
     # Projects API
@@ -2368,98 +2454,57 @@ location /d/{slug}/ {{
     # Audit Logs (admin)
     # ========================================================================
 
+    def _audit_int_arg(name, default, lo, hi):
+        """安全解析分页参数：非法值回落默认，不让 int() 的 ValueError 变成 500。"""
+        try:
+            v = int(request.args.get(name, default))
+        except (TypeError, ValueError):
+            return default
+        if v < lo:
+            return lo
+        if hi is not None and v > hi:
+            return hi
+        return v
+
     @app.route('/api/audit/logs')
     @require_permission('audit.view')
     def list_audit_logs():
-        """List audit logs with filtering and pagination."""
-        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        limit = int(request.args.get('limit', 50))
-        offset = int(request.args.get('offset', 0))
-        action = request.args.get('action', '')
-        resource = request.args.get('resource', '')
-        start_date = request.args.get('start_date', '')
-        end_date = request.args.get('end_date', '')
-        
-        logs = []
+        """List audit logs with filtering and pagination.
+
+        数据来自 audit_logs：写操作由本文件的 after_request 采集层落库，
+        存量情报履历在启动时从 history 补齐（方法/路径/用户等当时没采集，留空）。
+        查询出错直接 500 —— UA110 之前这里是 except: print(...)，一条引用了
+        不存在列的 SQL 被吞成 200 + 空数组，页面于是永远「暂无操作记录」。
+        """
+        limit = _audit_int_arg('limit', 50, 1, 500)
+        offset = _audit_int_arg('offset', 0, 0, None)
         try:
-            with get_db(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                query = "SELECT * FROM history WHERE 1=1"
-                params = []
-                
-                if action:
-                    query += " AND method = ?"
-                    params.append(action)
-                if resource:
-                    query += " AND detail LIKE ?"
-                    params.append(f'%{resource}%')
-                if start_date:
-                    query += " AND timestamp >= ?"
-                    params.append(start_date)
-                if end_date:
-                    query += " AND timestamp <= ?"
-                    params.append(end_date)
-                
-                query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-                params.extend([limit, offset])
-                
-                rows = conn.execute(query, params).fetchall()
-                for row in rows:
-                    log = dict(row)
-                    log['id'] = log['id']
-                    logs.append(log)
-        except Exception as e:
-            print(f'Error loading audit logs: {e}')
-        
-        # Count total
-        total = 0
-        try:
-            with get_db(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                query = "SELECT COUNT(*) as cnt FROM history WHERE 1=1"
-                params = []
-                if action:
-                    query += " AND method = ?"
-                    params.append(action)
-                if resource:
-                    query += " AND detail LIKE ?"
-                    params.append(f'%{resource}%')
-                if start_date:
-                    query += " AND timestamp >= ?"
-                    params.append(start_date)
-                if end_date:
-                    query += " AND timestamp <= ?"
-                    params.append(end_date)
-                total = conn.execute(query, params).fetchone()['cnt']
-        except:
-            pass
-        
-        return jsonify({'items': logs, 'total': total})
+            result = query_audit_logs(
+                db_path,
+                action=request.args.get('action', '').strip(),
+                resource=request.args.get('resource', '').strip(),
+                username=request.args.get('username', '').strip(),
+                start_date=request.args.get('start_date', '').strip(),
+                end_date=request.args.get('end_date', '').strip(),
+                limit=limit,
+                offset=offset,
+            )
+        except sqlite3.Error as e:
+            print(f'[audit] 查询操作日志失败: {type(e).__name__}: {e}')
+            return jsonify({'error': '操作日志查询失败：%s' % e}), 500
+        return jsonify(result)
 
     @app.route('/api/audit/logs/<int:log_id>')
     @require_permission('audit.view')
-    def get_audit_log(log_id):
+    def get_audit_log_endpoint(log_id):
         """Get single audit log detail."""
-        user = _verify_token(request.headers.get('Authorization', '').replace('Bearer ', ''))
-        if not user:
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        log = None
         try:
-            with get_db(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                row = conn.execute("SELECT * FROM history WHERE id = ?", (log_id,)).fetchone()
-                if row:
-                    log = dict(row)
-        except Exception as e:
-            print(f'Error loading audit log: {e}')
-        
+            log = get_audit_log(db_path, log_id)
+        except sqlite3.Error as e:
+            print(f'[audit] 读取操作日志 #{log_id} 失败: {type(e).__name__}: {e}')
+            return jsonify({'error': '操作日志读取失败：%s' % e}), 500
         if not log:
             return jsonify({'error': 'Not found'}), 404
-        
         return jsonify(log)
 
     # --- Health ---
